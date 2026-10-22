@@ -1,7 +1,8 @@
+mod debug_view;
 mod game;
 mod smoke;
 mod trace;
-use charon_render::{self as gpu, Gpu, OverlayRect, Result, WindowRenderer};
+use charon_render::{self as gpu, Gpu, Result, WindowRenderer};
 use charon_runtime::Runtime;
 use charon_sand::{Command, AIR, SAND, WALL};
 use game::{Command as GameCommand, Game};
@@ -73,7 +74,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N --output PNG\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N --output PNG\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -91,6 +92,8 @@ struct App {
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
+    inspect_enabled: bool,
+    inspected: Option<(i32, i32)>,
     next_draw: Instant,
     report: Instant,
     started: Instant,
@@ -112,7 +115,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake")?;
         }
         let now = Instant::now();
         Ok(Self {
@@ -121,6 +124,8 @@ impl App {
             view: None,
             cursor: None,
             buttons: [false; 3],
+            inspect_enabled: false,
+            inspected: None,
             next_draw: now,
             report: now,
             started: now,
@@ -166,35 +171,22 @@ impl App {
                 }
             }
         }
+        let inspection = self.cursor.filter(|_| self.inspect_enabled).map(|(x, y)| {
+            (
+                (x * self.options.width as f64 / size.width as f64).floor() as i32,
+                (y * self.options.height as f64 / size.height as f64).floor() as i32,
+            )
+        });
+        if inspection != self.inspected {
+            self.runtime
+                .submit(GameCommand::Inspect(inspection))
+                .map_err(|e| format!("inspection queue: {e}"))?;
+            self.inspected = inspection;
+        }
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        let overlays: Vec<_> = snapshot
-            .frame
-            .player
-            .map(|body| {
-                vec![
-                    OverlayRect {
-                        x: body.x(),
-                        y: body.y(),
-                        width: body.width(),
-                        height: body.height(),
-                        color: if body.embedded {
-                            [1., 0.2, 0.2, 1.]
-                        } else {
-                            [0.15, 0.8, 1., 1.]
-                        },
-                    },
-                    OverlayRect {
-                        x: body.x() + 4.0,
-                        y: body.y() + 2.0,
-                        width: 2.0,
-                        height: 2.0,
-                        color: [0.05, 0.1, 0.2, 1.],
-                    },
-                ]
-            })
-            .unwrap_or_default();
+        let overlays = debug_view::overlays(&snapshot.frame, self.inspect_enabled);
         let Some(render) =
             view.present_tiled_with_overlays(&snapshot.frame.terrain.image, &overlays)?
         else {
@@ -205,7 +197,13 @@ impl App {
         }
         self.draws += 1;
         let elapsed = self.report.elapsed().as_secs_f64();
-        if elapsed >= if self.options.play { 0.1 } else { 1.0 } {
+        if elapsed
+            >= if self.options.play || snapshot.frame.paused || self.inspect_enabled {
+                0.1
+            } else {
+                1.0
+            }
+        {
             self.intervals.sort_by(f64::total_cmp);
             let percentile = |p: f64| {
                 self.intervals
@@ -215,11 +213,15 @@ impl App {
             };
             let (p95, p99) = (percentile(0.95), percentile(0.99));
             let draw_fps = self.draws as f64 / elapsed;
-            let sim_hz = (snapshot.tick - self.last_tick) as f64 / elapsed;
+            let sim_hz = snapshot
+                .frame
+                .simulation_tick
+                .saturating_sub(self.last_tick) as f64
+                / elapsed;
             let frame = &snapshot.frame.terrain;
-            view.window.set_title(&format!("Charon | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
-                snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
-            let row = format!(
+            view.window.set_title(&format!("Charon | {} tick {} | P pause N step I inspect | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
+                if snapshot.frame.paused {"PAUSED"} else {"RUNNING"},snapshot.frame.simulation_tick,snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
+            let mut row = format!(
                 "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{},{:.3},{:.3},{},{},{},{}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.work_ms,
@@ -230,12 +232,25 @@ impl App {
                 frame.workers_configured,
                 frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms, frame.converted_cells, snapshot.frame.player.map_or(0.0, |p|p.x()), snapshot.frame.player.map_or(0.0, |p|p.y()), snapshot.frame.player.is_some_and(|p|p.grounded),snapshot.frame.player.is_some_and(|p|p.embedded),snapshot.frame.sand_solid, render.overlay_upload_bytes
             );
+            let cell = snapshot.frame.inspection;
+            row.push_str(&format!(
+                ",{},{},{},{},{},{},{}",
+                snapshot.tick,
+                snapshot.frame.simulation_tick,
+                snapshot.frame.paused,
+                cell.map_or_else(String::new, |c| c.x.to_string()),
+                cell.map_or_else(String::new, |c| c.y.to_string()),
+                cell.and_then(|c| c.material)
+                    .map_or_else(String::new, |m| m.to_string()),
+                cell.and_then(|c| c.awake)
+                    .map_or_else(String::new, |a| a.to_string())
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
                 file.flush()?;
             }
-            self.last_tick = snapshot.tick;
+            self.last_tick = snapshot.frame.simulation_tick;
             self.draws = 0;
             self.intervals.clear();
             self.report = Instant::now();
@@ -300,6 +315,15 @@ impl ApplicationHandler for App {
                         self.game_command(GameCommand::Right(down))
                     }
                     PhysicalKey::Code(KeyCode::KeyF) => self.game_command(GameCommand::Dig(down)),
+                    PhysicalKey::Code(KeyCode::KeyP) if down => {
+                        self.game_command(GameCommand::Pause)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyN) if down => {
+                        self.game_command(GameCommand::Step)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyI) if down => {
+                        self.inspect_enabled = !self.inspect_enabled
+                    }
                     PhysicalKey::Code(KeyCode::Space) if down => {
                         self.game_command(GameCommand::Jump)
                     }

@@ -52,6 +52,10 @@ fn encode(command: &Command) -> String {
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
         Command::Jump => "jump".into(),
         Command::ToggleSand => "sand".into(),
+        Command::Pause => "pause".into(),
+        Command::Step => "step".into(),
+        Command::Inspect(None) => "inspect:none".into(),
+        Command::Inspect(Some((x, y))) => format!("inspect:{x}:{y}"),
     }
 }
 fn decode(text: &str) -> Result<Command, String> {
@@ -66,6 +70,13 @@ fn decode(text: &str) -> Result<Command, String> {
         ["clear"] => Command::Terrain(SandCommand::Clear),
         ["jump"] => Command::Jump,
         ["sand"] => Command::ToggleSand,
+        ["pause"] => Command::Pause,
+        ["step"] => Command::Step,
+        ["inspect", "none"] => Command::Inspect(None),
+        ["inspect", x, y] => Command::Inspect(Some((
+            x.parse().map_err(|_| bad())?,
+            y.parse().map_err(|_| bad())?,
+        ))),
         [key, value @ ("0" | "1")] => match *key {
             "left" => Command::Left(*value == "1"),
             "right" => Command::Right(*value == "1"),
@@ -130,7 +141,12 @@ mod tests {
             let commands = match tick {
                 1 => vec![Command::Right(true)],
                 10 => vec![Command::Right(false), Command::Jump],
-                35 => vec![Command::ToggleSand],
+                35 => vec![Command::ToggleSand, Command::Pause],
+                38 => vec![Command::Jump],
+                40 => vec![Command::Step, Command::Step],
+                45 => vec![Command::Pause],
+                55 => vec![Command::Inspect(Some((20, 30)))],
+                56 => vec![Command::Inspect(None)],
                 50 => vec![Command::Dig(true)],
                 100 => vec![Command::Terrain(SandCommand::Clear)],
                 _ => vec![],

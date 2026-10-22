@@ -69,6 +69,18 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 
 入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。形式は開発中のv1で、物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
 
+## デバッグ操作
+
+SandboxとPlatformerで共通。Pで停止/再開、Nで停止したまま1 tick進む、Iでセル調査を切り替える。調査中はマウス位置のセルを囲み、座標・Air/Sand/Wall・次tickの活動候補（AWAKE/SLEEP）を表示する。AWAKEは物質が今動いているという意味ではない。表示はサンプル用の英字HUD。
+
+停止中も描画・入力・調査は続く。砂とキャラクターの時間は進まないが、マウスによる明示的な地形編集は直ちに反映する。停止中のジャンプ入力は次の更新で1回だけ使い、押し続ける掘削はコマ送り/再開時だけ実行する。Rの初期化は停止状態を保つ。
+
+CSVの `runtime_tick` は入力受付/状態公開の回数、`simulation_tick` は実際の物質更新回数。停止中は前者だけ増える。`sim_hz` も後者から計算する。`paused`・`inspect_x/y`・`material`（0=Air、1=Sand、2=Wall、空欄=範囲外）・`next_tile_awake` を記録する。調査なしの場合も座標は空欄になる。`--play`・停止・セル調査中は約0.1秒ごとの記録。
+
+[Linux操作動画（MP4）](media/debugger-linux.mp4) · [GIF](media/debugger-linux.gif) · [画面](media/debugger-linux.png) · [再生用入力列](media/debugger-linux.trace)
+
+`python3 scripts/capture-linux.py --sample debugger` で停止・編集・3回のコマ送り・リセット・再開と入力再生を確認し、録画を更新できる。Pause/Step/Inspectも `--input-log` の対象。既存の停止操作を含まないv1入力列も再生できる。
+
 ## Dialogue
 
 ```console

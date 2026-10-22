@@ -10,11 +10,24 @@ pub enum Command {
     Jump,
     Dig(bool),
     ToggleSand,
+    Pause,
+    Step,
+    Inspect(Option<(i32, i32)>),
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Inspection {
+    pub x: i32,
+    pub y: i32,
+    pub material: Option<u8>,
+    pub awake: Option<bool>,
 }
 pub struct Frame {
     pub terrain: charon_sand::Frame,
     pub player: Option<Body>,
     pub sand_solid: bool,
+    pub paused: bool,
+    pub simulation_tick: u64,
+    pub inspection: Option<Inspection>,
 }
 pub struct Game {
     world: SandWorld,
@@ -27,6 +40,9 @@ pub struct Game {
     height: usize,
     workers: usize,
     recorder: Option<crate::trace::Recorder>,
+    paused: bool,
+    jump_pending: bool,
+    inspection: Option<(i32, i32)>,
 }
 impl Game {
     pub fn new(width: usize, height: usize, workers: usize, play: bool) -> Result<Self, String> {
@@ -63,6 +79,9 @@ impl Game {
             height,
             workers,
             recorder: None,
+            paused: false,
+            jump_pending: false,
+            inspection: None,
         })
     }
     pub fn record_to(&mut self, path: &std::path::Path) -> std::io::Result<()> {
@@ -91,34 +110,16 @@ impl Game {
             mix(u64::from(player.grounded));
             mix(u64::from(player.embedded));
         }
+        // Preserve signatures for existing unpaused v1 traces.
+        if self.paused || self.jump_pending {
+            mix(0x6465627567);
+            mix(u64::from(self.paused));
+            mix(u64::from(self.jump_pending));
+            mix(self.world.tick());
+        }
         hash
     }
-}
-impl Simulation for Game {
-    type Command = Command;
-    type Frame = Frame;
-    fn step(&mut self, commands: Vec<Command>) -> Frame {
-        let recorded = self.recorder.as_ref().map(|_| commands.clone());
-        let mut terrain = Vec::new();
-        let mut jump = false;
-        for command in commands {
-            match command {
-                Command::Terrain(SandCommand::Clear) if self.player.is_some() => {
-                    let recorder = self.recorder.take();
-                    *self = Self::new(self.width, self.height, self.workers, true)
-                        .expect("validated scene dimensions");
-                    self.recorder = recorder;
-                    terrain.clear();
-                    jump = false;
-                }
-                Command::Terrain(command) => terrain.push(command),
-                Command::Left(down) => self.left = down,
-                Command::Right(down) => self.right = down,
-                Command::Jump => jump = true,
-                Command::Dig(down) => self.dig = down,
-                Command::ToggleSand => self.sand_solid = !self.sand_solid,
-            }
-        }
+    fn advance(&mut self, mut terrain: Vec<SandCommand>) -> charon_sand::Frame {
         if self.dig {
             if let Some(player) = self.player {
                 for x in [
@@ -139,7 +140,7 @@ impl Simulation for Game {
             let sand_solid = self.sand_solid;
             player.step(
                 i8::from(self.right) - i8::from(self.left),
-                jump,
+                self.jump_pending,
                 |x, y| match world.material_at(x, y) {
                     Some(AIR) => false,
                     Some(SAND) => sand_solid,
@@ -147,6 +148,59 @@ impl Simulation for Game {
                 },
             );
         }
+        self.jump_pending = false;
+        frame
+    }
+}
+impl Simulation for Game {
+    type Command = Command;
+    type Frame = Frame;
+    fn step(&mut self, commands: Vec<Command>) -> Frame {
+        let recorded = self.recorder.as_ref().map(|_| commands.clone());
+        let mut terrain = Vec::new();
+        let mut steps = 0;
+        for command in commands {
+            match command {
+                Command::Terrain(SandCommand::Clear) if self.player.is_some() => {
+                    let recorder = self.recorder.take();
+                    let paused = self.paused;
+                    let inspection = self.inspection;
+                    *self = Self::new(self.width, self.height, self.workers, true)
+                        .expect("validated scene dimensions");
+                    self.recorder = recorder;
+                    self.paused = paused;
+                    self.inspection = inspection;
+                    terrain.clear();
+                    steps = 0;
+                }
+                Command::Terrain(command) => terrain.push(command),
+                Command::Left(down) => self.left = down,
+                Command::Right(down) => self.right = down,
+                Command::Jump => self.jump_pending = true,
+                Command::Dig(down) => self.dig = down,
+                Command::ToggleSand => self.sand_solid = !self.sand_solid,
+                Command::Pause => self.paused = !self.paused,
+                Command::Step => {
+                    self.paused = true;
+                    steps += 1;
+                }
+                Command::Inspect(point) => self.inspection = point,
+            }
+        }
+        let advances = if steps > 0 {
+            steps
+        } else {
+            usize::from(!self.paused)
+        };
+        let frame = if advances == 0 {
+            self.world.edit(terrain)
+        } else {
+            let mut frame = self.advance(terrain);
+            for _ in 1..advances {
+                frame = self.advance(vec![]);
+            }
+            frame
+        };
         if let Some(commands) = recorded {
             let signature = self.signature();
             // A recording failure stops the simulation; the app reports the stopped thread.
@@ -160,12 +214,98 @@ impl Simulation for Game {
             terrain: frame,
             player: self.player,
             sand_solid: self.sand_solid,
+            paused: self.paused,
+            simulation_tick: self.world.tick(),
+            inspection: self.inspection.map(|(x, y)| Inspection {
+                x,
+                y,
+                material: self.world.material_at(x, y),
+                awake: self.world.awake_at(x, y),
+            }),
         }
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn pause_edits_inspection_and_each_step_preserve_the_physics_clock() {
+        let mut game = Game::new(96, 96, 4, false).unwrap();
+        let paint = SandCommand::Paint {
+            x: 31,
+            y: 10,
+            material: SAND,
+        };
+        let frame = game.step(vec![
+            Command::Pause,
+            Command::Terrain(paint),
+            Command::Inspect(Some((31, 7))),
+        ]);
+        assert!(frame.paused);
+        assert_eq!(frame.simulation_tick, 0);
+        assert_eq!(frame.inspection.unwrap().material, Some(SAND));
+        assert_eq!(frame.inspection.unwrap().awake, Some(true));
+        let before = game.world.checksum();
+        for _ in 0..60 {
+            let idle = game.step(vec![]);
+            assert_eq!(idle.simulation_tick, 0);
+            assert_eq!(game.world.checksum(), before);
+            assert_eq!(idle.terrain.converted_cells, 0);
+            assert_eq!(idle.terrain.workers_used, 0);
+        }
+        let mut reference = Game::new(96, 96, 1, false).unwrap();
+        reference.step(vec![Command::Terrain(paint)]);
+        let stepped = game.step(vec![Command::Step]);
+        assert!(stepped.paused);
+        assert_eq!(stepped.simulation_tick, 1);
+        assert_eq!(game.world.checksum(), reference.world.checksum());
+        let stepped = game.step(vec![Command::Step, Command::Step]);
+        reference.step(vec![]);
+        reference.step(vec![]);
+        assert_eq!(stepped.simulation_tick, 3);
+        assert_eq!(game.world.checksum(), reference.world.checksum());
+        let outside = game.step(vec![Command::Inspect(Some((-1, 0)))]);
+        assert!(outside.inspection.unwrap().material.is_none());
+        assert_eq!(outside.simulation_tick, 3);
+        let resumed = game.step(vec![Command::Pause, Command::Inspect(None)]);
+        assert!(!resumed.paused);
+        assert_eq!(resumed.simulation_tick, 4);
+        assert!(resumed.inspection.is_none());
+    }
+    #[test]
+    fn paused_jump_is_consumed_once_and_reset_stays_paused() {
+        let mut game = Game::new(160, 120, 2, true).unwrap();
+        game.step(vec![]);
+        let start = game.step(vec![Command::Pause]).player.unwrap();
+        for _ in 0..30 {
+            game.step(vec![Command::Right(true), Command::Jump]);
+        }
+        assert_eq!(game.player.unwrap().x(), start.x());
+        assert_eq!(game.player.unwrap().y(), start.y());
+        let one = game.step(vec![Command::Step]).player.unwrap();
+        let two = game.step(vec![Command::Step]).player.unwrap();
+        assert!(one.y() < start.y());
+        assert!(
+            two.vertical_velocity() > one.vertical_velocity(),
+            "jump repeated without a new press"
+        );
+        let reset = game.step(vec![Command::Terrain(SandCommand::Clear)]);
+        assert!(reset.paused);
+        assert_eq!(reset.simulation_tick, 0);
+        let original = game.world.checksum();
+        game.step(vec![Command::Dig(true)]);
+        assert_eq!(
+            game.world.checksum(),
+            original,
+            "held dig advanced while paused"
+        );
+        assert_eq!(game.world.tick(), 0);
+        let frame = game.step(vec![Command::Step]);
+        assert_ne!(game.world.checksum(), original);
+        assert_eq!(frame.simulation_tick, 1);
+        assert!(frame.player.unwrap().y() > reset.player.unwrap().y());
+    }
+
     #[test]
     fn sand_policy_dig_reset_and_parallel_terrain_compose() {
         assert!(Game::new(usize::MAX, 270, 4, true).is_err());

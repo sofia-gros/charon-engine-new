@@ -36,6 +36,12 @@ jobs:
       - name: Build Windows sample
         if: runner.os == 'Windows'
         run: cargo build --locked --release -p charon-sandbox -p charon-dialogue-sample
+      - name: Linux recorded input replay
+        if: runner.os == 'Linux'
+        run: ./target/debug/charon-sandbox --replay docs/media/debugger-linux.trace --workers 1
+      - name: Windows recorded input replay
+        if: runner.os == 'Windows'
+        run: ./target/release/charon-sandbox.exe --replay docs/media/debugger-linux.trace --workers 1
       - name: Linux software Vulkan
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb

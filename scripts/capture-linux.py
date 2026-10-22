@@ -4,6 +4,7 @@
 import argparse
 import csv
 import hashlib
+import itertools
 import ctypes as C
 import ctypes.util
 import json
@@ -109,9 +110,29 @@ class Input:
             self.button(button, False)
 
 
+def check_debugger_rows(rows):
+    # Segment by actual pause state, independent of driver/window startup latency.
+    segments = [list(group) for paused, group in itertools.groupby(rows, key=lambda row: row["paused"]) if paused == "true"]
+    assert len(segments) == 2, "expected two pause sessions"
+    first, second = segments
+    counts = list(dict.fromkeys(int(r["simulation_tick"]) for r in first))
+    assert counts == list(range(counts[0], counts[0] + 4)), counts
+    for segment in segments:
+        for _, group in itertools.groupby(segment, key=lambda row: row["simulation_tick"]):
+            block = list(group)
+            assert len({(r["player_x"], r["player_y"]) for r in block}) == 1, "player moved between step commands"
+            assert all(float(r["draw_fps"]) > 0 for r in block), "display stopped while paused"
+    assert int(first[-1]["runtime_tick"]) > int(first[0]["runtime_tick"]), "input/display polling stopped"
+    assert any(r["inspect_x"] == "250" and r["inspect_y"] == "60" and r["material"] == "1" and r["next_tile_awake"] == "true" for r in first), "paused edit/inspection was lost"
+    reset_counts = list(dict.fromkeys(int(r["simulation_tick"]) for r in second))
+    assert reset_counts[1:] == [0, 1], "reset/step lost pause or advanced more than once"
+    assert rows[-1]["paused"] == "false" and int(rows[-1]["simulation_tick"]) > 1, "resume failed"
+    return counts
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
@@ -174,7 +195,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play", "--input-log", str(trace_path)] if sample == "platformer" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play", "--input-log", str(trace_path)] if sample in ("platformer", "debugger") else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             inputs = Input()
@@ -224,7 +245,7 @@ EndSection
                 inputs.key(ord("2"))
                 at(10)
                 subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
-            else:
+            elif sample == "platformer":
                 at(1)
                 inputs.hold(ord("d"), True)
                 at(2)
@@ -240,6 +261,39 @@ EndSection
                 subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
                 at(10)
                 inputs.key(ord("r"))
+            else:
+                at(1)
+                inputs.key(ord(" "))
+                at(1.15)
+                inputs.key(ord("p"))
+                inputs.key(ord("i"))
+                inputs.move(1000, 240)
+                at(1.5)
+                inputs.button(1, True)
+                at(1.7)
+                inputs.button(1, False)
+                at(2.2)
+                inputs.hold(ord("d"), True)
+                at(2.4)
+                inputs.key(ord("n"))
+                at(3.4)
+                inputs.key(ord("n"))
+                at(4.4)
+                inputs.key(ord("n"))
+                at(5.4)
+                inputs.hold(ord("d"), False)
+                at(6)
+                inputs.key(ord("p"))
+                at(7)
+                inputs.key(ord("p"))
+                at(8)
+                inputs.key(ord("r"))
+                at(9)
+                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
+                at(10)
+                inputs.key(ord("n"))
+                at(11)
+                inputs.key(ord("p"))
             capture_thread.join(timeout=10)
             if capture_thread.is_alive() or capture_errors:
                 raise RuntimeError(f"screen capture failed: {capture_errors}")
@@ -261,7 +315,7 @@ EndSection
                 pages = [row["page"] for row in rows]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
                 checks = {"pages": pages, "checks": ["both choices", "keyboard restart", "Escape shutdown"]}
-            else:
+            elif sample == "platformer":
                 xs = [float(row["player_x"]) for row in rows]
                 ys = [float(row["player_y"]) for row in rows]
                 assert max(xs) - min(xs) > 40, "movement input did not move player"
@@ -275,6 +329,12 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "player_x_range": [min(xs), max(xs)], "player_y_range": [min(ys), max(ys)],
                           "checks": ["movement", "jump", "sand/wall collision policy", "support destruction", "reset", "Escape shutdown", "authoritative input replay with 1 worker"]}
+            else:
+                counts = check_debugger_rows(rows)
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"paused_step_ticks": counts, "replay": replay.stdout.strip(),
+                          "checks": ["frozen terrain/actor", "display while paused", "one tick per press", "paused edit and cell inspection", "reset preserves pause", "resume", "authoritative replay with 1 worker", "Escape shutdown"]}
             assert "error:" not in (local / f"{sample}.log").read_text().lower()
             images = []
             for _, path in frames:

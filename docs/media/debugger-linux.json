@@ -1,0 +1,34 @@
+{
+  "source_sha256": "51d5837002693b4915abb06a9ba2077a4abaeb49e87f9585f57e6a048fbdfe6e",
+  "sample": "debugger",
+  "base_revision": "9082806490e80bbfc5187b633b2c519938486918",
+  "platform": "Linux Xorg dummy / software GPU",
+  "target_capture_fps": 8,
+  "captured_frames": 112,
+  "gif_duration_ms": 13950,
+  "source_size": [
+    1920,
+    1080
+  ],
+  "gif_size": [
+    960,
+    540
+  ],
+  "paused_step_ticks": [
+    79,
+    80,
+    81,
+    82
+  ],
+  "replay": "replay_ticks=845 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "frozen terrain/actor",
+    "display while paused",
+    "one tick per press",
+    "paused edit and cell inspection",
+    "reset preserves pause",
+    "resume",
+    "authoritative replay with 1 worker",
+    "Escape shutdown"
+  ]
+}

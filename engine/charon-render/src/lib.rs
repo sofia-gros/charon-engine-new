@@ -150,7 +150,7 @@ impl Gpu {
         });
         let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("overlay-vertices"),
-            size: 64 * 6 * 24,
+            size: 1024 * 6 * 24,
             usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -267,8 +267,8 @@ impl Gpu {
             return 0;
         }
         assert!(
-            rectangles.len() <= 64,
-            "initial overlay batch limit is 64 rectangles"
+            rectangles.len() <= 1024,
+            "initial overlay batch limit is 1024 rectangles"
         );
         let mut bytes = Vec::with_capacity(rectangles.len() * 6 * 24);
         for rect in rectangles {

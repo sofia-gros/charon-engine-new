@@ -231,18 +231,30 @@ impl SandWorld {
         self.tick += 1;
         (active, visited, workers)
     }
-}
-
-impl Simulation for SandWorld {
-    type Command = Command;
-    type Frame = Frame;
-    fn step(&mut self, commands: Vec<Command>) -> Frame {
+    /// Completed physics steps; editing and inspection never advance this clock.
+    pub fn tick(&self) -> u64 {
+        self.tick
+    }
+    /// Whether the cell's tile is scheduled for the next physics step.
+    pub fn awake_at(&self, x: i32, y: i32) -> Option<bool> {
+        self.material_at(x, y)?;
+        Some(self.awake[y as usize / TILE * self.width.div_ceil(TILE) + x as usize / TILE])
+    }
+    /// Apply explicit editor operations without advancing falling material.
+    pub fn edit(&mut self, commands: Vec<Command>) -> Frame {
         let start = Instant::now();
         for command in commands {
             self.command(command);
         }
-        let (active_tiles, visited_cells, workers_used) = self.advance();
-        let update_ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.snapshot(0, 0, 0, start.elapsed().as_secs_f64() * 1000.0)
+    }
+    fn snapshot(
+        &mut self,
+        active_tiles: usize,
+        visited_cells: usize,
+        workers_used: u32,
+        update_ms: f64,
+    ) -> Frame {
         let snapshot_start = Instant::now();
         let mut converted_cells = 0;
         for tile in 0..self.dirty.len() {
@@ -273,6 +285,23 @@ impl Simulation for SandWorld {
             update_ms,
             snapshot_ms: snapshot_start.elapsed().as_secs_f64() * 1000.0,
         }
+    }
+}
+impl Simulation for SandWorld {
+    type Command = Command;
+    type Frame = Frame;
+    fn step(&mut self, commands: Vec<Command>) -> Frame {
+        let start = Instant::now();
+        for command in commands {
+            self.command(command);
+        }
+        let (active, visited, workers) = self.advance();
+        self.snapshot(
+            active,
+            visited,
+            workers,
+            start.elapsed().as_secs_f64() * 1000.0,
+        )
     }
 }
 
