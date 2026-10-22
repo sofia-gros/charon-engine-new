@@ -3,7 +3,7 @@
 ## 必要な環境
 
 - Rust stable、Git。
-- Windows 11: MSVC版RustとVisual Studio Build Toolsの「C++によるデスクトップ開発」。
+- Windows 11: MSVC版Rust用のMicrosoft製リンカーとWindows SDK（Visual Studio Build Toolsから導入可能）。既にRustのexeをビルドできれば追加導入は不要。エンジンはRust、shaderはWGSLで記述する。
 - Linux: Cリンカ、X11、VulkanまたはOpenGL ESドライバ。ウィンドウ不要のCPU検証も可能。
 - `rust-toolchain.toml` はstableを指定する。更新は `rustup update stable`。依存バージョンはCargo.lockで管理する。
 
@@ -15,6 +15,12 @@ cd charon-engine-new
 開発ブランチを確認する場合は、そのブランチをcheckoutしてから起動する。
 
 ## Sandbox
+
+[Linux実行動画（MP4）](media/sandbox-linux.mp4) · [GIF](media/sandbox-linux.gif) · [スクリーンショット](media/sandbox-linux.png)
+
+壁を描く→砂を積もらせる→壁に穴を開ける→リセットする、実際のマウス/キー入力とウィンドウ描画の記録。Linuxの仮想画面とソフトウェアGPUで約14秒収録。フルHDの画面を動画では960×540に縮小し、8fpsを目安にキャプチャしている。動画のfpsはエンジンの性能値ではない。
+
+![Sandbox on Linux](media/sandbox-linux.gif)
 
 WindowsのPowerShell:
 
@@ -55,6 +61,8 @@ cargo run --locked -p charon-sandbox -- --smoke --output artifacts/local/smoke.p
 ```
 
 フルHD出力の全画素を、完了したシミュレーションのセル画像と比較し、PNGを保存する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
+
+Linuxで操作試験とMP4/GIF/PNGの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、FFmpeg、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。
 
 既定の `cargo test` はGPU依存を持たないcore/pluginだけを対象にする。統合時は `cargo test --locked --workspace`。GitHub ActionsはLinux/Windowsでビルド・テスト・shader検証を行い、ActionsのArtifactsへ実行ファイルと検証画像を出力する。CIの実行結果は各runで確認する。
 

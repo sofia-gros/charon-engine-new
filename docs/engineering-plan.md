@@ -45,6 +45,7 @@
 - 移動は32×32の活動領域だけを更新し、休止/再起床する。RGBA生成/転送は現状全セル。大規模世界対応済みとは扱わない。
 - 合格済み: 実質4テスト（非Sand plugin/不変snapshot、保存則/競合、並列+活動版と全走査版の一致、範囲外/リセット/上端）、Clippy。
 - LinuxでSwiftShaderのフルHD shader出力全2,073,600画素を照合。Xorg dummy+llvmpipeでウィンドウ表示・CSV記録・自動終了を確認。
+- Linuxの実入力で壁作成・砂追加/堆積・壁の穴開け・Rリセット・Escape終了を確認。再現用capture-linux.pyとMP4/GIF/PNGはGit管理し、入口はusage.md。
 - Windows MSVCターゲットのcargo checkは成功。Windows実機での実行、ハードウェアGPU描画、144 FPS達成は未検証。
 - CPU release計測: 480×270、同一の砂追加負荷、warmup120+600tick。p95は1worker約1.72ms、4worker約1.55ms。後者は実使用4。
 - この計測は共有クラウドCPUの結果。全tickに処理量保証を与えるものでも、画面のFPS測定でもない。
@@ -52,5 +53,5 @@
 - Windows用PowerShell起動/記録とLinux/Windows CI定義を追加。GitHub CIの結果や成果物生成の成功はまだ未確認。
 - GitHubの `codex/engine-bootstrap` ブランチへ送信済み。mainには未統合。CIは公開HTMLで起動/待機を確認、結果は未確認。
 - APIは現在ネットワーク拒否。PR作成や詳細なCIログ取得用にapi.github.comの許可を環境設定の下書きへ追加したが、適用は未確認。
-- 次の実機確認はWindowsで起動・砂/壁/消去・R・終了・計測CSVを短く試す。確認待ちに剛体や大量機能を積み増さない。
+- 当面はLinuxで操作/描画を検証し、動画で共有して進める。Windows固有動作と実機FPSは後日の確認に分け、ユーザーの即時実機操作を前提にしない。
 - 未決事項: 最低動作環境、最終セル密度/世界規模、制作担当向け編集方法、最初の製品の中心となる遊び。

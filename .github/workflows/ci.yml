@@ -1,9 +1,9 @@
 name: CI
 on:
   push:
-    paths-ignore: ['**/*.md', 'LICENSE']
+    paths-ignore: ['**/*.md', 'docs/**', 'scripts/capture-linux.py', 'LICENSE']
   pull_request:
-    paths-ignore: ['**/*.md', 'LICENSE']
+    paths-ignore: ['**/*.md', 'docs/**', 'scripts/capture-linux.py', 'LICENSE']
   workflow_dispatch:
 
 permissions:
