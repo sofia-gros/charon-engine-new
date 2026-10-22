@@ -10,6 +10,16 @@ pub struct ImageView<'a> {
 }
 use std::{error::Error, fs::File, io::BufWriter, path::Path, sync::mpsc, time::Duration};
 
+/// Opaque screen-aligned rectangle in logical image coordinates, independent of terrain.
+#[derive(Clone, Copy, PartialEq)]
+pub struct OverlayRect {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+    pub color: [f32; 4],
+}
+
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
 
 pub fn instance() -> wgpu::Instance {
@@ -54,6 +64,10 @@ pub struct Gpu {
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     uploaded_tiles: Option<TiledImage>,
+    overlay_pipeline: wgpu::RenderPipeline,
+    overlay_buffer: wgpu::Buffer,
+    overlay_vertices: u32,
+    last_overlays: Vec<OverlayRect>,
 }
 
 impl Gpu {
@@ -94,6 +108,52 @@ impl Gpu {
             multiview_mask: None,
             cache: None,
         });
+        let overlay_shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("overlay"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("overlay.wgsl").into()),
+        });
+        let overlay_pipeline = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("overlay"),
+            layout: None,
+            vertex: wgpu::VertexState {
+                module: &overlay_shader,
+                entry_point: Some("vs_main"),
+                buffers: &[Some(wgpu::VertexBufferLayout {
+                    array_stride: 24,
+                    step_mode: wgpu::VertexStepMode::Vertex,
+                    attributes: &[
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x2,
+                            offset: 0,
+                            shader_location: 0,
+                        },
+                        wgpu::VertexAttribute {
+                            format: wgpu::VertexFormat::Float32x4,
+                            offset: 8,
+                            shader_location: 1,
+                        },
+                    ],
+                })],
+                compilation_options: Default::default(),
+            },
+            fragment: Some(wgpu::FragmentState {
+                module: &overlay_shader,
+                entry_point: Some("fs_main"),
+                targets: &[Some(format.into())],
+                compilation_options: Default::default(),
+            }),
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            multiview_mask: None,
+            cache: None,
+        });
+        let overlay_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("overlay-vertices"),
+            size: 64 * 6 * 24,
+            usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let texture = device.create_texture(&wgpu::TextureDescriptor {
             label: Some("cell-snapshot"),
             size: wgpu::Extent3d {
@@ -125,6 +185,10 @@ impl Gpu {
             texture,
             bind,
             uploaded_tiles: None,
+            overlay_pipeline,
+            overlay_buffer,
+            overlay_vertices: 0,
+            last_overlays: Vec::new(),
         })
     }
 
@@ -198,6 +262,43 @@ impl Gpu {
         bytes
     }
 
+    fn set_overlays(&mut self, rectangles: &[OverlayRect]) -> usize {
+        if rectangles == self.last_overlays {
+            return 0;
+        }
+        assert!(
+            rectangles.len() <= 64,
+            "initial overlay batch limit is 64 rectangles"
+        );
+        let mut bytes = Vec::with_capacity(rectangles.len() * 6 * 24);
+        for rect in rectangles {
+            assert!([rect.x, rect.y, rect.width, rect.height]
+                .into_iter()
+                .chain(rect.color)
+                .all(f32::is_finite));
+            for (dx, dy) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
+                let x = (rect.x + dx * rect.width) / self.texture.width() as f32 * 2.0 - 1.0;
+                let y = 1.0 - (rect.y + dy * rect.height) / self.texture.height() as f32 * 2.0;
+                for value in [
+                    x,
+                    y,
+                    rect.color[0],
+                    rect.color[1],
+                    rect.color[2],
+                    rect.color[3],
+                ] {
+                    bytes.extend_from_slice(&value.to_ne_bytes());
+                }
+            }
+        }
+        if !bytes.is_empty() {
+            self.queue.write_buffer(&self.overlay_buffer, 0, &bytes);
+        }
+        self.overlay_vertices = rectangles.len() as u32 * 6;
+        self.last_overlays = rectangles.to_vec();
+        bytes.len()
+    }
+
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("cells"),
@@ -218,6 +319,11 @@ impl Gpu {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.draw(0..3, 0..1);
+        if self.overlay_vertices > 0 {
+            pass.set_pipeline(&self.overlay_pipeline);
+            pass.set_vertex_buffer(0, self.overlay_buffer.slice(..));
+            pass.draw(0..self.overlay_vertices, 0..1);
+        }
     }
 
     /// Exercise the same shader/pipeline as the window and verify every output
@@ -239,6 +345,35 @@ impl Gpu {
             output,
         )?;
         Ok(bytes)
+    }
+
+    pub fn smoke_overlay(&mut self, image: &TiledImage, output: &Path) -> Result<()> {
+        self.upload_tiled(image);
+        let (x, y, width, height) = (2, 2, 3, 4);
+        self.set_overlays(&[OverlayRect {
+            x: x as f32,
+            y: y as f32,
+            width: width as f32,
+            height: height as f32,
+            color: [1., 0., 0., 1.],
+        }]);
+        let mut rgba = image.to_rgba();
+        for py in y..y + height {
+            for px in x..x + width {
+                let i = (py * image.width() + px) * 4;
+                rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let result = self.verify(
+            &ImageView {
+                width: image.width(),
+                height: image.height(),
+                rgba: &rgba,
+            },
+            output,
+        );
+        self.set_overlays(&[]);
+        result
     }
 
     fn verify(&self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
@@ -384,12 +519,23 @@ impl WindowRenderer {
     }
     /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
     pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
-        self.present_image(image.map(Upload::Full))
+        self.present_image(image.map(Upload::Full), &[])
     }
     pub fn present_tiled(&mut self, image: &TiledImage) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)))
+        self.present_image(Some(Upload::Tiled(image)), &[])
     }
-    fn present_image(&mut self, image: Option<Upload<'_>>) -> Result<Option<RenderStats>> {
+    pub fn present_tiled_with_overlays(
+        &mut self,
+        image: &TiledImage,
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(Some(Upload::Tiled(image)), overlays)
+    }
+    fn present_image(
+        &mut self,
+        image: Option<Upload<'_>>,
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
             return Ok(None);
@@ -424,6 +570,7 @@ impl WindowRenderer {
             Some(Upload::Tiled(image)) => self.gpu.upload_tiled(image),
             None => 0,
         };
+        let overlay_upload_bytes = self.gpu.set_overlays(overlays);
         let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let encode_start = std::time::Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -440,6 +587,7 @@ impl WindowRenderer {
         Ok(Some(RenderStats {
             upload_enqueue_ms,
             upload_bytes,
+            overlay_upload_bytes,
             acquire_ms,
             encode_present_ms: encode_start.elapsed().as_secs_f64() * 1000.0,
         }))
@@ -449,6 +597,7 @@ impl WindowRenderer {
 pub struct RenderStats {
     pub upload_enqueue_ms: f64,
     pub upload_bytes: usize,
+    pub overlay_upload_bytes: usize,
     pub acquire_ms: f64,
     pub encode_present_ms: f64,
 }

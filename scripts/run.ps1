@@ -2,6 +2,8 @@ param(
     [ValidateRange(1, 32)][int]$Workers = 4,
     [string]$Grid = '480x270',
     [switch]$Smoke,
+    [switch]$Play,
+    [switch]$RecordInputs,
     [switch]$Software,
     [switch]$DebugBuild
 )
@@ -18,6 +20,8 @@ try {
     $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid)
     if ($Smoke) { $cargoArgs += @('--smoke', '--output', "$directory/$stamp-smoke.png") }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
+    if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
+    if ($Play) { $cargoArgs += '--play' }
     if ($Software) { $cargoArgs += '--software' }
     & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) { throw "Sandbox exited with code $LASTEXITCODE" }

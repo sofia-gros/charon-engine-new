@@ -27,7 +27,7 @@ jobs:
       - name: Format
         run: cargo fmt --all -- --check
       - name: Tests
-        run: cargo test --locked
+        run: cargo test --locked --workspace
       - name: Clippy
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
       - name: Build Linux sample
@@ -51,6 +51,11 @@ jobs:
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24 -extension MIT-SHM" ./target/debug/charon-sandbox --seconds 4 --record artifacts/local/window-metrics.csv
           python3 -c "from pathlib import Path; assert len(Path('artifacts/local/window-metrics.csv').read_text().splitlines()) >= 2"
+      - name: Linux platformer window smoke
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24 -extension MIT-SHM" ./target/debug/charon-sandbox --play --seconds 3 --record artifacts/local/platformer.csv
+          python3 -c "import csv; rows=list(csv.DictReader(open('artifacts/local/platformer.csv'))); assert rows and any(r['grounded']=='true' for r in rows); assert all(r['embedded']=='false' for r in rows)"
       - name: Linux dialogue window smoke
         if: runner.os == 'Linux'
         run: |

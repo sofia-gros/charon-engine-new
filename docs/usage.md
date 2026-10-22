@@ -42,7 +42,32 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 タイトルに描画FPS・sim Hz・tick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
-PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。CSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。通常モードのCSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+
+## Platformer
+
+```console
+cargo run --locked --release -p charon-sandbox -- --play --workers 4 --record artifacts/local/platformer.csv
+```
+
+Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セル。A/Dまたは左右キーで移動、Spaceでジャンプ、Fを押している間は足元を掘る。Bで砂の当たり判定を切り替える。壁は常に足場になる。マウスの砂/壁/消去も使える。Rで地形・プレイヤー・判定設定を初期化する。
+
+[Linux操作動画（MP4）](media/platformer-linux.mp4) · [GIF](media/platformer-linux.gif) · [スクリーンショット](media/platformer-linux.png)
+
+物質は砂plugin、移動は砂に依存しないplatformer plugin、両者をつなぐ判定方針はサンプル側が所有する。キャラクターは地形と別の矩形としてGPU描画し、地形画像へ焼き込まない。`upload_bytes` は地形、`overlay_upload_bytes` は矩形頂点の転送量。操作モードのCSVは約0.1秒ごとに位置・着地・埋まり・砂の判定設定も記録する。
+
+まず軸に沿った矩形とセルの衝突を扱う。薄い床の通り抜けを防ぎ、支えが消えると落下する。回転・坂・セルを押しのける双方向の物理は未実装。新しい地形に埋まった場合は16セル以内の空きへ移し、空きがなければ赤く表示して移動を停止する。周囲の消去かRで戻せる。`python3 scripts/capture-linux.py --sample platformer` で操作検証と録画を再実行できる。
+
+操作を再現するための入力記録:
+
+```console
+cargo run --locked -p charon-sandbox -- --play --input-log artifacts/local/session.trace
+cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace --workers 1
+```
+
+記録は物質更新と同じスレッドでtickごとに保存する。再生はウィンドウ/GPUを起動せず、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
+
+入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。形式は開発中のv1で、物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
 
 ## Dialogue
 

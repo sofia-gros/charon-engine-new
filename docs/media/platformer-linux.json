@@ -1,0 +1,35 @@
+{
+  "source_sha256": "53ac525cea321acfc8c789ce0b783e8e11b2c420b1149a35cd8de367e1b48b85",
+  "sample": "platformer",
+  "base_revision": "bd2716cafc91fadc00b4592335c15f706ff60750",
+  "platform": "Linux Xorg dummy / software GPU",
+  "target_capture_fps": 8,
+  "captured_frames": 112,
+  "gif_duration_ms": 14050,
+  "source_size": [
+    1920,
+    1080
+  ],
+  "gif_size": [
+    960,
+    540
+  ],
+  "replay": "replay_ticks=845 checks=terrain,player,input_state workers=1",
+  "player_x_range": [
+    120.0,
+    214.5
+  ],
+  "player_y_range": [
+    138.667,
+    257.0
+  ],
+  "checks": [
+    "movement",
+    "jump",
+    "sand/wall collision policy",
+    "support destruction",
+    "reset",
+    "Escape shutdown",
+    "authoritative input replay with 1 worker"
+  ]
+}

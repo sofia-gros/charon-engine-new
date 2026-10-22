@@ -1,7 +1,10 @@
+mod game;
 mod smoke;
-use charon_render::{self as gpu, Gpu, Result, WindowRenderer};
+mod trace;
+use charon_render::{self as gpu, Gpu, OverlayRect, Result, WindowRenderer};
 use charon_runtime::Runtime;
-use charon_sand::{Command, SandWorld, AIR, SAND, WALL};
+use charon_sand::{Command, AIR, SAND, WALL};
+use game::{Command as GameCommand, Game};
 use std::{
     fs::File,
     io::Write,
@@ -17,6 +20,9 @@ use winit::{
 };
 
 struct Options {
+    input_log: Option<PathBuf>,
+    replay: Option<PathBuf>,
+    play: bool,
     workers: usize,
     width: usize,
     height: usize,
@@ -30,6 +36,9 @@ struct Options {
 impl Options {
     fn parse() -> Result<Self> {
         let mut options = Self {
+            input_log: None,
+            replay: None,
+            play: false,
             workers: std::thread::available_parallelism()
                 .map_or(2, usize::from)
                 .min(4),
@@ -46,6 +55,9 @@ impl Options {
         while let Some(argument) = args.next() {
             let mut value = || args.next().ok_or("missing option value");
             match argument.as_str() {
+                "--input-log" => options.input_log = Some(value()?.into()),
+                "--replay" => options.replay = Some(value()?.into()),
+                "--play" => options.play = true,
                 "--workers" => options.workers = value()?.parse()?,
                 "--grid" => {
                     let grid = value()?;
@@ -61,7 +73,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N --output PNG\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N --output PNG\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -75,7 +87,7 @@ impl Options {
 }
 struct App {
     options: Options,
-    runtime: Runtime<SandWorld>,
+    runtime: Runtime<Game>,
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
@@ -90,7 +102,7 @@ struct App {
     error: Option<String>,
 }
 impl App {
-    fn new(options: Options, runtime: Runtime<SandWorld>) -> Result<Self> {
+    fn new(options: Options, runtime: Runtime<Game>) -> Result<Self> {
         let mut record = if let Some(path) = &options.record {
             if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
                 std::fs::create_dir_all(parent)?;
@@ -100,7 +112,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes")?;
         }
         let now = Instant::now();
         Ok(Self {
@@ -121,6 +133,11 @@ impl App {
         })
     }
     fn submit(&self, command: Command) {
+        if let Err(error) = self.runtime.submit(GameCommand::Terrain(command)) {
+            eprintln!("Input not applied: {error}");
+        }
+    }
+    fn game_command(&self, command: GameCommand) {
         if let Err(error) = self.runtime.submit(command) {
             eprintln!("Input not applied: {error}");
         }
@@ -144,7 +161,7 @@ impl App {
             for (pressed, material) in self.buttons.into_iter().zip([SAND, AIR, WALL]) {
                 if pressed {
                     self.runtime
-                        .submit(Command::Paint { x, y, material })
+                        .submit(GameCommand::Terrain(Command::Paint { x, y, material }))
                         .map_err(|e| format!("input queue: {e}"))?;
                 }
             }
@@ -152,7 +169,35 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        let Some(render) = view.present_tiled(&snapshot.frame.image)? else {
+        let overlays: Vec<_> = snapshot
+            .frame
+            .player
+            .map(|body| {
+                vec![
+                    OverlayRect {
+                        x: body.x(),
+                        y: body.y(),
+                        width: body.width(),
+                        height: body.height(),
+                        color: if body.embedded {
+                            [1., 0.2, 0.2, 1.]
+                        } else {
+                            [0.15, 0.8, 1., 1.]
+                        },
+                    },
+                    OverlayRect {
+                        x: body.x() + 4.0,
+                        y: body.y() + 2.0,
+                        width: 2.0,
+                        height: 2.0,
+                        color: [0.05, 0.1, 0.2, 1.],
+                    },
+                ]
+            })
+            .unwrap_or_default();
+        let Some(render) =
+            view.present_tiled_with_overlays(&snapshot.frame.terrain.image, &overlays)?
+        else {
             return Ok(());
         };
         if let Some(last) = self.last_draw.replace(now) {
@@ -160,7 +205,7 @@ impl App {
         }
         self.draws += 1;
         let elapsed = self.report.elapsed().as_secs_f64();
-        if elapsed >= 1.0 {
+        if elapsed >= if self.options.play { 0.1 } else { 1.0 } {
             self.intervals.sort_by(f64::total_cmp);
             let percentile = |p: f64| {
                 self.intervals
@@ -171,11 +216,11 @@ impl App {
             let (p95, p99) = (percentile(0.95), percentile(0.99));
             let draw_fps = self.draws as f64 / elapsed;
             let sim_hz = (snapshot.tick - self.last_tick) as f64 / elapsed;
-            let frame = &snapshot.frame;
+            let frame = &snapshot.frame.terrain;
             view.window.set_title(&format!("Charon | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
                 snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
             let row = format!(
-                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{}",
+                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{},{:.3},{:.3},{},{},{},{}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.work_ms,
                 snapshot.late_ms,
@@ -183,7 +228,7 @@ impl App {
                 frame.active_tiles,
                 frame.visited_cells,
                 frame.workers_configured,
-                frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms, frame.converted_cells
+                frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms, frame.converted_cells, snapshot.frame.player.map_or(0.0, |p|p.x()), snapshot.frame.player.map_or(0.0, |p|p.y()), snapshot.frame.player.is_some_and(|p|p.grounded),snapshot.frame.player.is_some_and(|p|p.embedded),snapshot.frame.sand_solid, render.overlay_upload_bytes
             );
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -228,7 +273,12 @@ impl ApplicationHandler for App {
                 self.cursor = Some((position.x, position.y))
             }
             WindowEvent::CursorLeft { .. } => self.cursor = None,
-            WindowEvent::Focused(false) => self.buttons.fill(false),
+            WindowEvent::Focused(false) => {
+                self.buttons.fill(false);
+                self.game_command(GameCommand::Left(false));
+                self.game_command(GameCommand::Right(false));
+                self.game_command(GameCommand::Dig(false));
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 let index = match button {
                     MouseButton::Left => Some(0),
@@ -240,12 +290,24 @@ impl ApplicationHandler for App {
                     self.buttons[index] = state == ElementState::Pressed;
                 }
             }
-            WindowEvent::KeyboardInput { event, .. }
-                if event.state == ElementState::Pressed && !event.repeat =>
-            {
+            WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
+                let down = event.state == ElementState::Pressed;
                 match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
-                    PhysicalKey::Code(KeyCode::KeyR) => self.submit(Command::Clear),
+                    PhysicalKey::Code(KeyCode::KeyA | KeyCode::ArrowLeft) => {
+                        self.game_command(GameCommand::Left(down))
+                    }
+                    PhysicalKey::Code(KeyCode::KeyD | KeyCode::ArrowRight) => {
+                        self.game_command(GameCommand::Right(down))
+                    }
+                    PhysicalKey::Code(KeyCode::KeyF) => self.game_command(GameCommand::Dig(down)),
+                    PhysicalKey::Code(KeyCode::Space) if down => {
+                        self.game_command(GameCommand::Jump)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyB) if down => {
+                        self.game_command(GameCommand::ToggleSand)
+                    }
+                    PhysicalKey::Code(KeyCode::Escape) if down => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::KeyR) if down => self.submit(Command::Clear),
                     _ => {}
                 }
             }
@@ -277,17 +339,32 @@ impl ApplicationHandler for App {
 }
 fn main() -> Result<()> {
     let options = Options::parse()?;
-    let runtime = Runtime::start(SandWorld::new(
-        options.width,
-        options.height,
-        options.workers,
-    )?)?;
-    for x in [options.width / 4, options.width / 2, options.width * 3 / 4] {
-        runtime.submit(Command::Paint {
+    if let Some(path) = &options.replay {
+        if options.input_log.is_some() {
+            return Err("replay cannot record to an input log".into());
+        }
+        let ticks = trace::replay(path, options.workers)?;
+        println!(
+            "replay_ticks={ticks} checks=terrain,player,input_state workers={}",
+            options.workers
+        );
+        return Ok(());
+    }
+    let mut game = Game::new(options.width, options.height, options.workers, options.play)?;
+    if let Some(path) = &options.input_log {
+        game.record_to(path)?;
+    }
+    let runtime = Runtime::start(game)?;
+    for x in if options.play {
+        vec![]
+    } else {
+        vec![options.width / 4, options.width / 2, options.width * 3 / 4]
+    } {
+        runtime.submit(GameCommand::Terrain(Command::Paint {
             x,
             y: 8,
             material: SAND,
-        })?;
+        }))?;
     }
     if options.smoke {
         let timeout = Instant::now() + Duration::from_secs(70);
@@ -305,7 +382,7 @@ fn main() -> Result<()> {
             }
             std::thread::sleep(Duration::from_millis(2));
         };
-        if snapshot.frame.sand == 0 {
+        if snapshot.frame.terrain.sand == 0 {
             return Err("smoke scene contains no sand".into());
         }
         let instance = gpu::instance();
@@ -316,10 +393,10 @@ fn main() -> Result<()> {
             options.width as u32,
             options.height as u32,
         ))?;
-        gpu.smoke_tiled(&snapshot.frame.image, &options.output)?;
+        gpu.smoke_tiled(&snapshot.frame.terrain.image, &options.output)?;
         smoke::verify_updates(&mut gpu, options.width, options.height)?;
         println!("simulation_tick={} sand={} workers_used={}/{} tick_work_ms={:.3} (smoke, not FPS verification)",
-            snapshot.tick, snapshot.frame.sand, snapshot.frame.workers_used, snapshot.frame.workers_configured, snapshot.work_ms);
+            snapshot.tick, snapshot.frame.terrain.sand, snapshot.frame.terrain.workers_used, snapshot.frame.terrain.workers_configured, snapshot.work_ms);
         return Ok(());
     }
     let event_loop = EventLoop::new()?;

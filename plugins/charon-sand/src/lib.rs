@@ -72,6 +72,16 @@ impl SandWorld {
         Ok(world)
     }
 
+    /// Read authoritative material on the simulation owner thread. Out of bounds is None.
+    /// Games decide which materials block actors, projectiles, or other systems.
+    pub fn material_at(&self, x: i32, y: i32) -> Option<u8> {
+        if x < 0 || y < 0 || x as usize >= self.width || y as usize >= self.height {
+            None
+        } else {
+            Some(self.cells[y as usize * self.width + x as usize])
+        }
+    }
+
     /// Stable checksum of the authoritative materials, independent of worker order.
     pub fn checksum(&self) -> u64 {
         self.cells.iter().fold(0xcbf29ce484222325, |hash, &cell| {

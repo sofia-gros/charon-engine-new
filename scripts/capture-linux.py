@@ -87,6 +87,11 @@ class Input:
         self.xt.XTestFakeButtonEvent(self.display, button, int(down), 0)
         self.x.XFlush(self.display)
 
+    def hold(self, symbol, down):
+        code = self.x.XKeysymToKeycode(self.display, symbol)
+        self.xt.XTestFakeKeyEvent(self.display, code, int(down), 0)
+        self.x.XFlush(self.display)
+
     def key(self, symbol):
         code = self.x.XKeysymToKeycode(self.display, symbol)
         for down in (1, 0):
@@ -106,12 +111,13 @@ class Input:
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer"), default="sandbox")
     sample = parser.parse_args().sample
-    package = "charon-sandbox" if sample == "sandbox" else "charon-dialogue-sample"
+    package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
     local = LOCAL / sample
-    duration = 14 if sample == "sandbox" else 12
+    duration = 12 if sample == "dialogue" else 14
+    trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
     MEDIA.mkdir(parents=True, exist_ok=True)
@@ -168,7 +174,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample == "sandbox" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play", "--input-log", str(trace_path)] if sample == "platformer" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             inputs = Input()
@@ -205,7 +211,7 @@ EndSection
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
                 inputs.key(ord("r"))
-            else:
+            elif sample == "dialogue":
                 at(1)
                 inputs.key(ord(" "))
                 at(3)
@@ -218,6 +224,22 @@ EndSection
                 inputs.key(ord("2"))
                 at(10)
                 subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
+            else:
+                at(1)
+                inputs.hold(ord("d"), True)
+                at(2)
+                inputs.hold(ord("d"), False)
+                inputs.key(ord(" "))
+                at(4)
+                inputs.key(ord("b"))
+                at(5.5)
+                inputs.hold(ord("f"), True)
+                at(8.5)
+                inputs.hold(ord("f"), False)
+                at(9)
+                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
+                at(10)
+                inputs.key(ord("r"))
             capture_thread.join(timeout=10)
             if capture_thread.is_alive() or capture_errors:
                 raise RuntimeError(f"screen capture failed: {capture_errors}")
@@ -235,10 +257,24 @@ EndSection
                 assert int(rows[-1]["upload_bytes"]) == 0, "idle image was uploaded"
                 checks = {"peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
                           "checks": ["mouse painting", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
-            else:
+            elif sample == "dialogue":
                 pages = [row["page"] for row in rows]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
                 checks = {"pages": pages, "checks": ["both choices", "keyboard restart", "Escape shutdown"]}
+            else:
+                xs = [float(row["player_x"]) for row in rows]
+                ys = [float(row["player_y"]) for row in rows]
+                assert max(xs) - min(xs) > 40, "movement input did not move player"
+                assert min(ys) < 150, "jump did not leave the platform"
+                assert max(ys) > 240, "dig did not destroy the support"
+                assert any(row["sand_solid"] == "false" and 167 <= float(row["player_y"]) <= 169 and row["grounded"] == "true" for row in rows), "sand collision policy did not change"
+                assert all(row["embedded"] == "false" for row in rows), "player became embedded"
+                assert 119 <= xs[-1] <= 121 and 161 <= ys[-1] <= 163, "reset did not restore player"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                assert "replay_ticks=" in replay.stdout, "headless replay did not complete"
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"replay": replay.stdout.strip(), "player_x_range": [min(xs), max(xs)], "player_y_range": [min(ys), max(ys)],
+                          "checks": ["movement", "jump", "sand/wall collision policy", "support destruction", "reset", "Escape shutdown", "authoritative input replay with 1 worker"]}
             assert "error:" not in (local / f"{sample}.log").read_text().lower()
             images = []
             for _, path in frames:
