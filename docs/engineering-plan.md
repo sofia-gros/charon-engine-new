@@ -40,7 +40,7 @@
 - 全テスト反復や巨大な先行設計で時間/利用枠を浪費しない。小さく動く変更と必要な検証を優先する。
 
 ## 現在地と次の一手
-- 実装: stdだけの実行基盤、Rayonの砂plugin、wgpu/winitのサンプルをCargo workspaceに分離。pluginを使わないcoreの検証も可能。
+- 実装: stdだけの実行基盤、Rayonの砂plugin、wgpu/winitのサンプルをCargo workspaceに分離。砂pluginなしでcoreの検証も可能。
 - 描画/入力と60 Hz更新は別スレッド。ワーカー数はCLIで1..32。移動提案は並列、競合の適用は所有者が行う。
 - 移動は32×32の活動領域だけを更新し、休止/再起床する。RGBA生成/転送は現状全セル。大規模世界対応済みとは扱わない。
 - 合格済み: 実質4テスト（非Sand plugin/不変snapshot、保存則/競合、並列+活動版と全走査版の一致、範囲外/リセット/上端）、Clippy。
@@ -50,6 +50,7 @@
 - この計測は共有クラウドCPUの結果。全tickに処理量保証を与えるものでも、画面のFPS測定でもない。
 - Rustはstableに移行済み。初回導入/ツール更新はsetup、日常は既存出力を再利用。操作と検証方法は `docs/usage.md`。
 - Windows用PowerShell起動/記録とLinux/Windows CI定義を追加。GitHub CIの結果や成果物生成の成功はまだ未確認。
-- GitHub GitアクセスとAPIアクセスは別。APIは現在ネットワーク拒否で、PR作成・CI結果取得にはapi.github.comの許可が必要。
+- GitHubの `codex/engine-bootstrap` ブランチへ送信済み。mainには未統合。CIは公開HTMLで起動/待機を確認、結果は未確認。
+- APIは現在ネットワーク拒否。PR作成や詳細なCIログ取得用にapi.github.comの許可を環境設定の下書きへ追加したが、適用は未確認。
 - 次の実機確認はWindowsで起動・砂/壁/消去・R・終了・計測CSVを短く試す。確認待ちに剛体や大量機能を積み増さない。
 - 未決事項: 最低動作環境、最終セル密度/世界規模、制作担当向け編集方法、最初の製品の中心となる遊び。

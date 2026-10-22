@@ -47,6 +47,10 @@ case "${1:-help}" in
     ;;
   smoke)
     require_project
+    if [ -d /workspace/.cloud-tools ] && [ -z "${MESA_SHADER_CACHE_DIR:-}" ]; then
+      export MESA_SHADER_CACHE_DIR=/workspace/.cloud-tools/mesa-cache
+      mkdir -p "$MESA_SHADER_CACHE_DIR"
+    fi
     if [ -z "${VK_DRIVER_FILES:-}" ] && [ ! -d /dev/dri ] && [ -f /usr/lib/chromium/vk_swiftshader_icd.json ]; then
       export VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json
     fi
