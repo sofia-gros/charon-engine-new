@@ -40,18 +40,18 @@
 - 全テスト反復や巨大な先行設計で時間/利用枠を浪費しない。小さく動く変更と必要な検証を優先する。
 
 ## 現在地と次の一手
-- 実装: stdだけの実行基盤、Rayonの砂plugin、wgpu/winitのサンプルをCargo workspaceに分離。砂pluginなしでcoreの検証も可能。
-- 描画/入力と60 Hz更新は別スレッド。ワーカー数はCLIで1..32。移動提案は並列、競合の適用は所有者が行う。
-- 移動は32×32の活動領域だけを更新し、休止/再起床する。RGBA生成/転送は現状全セル。大規模世界対応済みとは扱わない。
-- 合格済み: 実質4テスト（非Sand plugin/不変snapshot、保存則/競合、並列+活動版と全走査版の一致、範囲外/リセット/上端）、Clippy。
-- LinuxでSwiftShaderのフルHD shader出力全2,073,600画素を照合。Xorg dummy+llvmpipeでウィンドウ表示・CSV記録・自動終了を確認。
-- Linuxの実入力で壁作成・砂追加/堆積・壁の穴開け・Rリセット・Escape終了を確認。再現用capture-linux.pyとMP4/GIF/PNGはGit管理し、入口はusage.md。
-- Windows MSVCターゲットのcargo checkは成功。Windows実機での実行、ハードウェアGPU描画、144 FPS達成は未検証。
-- CPU release計測: 480×270、同一の砂追加負荷、warmup120+600tick。p95は1worker約1.72ms、4worker約1.55ms。後者は実使用4。
-- この計測は共有クラウドCPUの結果。全tickに処理量保証を与えるものでも、画面のFPS測定でもない。
-- Rustはstableに移行済み。初回導入/ツール更新はsetup、日常は既存出力を再利用。操作と検証方法は `docs/usage.md`。
-- Windows用PowerShell起動/記録とLinux/Windows CI定義を追加。GitHub CIの結果や成果物生成の成功はまだ未確認。
-- GitHubの `codex/engine-bootstrap` ブランチへ送信済み。mainには未統合。CIは公開HTMLで起動/待機を確認、結果は未確認。
-- APIは現在ネットワーク拒否。PR作成や詳細なCIログ取得用にapi.github.comの許可を環境設定の下書きへ追加したが、適用は未確認。
-- 当面はLinuxで操作/描画を検証し、動画で共有して進める。Windows固有動作と実機FPSは後日の確認に分け、ユーザーの即時実機操作を前提にしない。
+- 実装: std実行基盤、wgpu/winit描画基盤、砂/会話plugin、2サンプルをCargo workspaceに分離。共通基盤は砂に依存しない。
+- 描画/入力と60 Hz更新は別スレッド。砂はワーカー数CLI指定、移動提案をRayonで並列化し、競合適用は所有者が行う。
+- 移動は32×32の活動領域のみ。休止/境界再起床に対応。RGBA生成/転送は全セルのまま。大規模世界対応済みとは扱わない。
+- CPU検証8件: 実行基盤1、砂6、会話1。保存則/移動競合/休止再起床/部分タイル境界/seed入力列を全走査基準と比較。1/2/4ワーカーを対象にする。
+- 計測は4シーン×2密度×3ワーカーの24条件。更新と画像生成の内訳、実使用ワーカー、最終状態hashを記録し、ワーカー間の結果一致を確認。
+- 共有クラウドの960×540崩落は4workerでp95約5.40ms/最大16.16ms。1/2workerでは最大tickが16.67msを超える試行あり。実機性能保証ではない。
+- CPU計測の再実行はscripts/measure.py。条件/ソースhash付きCSV/JSONはdocs/benchmarks/。静止時の全セル画像生成、競合処理の直列部分が今後の改善対象。
+- Linux SwiftShaderでフルHD shader出力全2,073,600画素を照合。共通描画を使う砂/会話の実ウィンドウもXorg dummy+llvmpipeで検証。
+- Linux実入力のMP4/GIF/PNG・状態CSVはdocs/media/、入口はusage.md。砂は追加/壁/穴開け/リセット、会話は2分岐/再開/終了を対象にする。
+- Windows MSVCターゲットのcargo checkは両サンプルで成功。Windows実機操作、ハードウェアGPU、144 FPS達成は未検証。クラウドCPU値で代用しない。
+- Rust stable、Cargo.lock管理。初回導入/ツール更新はsetup、日常は既存ビルドを再利用。操作と検証方法はdocs/usage.md。
+- Windows用PowerShell起動/記録とLinux/Windows CI定義あり。GitHub CIの成功は未確認。APIはネットワーク拒否で、PR作成は未完了。
+- GitHub開発ブランチはcodex/engine-bootstrap。main未統合。API許可追加は環境設定の下書きへ保存済み、適用未確認。
+- 次は画像生成/転送の差分化を小さく実装し、今回の同一負荷と状態比較で効果と正しさを検証する。剛体/液体の大量追加を先行させない。
 - 未決事項: 最低動作環境、最終セル密度/世界規模、制作担当向け編集方法、最初の製品の中心となる遊び。

@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 """Record real X11 input and rendering to MP4/GIF/PNG on a private display."""
 
+import argparse
 import csv
+import hashlib
 import ctypes as C
 import ctypes.util
 import json
@@ -103,8 +105,15 @@ class Input:
 
 
 def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--sample", choices=("sandbox", "dialogue"), default="sandbox")
+    sample = parser.parse_args().sample
+    package = "charon-sandbox" if sample == "sandbox" else "charon-dialogue-sample"
+    prefix = f"{sample}-linux"
+    local = LOCAL / sample
+    duration = 14 if sample == "sandbox" else 12
     os.chdir(ROOT)
-    LOCAL.mkdir(parents=True, exist_ok=True)
+    local.mkdir(parents=True, exist_ok=True)
     MEDIA.mkdir(parents=True, exist_ok=True)
     xorg = "/usr/lib/xorg/Xorg"
     for tool in (xorg, "xauth", "import", "ffmpeg", "cargo"):
@@ -112,7 +121,7 @@ def main():
             raise SystemExit(f"missing recording prerequisite: {tool}")
     if not Path("/usr/lib/xorg/modules/drivers/dummy_drv.so").exists():
         raise SystemExit("Xorg dummy driver is required for this Linux capture helper")
-    subprocess.run(["cargo", "build", "--locked", "-p", "charon-sandbox"], check=True)
+    subprocess.run(["cargo", "build", "--locked", "-p", package], check=True)
     processes = []
     inputs = None
     capture_stop = threading.Event()
@@ -154,24 +163,24 @@ Section "Screen"
 EndSection
 ''')
         try:
-            with open(LOCAL / "xorg.log", "w") as log:
+            with open(local / "xorg.log", "w") as log:
                 server = subprocess.Popen([xorg, env["DISPLAY"], "-config", str(config), "-auth", env["XAUTHORITY"], "-logfile", str(temporary / "xorg.log"), "-nolisten", "tcp", "-noreset", "-novtswitch", "-extension", "MIT-SHM"], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
-            with open(LOCAL / "sandbox.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug/charon-sandbox"), "--workers", "4", "--seconds", "25", "--record", str(LOCAL / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+            with open(local / f"{sample}.log", "w") as log:
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample == "sandbox" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
-            wait_for(lambda: "surface=" in (LOCAL / "sandbox.log").read_text())
+            wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             inputs = Input()
             inputs.focus()
             start = time.monotonic()
             frames, capture_errors = [], []
             def capture():
                 try:
-                    for index in range(112):
+                    for index in range(duration * 8):
                         if capture_stop.wait(max(0, start + index / 8 - time.monotonic())):
                             break
-                        if time.monotonic() >= start + 14:
+                        if time.monotonic() >= start + duration:
                             break
                         path = temporary / f"frame-{index:04}.png"
                         before = time.monotonic()
@@ -185,48 +194,75 @@ EndSection
             capture_thread.start()
             def at(seconds):
                 time.sleep(max(0, start + seconds - time.monotonic()))
-            at(0.5)
-            inputs.drag(2, [(x, 700) for x in range(700, 1221, 8)])
-            at(3.4)
-            inputs.drag(1, [(880 + (i % 20) * 8, 180) for i in range(65)])
-            at(7)
-            subprocess.run(["import", "-window", "root", str(MEDIA / "sandbox-linux.png")], env=env, check=True, timeout=10)
-            at(8)
-            inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
-            at(11)
-            inputs.key(ord("r"))
+            if sample == "sandbox":
+                at(0.5)
+                inputs.drag(2, [(x, 700) for x in range(700, 1221, 8)])
+                at(3.4)
+                inputs.drag(1, [(880 + (i % 20) * 8, 180) for i in range(65)])
+                at(7)
+                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
+                at(8)
+                inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
+                at(11)
+                inputs.key(ord("r"))
+            else:
+                at(1)
+                inputs.key(ord(" "))
+                at(3)
+                inputs.key(ord("1"))
+                at(5)
+                inputs.key(ord("r"))
+                at(7)
+                inputs.key(ord(" "))
+                at(9)
+                inputs.key(ord("2"))
+                at(10)
+                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
             capture_thread.join(timeout=10)
             if capture_thread.is_alive() or capture_errors:
                 raise RuntimeError(f"screen capture failed: {capture_errors}")
             assert len(frames) >= 20, "insufficient captured frames"
             inputs.key(0xff1b)  # Escape verifies normal application shutdown.
             if client.wait(timeout=5) != 0:
-                raise RuntimeError("sandbox exited with an error")
-            rows = list(csv.DictReader((LOCAL / "metrics.csv").open()))
-            peak = max(int(row["sand"]) for row in rows)
-            assert peak > 147, "mouse painting did not add sand"
-            assert int(rows[-1]["sand"]) == 0, "keyboard reset did not clear sand"
-            assert int(rows[-1]["active_tiles"]) == 0, "reset world did not sleep"
-            assert "error:" not in (LOCAL / "sandbox.log").read_text().lower()
+                raise RuntimeError(f"{sample} exited with an error")
+            rows = list(csv.DictReader((local / "metrics.csv").open()))
+            if sample == "sandbox":
+                peak = max(int(row["sand"]) for row in rows)
+                assert peak > 147, "mouse painting did not add sand"
+                assert int(rows[-1]["sand"]) == 0, "keyboard reset did not clear sand"
+                assert int(rows[-1]["active_tiles"]) == 0, "reset world did not sleep"
+                checks = {"peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
+                          "checks": ["mouse painting", "keyboard reset", "sleep after reset", "Escape shutdown"]}
+            else:
+                pages = [row["page"] for row in rows]
+                assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
+                checks = {"pages": pages, "checks": ["both choices", "keyboard restart", "Escape shutdown"]}
+            assert "error:" not in (local / f"{sample}.log").read_text().lower()
             images = []
             for _, path in frames:
                 with Image.open(path) as image:
                     images.append(image.convert("RGB"))
             durations = [max(10, round((b[0] - a[0]) * 100) * 10) for a, b in zip(frames, frames[1:])]
             durations.append(130)
-            images[0].save(MEDIA / "sandbox-linux.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
+            images[0].save(MEDIA / f"{prefix}.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
             # The timed image sequence is also available as an ordinary H.264
             # video. GIF input preserves the measured, quantized frame delays.
-            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(MEDIA / "sandbox-linux.gif"), "-fps_mode", "vfr", "-c:v", "libx264", "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(MEDIA / "sandbox-linux.mp4")], check=True, timeout=30)
-            report = {"engine_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(MEDIA / f"{prefix}.gif"), "-fps_mode", "vfr", "-c:v", "libx264", "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(MEDIA / f"{prefix}.mp4")], check=True, timeout=30)
+            source_hash = hashlib.sha256()
+            for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
+                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml"):
+                    source_hash.update(str(path.relative_to(ROOT)).encode())
+                    source_hash.update(path.read_bytes())
+            report = {"source_sha256": source_hash.hexdigest(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                       "platform": "Linux Xorg dummy / software GPU", "target_capture_fps": 8,
                       "captured_frames": len(frames), "gif_duration_ms": sum(durations),
                       "source_size": [1920, 1080], "gif_size": [960, 540],
-                      "peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
-                      "checks": ["mouse painting", "keyboard reset", "sleep after reset", "Escape shutdown"]}
-            (LOCAL / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+                      **checks}
+            (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")
+            (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")
+            shutil.copyfile(local / "metrics.csv", MEDIA / f"{prefix}.csv")
             print(json.dumps(report, indent=2))
-            print("Recorded docs/media/sandbox-linux.mp4, sandbox-linux.gif and sandbox-linux.png")
+            print(f"Recorded docs/media/{prefix}.mp4, .gif and .png")
         finally:
             capture_stop.set()
             if capture_thread:

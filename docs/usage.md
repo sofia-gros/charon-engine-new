@@ -42,17 +42,31 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 タイトルに描画FPS・sim Hz・tick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
-PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。CSVは1秒区間の値で、tick処理時間は直近tickの値。全tickの分布やGPU実行時間、物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。CSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+
+## Dialogue
+
+```console
+cargo run --locked --release -p charon-dialogue-sample
+```
+
+Spaceまたはクリックで進む。選択画面で1/2、Rで最初から、Escで終了。砂を依存に含めず、同じ実行基盤とwgpu描画基盤を使う小さな会話サンプル。文章表示はサンプル用の英字ビットマップで、日本語組版・音声・シナリオ編集機能はまだ含まない。
+
+[Linux実行動画（MP4）](media/dialogue-linux.mp4) · [GIF](media/dialogue-linux.gif) · [スクリーンショット](media/dialogue-linux.png)
+
+実入力で2つの分岐と再開を確認した約12秒の記録。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
 
 ## 検証
 
 ```console
-cargo test --locked -p charon-runtime -p charon-sand
+cargo test --locked -p charon-runtime -p charon-sand -p charon-dialogue
 cargo clippy --locked --workspace --all-targets -- -D warnings
-cargo run --locked --release -p charon-sand --example measure -- 4
+python3 scripts/measure.py
 ```
 
-measureは480×270セルへ規則的に砂を追加し、120tickのウォームアップ後600tickのCPU処理時間を測定する。最後の砂数・活動量も出力する。同じ条件でワーカー数だけ変えて比較する。実時間の60 Hz試験とは別。
+measureは少量投入・連続投入・支えを壊す崩落・静止した堆積を、480×270/960×540セル、1/2/4ワーカーで比較する。各条件は60tickのウォームアップと240tickの計測。崩落は計測開始時に支えを削除する。CPU全体のp50/p95/p99/最大、更新/画像生成それぞれのp95、画像バイト数、実使用ワーカー数、最終状態checksumをCSVへ出す。異なるワーカー数で最終状態が違えば失敗する。
+
+`scripts/measure.py` はPython標準ライブラリだけで実行でき、CSVとコンパイラ/CPU/ソースhashを `artifacts/local/benchmarks/` へ保存する。Rust単体では `cargo run --locked --release -p charon-sand --example measure`。実時間60 HzやGPUの試験とは別。[Linux計測CSV](benchmarks/sand-linux.csv)・[計測条件](benchmarks/sand-linux.json)も参照。複数ワーカーが常に速いという保証はない。
 
 ウィンドウなしでshader出力を検証:
 

@@ -1,4 +1,12 @@
-use charon_sand::Frame;
+use std::sync::Arc;
+use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
+/// Borrowed RGBA8 image, independent of any simulation plugin.
+#[derive(Clone, Copy)]
+pub struct ImageView<'a> {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: &'a [u8],
+}
 use std::{error::Error, fs::File, io::BufWriter, path::Path, sync::mpsc, time::Duration};
 
 pub type Result<T> = std::result::Result<T, Box<dyn Error>>;
@@ -117,10 +125,18 @@ impl Gpu {
         })
     }
 
-    pub fn upload(&self, frame: &Frame) {
+    pub fn upload(&self, frame: &ImageView<'_>) {
+        assert_eq!(
+            (frame.width, frame.height),
+            (
+                self.texture.width() as usize,
+                self.texture.height() as usize
+            )
+        );
+        assert_eq!(frame.rgba.len(), frame.width * frame.height * 4);
         self.queue.write_texture(
             self.texture.as_image_copy(),
-            &frame.rgba,
+            frame.rgba,
             wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(frame.width as u32 * 4),
@@ -154,7 +170,7 @@ impl Gpu {
 
     /// Exercise the same shader/pipeline as the window and verify every output
     /// pixel against the nearest-neighbour scaled simulation snapshot.
-    pub fn smoke(&self, frame: &Frame, output: &Path) -> Result<()> {
+    pub fn smoke(&self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
         const WIDTH: u32 = 1920;
         const HEIGHT: u32 = 1080;
         self.upload(frame);
@@ -235,4 +251,124 @@ impl Gpu {
         );
         Ok(())
     }
+}
+
+pub struct WindowRenderer {
+    pub window: Arc<Window>,
+    instance: wgpu::Instance,
+    surface: wgpu::Surface<'static>,
+    config: wgpu::SurfaceConfiguration,
+    gpu: Gpu,
+}
+impl WindowRenderer {
+    pub fn new(
+        event_loop: &ActiveEventLoop,
+        title: &str,
+        width: u32,
+        height: u32,
+        software: bool,
+    ) -> Result<Self> {
+        let window = Arc::new(
+            event_loop.create_window(
+                Window::default_attributes()
+                    .with_title(title)
+                    .with_inner_size(PhysicalSize::new(1920, 1080)),
+            )?,
+        );
+        let instance = window_instance(event_loop.owned_display_handle());
+        let surface = instance.create_surface(window.clone())?;
+        let adapter = pollster::block_on(adapter(&instance, Some(&surface), software))?;
+        let size = window.inner_size();
+        let mut config = surface
+            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
+            .ok_or("surface has no supported format")?;
+        config.format = surface
+            .get_capabilities(&adapter)
+            .formats
+            .iter()
+            .copied()
+            .find(|f| !f.is_srgb())
+            .unwrap_or(config.format);
+        config.present_mode = wgpu::PresentMode::AutoVsync;
+        let gpu = pollster::block_on(Gpu::new(&adapter, config.format, width, height))?;
+        surface.configure(&gpu.device, &config);
+        println!(
+            "surface={}x{} present={:?} image={}x{}",
+            config.width, config.height, config.present_mode, width, height
+        );
+        println!("Draw FPS counts submissions; GPU execution and physical presentation are not measured.");
+        Ok(Self {
+            window,
+            instance,
+            surface,
+            config,
+            gpu,
+        })
+    }
+    pub fn resize(&mut self, size: PhysicalSize<u32>) {
+        if size.width > 0 && size.height > 0 {
+            self.config.width = size.width;
+            self.config.height = size.height;
+            self.surface.configure(&self.gpu.device, &self.config);
+        }
+    }
+    /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
+    pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
+        let size = self.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(None);
+        }
+        let upload_start = std::time::Instant::now();
+        let upload_bytes = image.map_or(0, |image| {
+            self.gpu.upload(&image);
+            image.rgba.len()
+        });
+        let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
+        let acquire_start = std::time::Instant::now();
+        let (texture, reconfigure) = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(texture) => (texture, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => (texture, true),
+            wgpu::CurrentSurfaceTexture::Outdated => {
+                self.surface.configure(&self.gpu.device, &self.config);
+                return Ok(None);
+            }
+            wgpu::CurrentSurfaceTexture::Lost => {
+                self.surface = self.instance.create_surface(self.window.clone())?;
+                self.surface.configure(&self.gpu.device, &self.config);
+                return Ok(None);
+            }
+            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => {
+                return Ok(None)
+            }
+            wgpu::CurrentSurfaceTexture::Validation => {
+                return Err("surface validation failed".into())
+            }
+        };
+        let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+        let encode_start = std::time::Instant::now();
+        let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
+        self.gpu.draw(
+            &mut encoder,
+            &texture.texture.create_view(&Default::default()),
+        );
+        self.gpu.queue.submit([encoder.finish()]);
+        self.window.pre_present_notify();
+        self.gpu.queue.present(texture);
+        if reconfigure {
+            self.surface.configure(&self.gpu.device, &self.config);
+        }
+        Ok(Some(RenderStats {
+            upload_enqueue_ms,
+            upload_bytes,
+            acquire_ms,
+            encode_present_ms: encode_start.elapsed().as_secs_f64() * 1000.0,
+        }))
+    }
+}
+#[derive(Clone, Copy, Default)]
+pub struct RenderStats {
+    pub upload_enqueue_ms: f64,
+    pub upload_bytes: usize,
+    pub acquire_ms: f64,
+    pub encode_present_ms: f64,
 }

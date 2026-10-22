@@ -2,6 +2,7 @@
 
 use charon_runtime::Simulation;
 use rayon::prelude::*;
+use std::time::Instant;
 
 pub const AIR: u8 = 0;
 pub const SAND: u8 = 1;
@@ -23,6 +24,8 @@ pub struct Frame {
     pub visited_cells: usize,
     pub workers_configured: usize,
     pub workers_used: u32,
+    pub update_ms: f64,
+    pub snapshot_ms: f64,
 }
 
 pub struct SandWorld {
@@ -42,6 +45,34 @@ fn priority(index: usize, tick: u64) -> u64 {
 }
 
 impl SandWorld {
+    /// Load a bounded material grid. Protected side/bottom walls must be present.
+    pub fn from_cells(
+        width: usize,
+        height: usize,
+        workers: usize,
+        cells: Vec<u8>,
+    ) -> Result<Self, String> {
+        let mut world = Self::new(width, height, workers)?;
+        if cells.len() != width * height
+            || cells.iter().any(|&cell| cell > WALL)
+            || (0..height).any(|y| cells[y * width] != WALL || cells[y * width + width - 1] != WALL)
+            || cells[(height - 1) * width..]
+                .iter()
+                .any(|&cell| cell != WALL)
+        {
+            return Err("material grid must match dimensions and contain valid materials and protected walls".into());
+        }
+        world.cells = cells;
+        Ok(world)
+    }
+
+    /// Stable checksum of the authoritative materials, independent of worker order.
+    pub fn checksum(&self) -> u64 {
+        self.cells.iter().fold(0xcbf29ce484222325, |hash, &cell| {
+            (hash ^ u64::from(cell)).wrapping_mul(0x100000001b3)
+        })
+    }
+
     pub fn new(width: usize, height: usize, workers: usize) -> Result<Self, String> {
         if !(8..=1920).contains(&width)
             || !(8..=1080).contains(&height)
@@ -182,10 +213,13 @@ impl Simulation for SandWorld {
     type Command = Command;
     type Frame = Frame;
     fn step(&mut self, commands: Vec<Command>) -> Frame {
+        let start = Instant::now();
         for command in commands {
             self.command(command);
         }
         let (active_tiles, visited_cells, workers_used) = self.advance();
+        let update_ms = start.elapsed().as_secs_f64() * 1000.0;
+        let snapshot_start = Instant::now();
         let mut rgba = Vec::with_capacity(self.cells.len() * 4);
         let mut sand = 0;
         for &cell in &self.cells {
@@ -208,6 +242,8 @@ impl Simulation for SandWorld {
             visited_cells,
             workers_configured: self.pool.current_num_threads(),
             workers_used,
+            update_ms,
+            snapshot_ms: snapshot_start.elapsed().as_secs_f64() * 1000.0,
         }
     }
 }
@@ -215,6 +251,82 @@ impl Simulation for SandWorld {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sleeping_beds_wake_across_tile_edges_without_losing_mass() {
+        for (gap_x, floor_y) in [(31, 31), (32, 32), (63, 63), (64, 64)] {
+            let mut world = SandWorld::new(130, 98, 4).unwrap();
+            for y in floor_y - 8..floor_y {
+                world.cells[y * 130 + 1..y * 130 + 129].fill(SAND);
+            }
+            world.cells[floor_y * 130 + 1..floor_y * 130 + 129].fill(WALL);
+            world.advance();
+            assert!(world.awake.iter().all(|awake| !awake));
+            let mass = world.cells.iter().filter(|&&c| c == SAND).count();
+            let mut reference = SandWorld::from_cells(130, 98, 1, world.cells.clone()).unwrap();
+            reference.tick = world.tick;
+            reference.full_scan = true;
+            let opening = Command::Paint {
+                x: gap_x,
+                y: floor_y + 3,
+                material: AIR,
+            };
+            world.command(opening);
+            reference.command(opening);
+            let before = world.checksum();
+            world.advance();
+            reference.advance();
+            assert_ne!(world.checksum(), before, "sleeping support did not wake");
+            assert_eq!(world.cells, reference.cells);
+            for _ in 0..180 {
+                world.advance();
+                reference.advance();
+                assert_eq!(world.cells, reference.cells);
+                assert_eq!(world.cells.iter().filter(|&&c| c == SAND).count(), mass);
+            }
+        }
+    }
+
+    #[test]
+    fn mixed_edits_match_reference_on_partial_tiles_for_each_worker_count() {
+        for workers in [1, 2, 4] {
+            for seed in [1_u64, 42, 999] {
+                let mut world = SandWorld::new(65, 66, workers).unwrap();
+                let mut reference = SandWorld::new(65, 66, 1).unwrap();
+                reference.full_scan = true;
+                let mut rng = seed;
+                for tick in 0..120 {
+                    for _ in 0..4 {
+                        rng = rng.wrapping_mul(6364136223846793005).wrapping_add(1);
+                        let edit = Command::Paint {
+                            x: (rng >> 16) as usize % 72,
+                            y: (rng >> 32) as usize % 72,
+                            material: ((rng >> 48) % 3) as u8,
+                        };
+                        world.command(edit);
+                        reference.command(edit);
+                    }
+                    let mass = world.cells.iter().filter(|&&c| c == SAND).count();
+                    world.advance();
+                    reference.advance();
+                    assert_eq!(
+                        world.cells, reference.cells,
+                        "workers={workers} seed={seed} tick={tick}"
+                    );
+                    assert_eq!(world.cells.iter().filter(|&&c| c == SAND).count(), mass);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn imported_cells_reject_incomplete_or_open_boundaries() {
+        assert!(SandWorld::from_cells(8, 8, 1, vec![AIR; 63]).is_err());
+        assert!(SandWorld::from_cells(8, 8, 1, vec![AIR; 64]).is_err());
+        let mut world = SandWorld::new(8, 8, 1).unwrap();
+        world.cells[10] = 255;
+        assert!(SandWorld::from_cells(8, 8, 1, world.cells).is_err());
+    }
 
     #[test]
     fn competing_grains_preserve_mass_and_walls() {

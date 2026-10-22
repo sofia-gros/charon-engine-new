@@ -1,0 +1,30 @@
+{
+  "source_sha256": "7515dc08550258efcec449b66620cb0a3a53468b0fda27e24cf6db67a519ab2e",
+  "sample": "dialogue",
+  "base_revision": "7c82296eb6e9e24ea4fddba0a9aaff07a7e1b3ef",
+  "platform": "Linux Xorg dummy / software GPU",
+  "target_capture_fps": 8,
+  "captured_frames": 96,
+  "gif_duration_ms": 12000,
+  "source_size": [
+    1920,
+    1080
+  ],
+  "gif_size": [
+    960,
+    540
+  ],
+  "pages": [
+    "Intro",
+    "Choice",
+    "River",
+    "Intro",
+    "Choice",
+    "Hill"
+  ],
+  "checks": [
+    "both choices",
+    "keyboard restart",
+    "Escape shutdown"
+  ]
+}

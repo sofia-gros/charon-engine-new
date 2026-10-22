@@ -1,6 +1,6 @@
 [workspace]
-members = ["engine/charon-runtime", "plugins/charon-sand", "samples/sandbox"]
-default-members = ["engine/charon-runtime", "plugins/charon-sand"]
+members = ["engine/charon-runtime", "engine/charon-render", "plugins/charon-sand", "plugins/charon-dialogue", "samples/sandbox", "samples/dialogue"]
+default-members = ["engine/charon-runtime", "plugins/charon-sand", "plugins/charon-dialogue"]
 resolver = "2"
 
 [workspace.package]
@@ -11,6 +11,8 @@ publish = false
 
 [workspace.dependencies]
 charon-runtime = { path = "engine/charon-runtime" }
+charon-render = { path = "engine/charon-render" }
+charon-dialogue = { path = "plugins/charon-dialogue" }
 charon-sand = { path = "plugins/charon-sand" }
 rayon = "1.11"
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "gles", "wgsl"] }

@@ -8,7 +8,7 @@ Rust製のモジュール型2Dゲームエンジン。
 
 ## Examples
 
-[Sandbox](docs/usage.md#sandbox)
+[Sandbox](docs/usage.md#sandbox) · [Dialogue](docs/usage.md#dialogue)
 
 ## License
 

@@ -1,22 +1,18 @@
-mod gpu;
-
+use charon_render::{self as gpu, Gpu, ImageView, Result, WindowRenderer};
 use charon_runtime::Runtime;
 use charon_sand::{Command, SandWorld, AIR, SAND, WALL};
-use gpu::{Gpu, Result};
 use std::{
     fs::File,
     io::Write,
     path::PathBuf,
-    sync::Arc,
     time::{Duration, Instant},
 };
 use winit::{
     application::ApplicationHandler,
-    dpi::PhysicalSize,
     event::{ElementState, MouseButton, WindowEvent},
     event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
     keyboard::{KeyCode, PhysicalKey},
-    window::{Window, WindowId},
+    window::WindowId,
 };
 
 struct Options {
@@ -76,75 +72,10 @@ impl Options {
         Ok(options)
     }
 }
-struct View {
-    window: Arc<Window>,
-    instance: wgpu::Instance,
-    surface: wgpu::Surface<'static>,
-    config: wgpu::SurfaceConfiguration,
-    gpu: Gpu,
-}
-impl View {
-    fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self> {
-        let window = Arc::new(
-            event_loop.create_window(
-                Window::default_attributes()
-                    .with_title("Charon | LMB sand · RMB erase · MMB wall · R clear")
-                    .with_inner_size(PhysicalSize::new(1920, 1080)),
-            )?,
-        );
-        let instance = gpu::window_instance(event_loop.owned_display_handle());
-        let surface = instance.create_surface(window.clone())?;
-        let adapter =
-            pollster::block_on(gpu::adapter(&instance, Some(&surface), options.software))?;
-        let size = window.inner_size();
-        let mut config = surface
-            .get_default_config(&adapter, size.width.max(1), size.height.max(1))
-            .ok_or("surface has no supported format")?;
-        config.format = surface
-            .get_capabilities(&adapter)
-            .formats
-            .iter()
-            .copied()
-            .find(|f| !f.is_srgb())
-            .unwrap_or(config.format);
-        config.present_mode = wgpu::PresentMode::AutoVsync;
-        let gpu = pollster::block_on(Gpu::new(
-            &adapter,
-            config.format,
-            options.width as u32,
-            options.height as u32,
-        ))?;
-        surface.configure(&gpu.device, &config);
-        println!(
-            "surface={}x{} present={:?} workers={} grid={}x{}",
-            config.width,
-            config.height,
-            config.present_mode,
-            options.workers,
-            options.width,
-            options.height
-        );
-        println!("Draw FPS measures submitted frames; GPU time and physical presentation are not measured.");
-        Ok(Self {
-            window,
-            instance,
-            surface,
-            config,
-            gpu,
-        })
-    }
-    fn resize(&mut self, size: PhysicalSize<u32>) {
-        if size.width > 0 && size.height > 0 {
-            self.config.width = size.width;
-            self.config.height = size.height;
-            self.surface.configure(&self.gpu.device, &self.config);
-        }
-    }
-}
 struct App {
     options: Options,
     runtime: Runtime<SandWorld>,
-    view: Option<View>,
+    view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
     uploaded: u64,
@@ -169,7 +100,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms")?;
         }
         let now = Instant::now();
         Ok(Self {
@@ -222,40 +153,15 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        if snapshot.tick != self.uploaded {
-            view.gpu.upload(&snapshot.frame);
-            self.uploaded = snapshot.tick;
-        }
-        let (texture, reconfigure) = match view.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture) => (texture, false),
-            wgpu::CurrentSurfaceTexture::Suboptimal(texture) => (texture, true),
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                view.surface.configure(&view.gpu.device, &view.config);
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Lost => {
-                view.surface = view.instance.create_surface(view.window.clone())?;
-                view.surface.configure(&view.gpu.device, &view.config);
-                return Ok(());
-            }
-            wgpu::CurrentSurfaceTexture::Occluded | wgpu::CurrentSurfaceTexture::Timeout => {
-                return Ok(())
-            }
-            wgpu::CurrentSurfaceTexture::Validation => {
-                return Err("surface validation failed".into())
-            }
+        let image = (snapshot.tick != self.uploaded).then(|| ImageView {
+            width: snapshot.frame.width,
+            height: snapshot.frame.height,
+            rgba: &snapshot.frame.rgba,
+        });
+        let Some(render) = view.present(image)? else {
+            return Ok(());
         };
-        let mut encoder = view.gpu.device.create_command_encoder(&Default::default());
-        view.gpu.draw(
-            &mut encoder,
-            &texture.texture.create_view(&Default::default()),
-        );
-        view.gpu.queue.submit([encoder.finish()]);
-        view.window.pre_present_notify();
-        view.gpu.queue.present(texture);
-        if reconfigure {
-            view.surface.configure(&view.gpu.device, &view.config);
-        }
+        self.uploaded = snapshot.tick;
         if let Some(last) = self.last_draw.replace(now) {
             self.intervals.push((now - last).as_secs_f64() * 1000.0);
         }
@@ -276,7 +182,7 @@ impl App {
             view.window.set_title(&format!("Charon | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
                 snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
             let row = format!(
-                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{}",
+                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.work_ms,
                 snapshot.late_ms,
@@ -284,7 +190,7 @@ impl App {
                 frame.active_tiles,
                 frame.visited_cells,
                 frame.workers_configured,
-                frame.workers_used
+                frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms
             );
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -302,7 +208,13 @@ impl App {
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         if self.view.is_none() {
-            match View::new(event_loop, &self.options) {
+            match WindowRenderer::new(
+                event_loop,
+                "Charon | LMB sand · RMB erase · MMB wall · R clear",
+                self.options.width as u32,
+                self.options.height as u32,
+                self.options.software,
+            ) {
                 Ok(view) => self.view = Some(view),
                 Err(error) => {
                     self.error = Some(error.to_string());
@@ -411,7 +323,14 @@ fn main() -> Result<()> {
             options.width as u32,
             options.height as u32,
         ))?;
-        gpu.smoke(&snapshot.frame, &options.output)?;
+        gpu.smoke(
+            &ImageView {
+                width: snapshot.frame.width,
+                height: snapshot.frame.height,
+                rgba: &snapshot.frame.rgba,
+            },
+            &options.output,
+        )?;
         println!("simulation_tick={} sand={} workers_used={}/{} tick_work_ms={:.3} (smoke, not FPS verification)",
             snapshot.tick, snapshot.frame.sand, snapshot.frame.workers_used, snapshot.frame.workers_configured, snapshot.work_ms);
         return Ok(());

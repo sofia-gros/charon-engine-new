@@ -1,0 +1,9 @@
+[package]
+name = "charon-dialogue"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+charon-runtime.workspace = true
