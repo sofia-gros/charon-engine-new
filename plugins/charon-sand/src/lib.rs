@@ -1,5 +1,6 @@
 //! Sand plugin: immutable reads, parallel proposals, deterministic conflict commit.
 
+use charon_image::TiledImage;
 use charon_runtime::Simulation;
 use rayon::prelude::*;
 use std::time::Instant;
@@ -18,7 +19,8 @@ pub enum Command {
 pub struct Frame {
     pub width: usize,
     pub height: usize,
-    pub rgba: Vec<u8>,
+    pub image: TiledImage,
+    pub converted_cells: usize,
     pub sand: usize,
     pub active_tiles: usize,
     pub visited_cells: usize,
@@ -32,6 +34,9 @@ pub struct SandWorld {
     width: usize,
     height: usize,
     cells: Vec<u8>,
+    sand: usize,
+    image: TiledImage,
+    dirty: Vec<bool>,
     awake: Vec<bool>,
     pool: rayon::ThreadPool,
     tick: u64,
@@ -62,6 +67,7 @@ impl SandWorld {
         {
             return Err("material grid must match dimensions and contain valid materials and protected walls".into());
         }
+        world.sand = cells.iter().filter(|&&cell| cell == SAND).count();
         world.cells = cells;
         Ok(world)
     }
@@ -89,6 +95,9 @@ impl SandWorld {
             width,
             height,
             cells: vec![AIR; width * height],
+            sand: 0,
+            image: TiledImage::new(width, height, TILE),
+            dirty: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
             awake: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
             pool,
             tick: 0,
@@ -100,6 +109,8 @@ impl SandWorld {
 
     fn reset(&mut self) {
         self.cells.fill(AIR);
+        self.sand = 0;
+        self.dirty.fill(true);
         for y in 0..self.height {
             self.cells[y * self.width] = WALL;
             self.cells[y * self.width + self.width - 1] = WALL;
@@ -111,6 +122,7 @@ impl SandWorld {
     fn wake(&mut self, index: usize) {
         let (x, y) = (index % self.width, index / self.width);
         let columns = self.width.div_ceil(TILE);
+        self.dirty[y / TILE * columns + x / TILE] = true;
         for ty in y.saturating_sub(1) / TILE..=((y + 1).min(self.height - 1) / TILE) {
             for tx in x.saturating_sub(1) / TILE..=((x + 1).min(self.width - 1) / TILE) {
                 self.awake[ty * columns + tx] = true;
@@ -130,6 +142,8 @@ impl SandWorld {
                         if px > 0 && px < self.width - 1 && py < self.height - 1 {
                             let index = py * self.width + px;
                             if self.cells[index] != material {
+                                self.sand -= usize::from(self.cells[index] == SAND);
+                                self.sand += usize::from(material == SAND);
                                 self.cells[index] = material;
                                 self.wake(index);
                             }
@@ -220,24 +234,28 @@ impl Simulation for SandWorld {
         let (active_tiles, visited_cells, workers_used) = self.advance();
         let update_ms = start.elapsed().as_secs_f64() * 1000.0;
         let snapshot_start = Instant::now();
-        let mut rgba = Vec::with_capacity(self.cells.len() * 4);
-        let mut sand = 0;
-        for &cell in &self.cells {
-            let color = match cell {
-                SAND => {
-                    sand += 1;
-                    [232, 181, 72, 255]
+        let mut converted_cells = 0;
+        for tile in 0..self.dirty.len() {
+            if !self.dirty[tile] {
+                continue;
+            }
+            let rect = self.image.rect(tile);
+            let mut rgba = Vec::with_capacity(rect.width * rect.height * 4);
+            for y in rect.y..rect.y + rect.height {
+                for x in rect.x..rect.x + rect.width {
+                    rgba.extend_from_slice(&color(self.cells[y * self.width + x]));
                 }
-                WALL => [82, 100, 121, 255],
-                _ => [16, 23, 36, 255],
-            };
-            rgba.extend_from_slice(&color);
+            }
+            converted_cells += rect.width * rect.height;
+            self.image.replace(tile, rgba);
+            self.dirty[tile] = false;
         }
         Frame {
             width: self.width,
             height: self.height,
-            rgba,
-            sand,
+            image: self.image.clone(),
+            converted_cells,
+            sand: self.sand,
             active_tiles,
             visited_cells,
             workers_configured: self.pool.current_num_threads(),
@@ -248,9 +266,94 @@ impl Simulation for SandWorld {
     }
 }
 
+fn color(material: u8) -> [u8; 4] {
+    match material {
+        SAND => [232, 181, 72, 255],
+        WALL => [82, 100, 121, 255],
+        _ => [16, 23, 36, 255],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn assert_image_matches_cells(world: &SandWorld, frame: &Frame) {
+        let expected: Vec<_> = world.cells.iter().flat_map(|&cell| color(cell)).collect();
+        assert_eq!(frame.image.to_rgba(), expected);
+        assert_eq!(
+            frame.sand,
+            world.cells.iter().filter(|&&cell| cell == SAND).count()
+        );
+    }
+
+    #[test]
+    fn tiled_images_preserve_skipped_edits_and_old_snapshots() {
+        let mut world = SandWorld::new(65, 66, 4).unwrap();
+        let initial = world.step(vec![]);
+        let original_pixels = initial.image.to_rgba();
+        let edited = world.step(vec![Command::Paint {
+            x: 4,
+            y: 4,
+            material: WALL,
+        }]);
+        let idle = world.step(vec![]);
+        assert_eq!(idle.converted_cells, 0);
+        assert!(
+            !idle.image.shares_tile(&initial.image, 0),
+            "skipped edit was lost"
+        );
+        assert!(idle.image.shares_tile(&edited.image, 0));
+        assert!(
+            edited.converted_cells < 65 * 66,
+            "local edit converted the whole image"
+        );
+        for tile in 1..initial.image.tile_count() {
+            assert!(idle.image.shares_tile(&initial.image, tile));
+        }
+        for tick in 0..180 {
+            let commands = match tick {
+                0 => vec![
+                    Command::Paint {
+                        x: 32,
+                        y: 31,
+                        material: WALL,
+                    },
+                    Command::Paint {
+                        x: 31,
+                        y: 15,
+                        material: SAND,
+                    },
+                ],
+                60 => vec![Command::Paint {
+                    x: 32,
+                    y: 31,
+                    material: AIR,
+                }],
+                90 => vec![Command::Clear],
+                100 => vec![Command::Paint {
+                    x: 63,
+                    y: 63,
+                    material: SAND,
+                }],
+                _ => vec![],
+            };
+            let frame = world.step(commands);
+            assert_image_matches_cells(&world, &frame);
+        }
+        assert_eq!(
+            initial.image.to_rgba(),
+            original_pixels,
+            "published pixels mutated"
+        );
+        let clear = world.step(vec![Command::Clear]);
+        assert_eq!(clear.image.to_rgba(), original_pixels);
+        let idle = world.step(vec![]);
+        assert_eq!(idle.converted_cells, 0);
+        for tile in 0..idle.image.tile_count() {
+            assert!(idle.image.shares_tile(&clear.image, tile));
+        }
+    }
 
     #[test]
     fn sleeping_beds_wake_across_tile_edges_without_losing_mass() {

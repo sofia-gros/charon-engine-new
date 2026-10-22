@@ -1,4 +1,5 @@
-use charon_render::{self as gpu, Gpu, ImageView, Result, WindowRenderer};
+mod smoke;
+use charon_render::{self as gpu, Gpu, Result, WindowRenderer};
 use charon_runtime::Runtime;
 use charon_sand::{Command, SandWorld, AIR, SAND, WALL};
 use std::{
@@ -78,7 +79,6 @@ struct App {
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
-    uploaded: u64,
     next_draw: Instant,
     report: Instant,
     started: Instant,
@@ -100,7 +100,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells")?;
         }
         let now = Instant::now();
         Ok(Self {
@@ -109,7 +109,6 @@ impl App {
             view: None,
             cursor: None,
             buttons: [false; 3],
-            uploaded: 0,
             next_draw: now,
             report: now,
             started: now,
@@ -153,15 +152,9 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        let image = (snapshot.tick != self.uploaded).then(|| ImageView {
-            width: snapshot.frame.width,
-            height: snapshot.frame.height,
-            rgba: &snapshot.frame.rgba,
-        });
-        let Some(render) = view.present(image)? else {
+        let Some(render) = view.present_tiled(&snapshot.frame.image)? else {
             return Ok(());
         };
-        self.uploaded = snapshot.tick;
         if let Some(last) = self.last_draw.replace(now) {
             self.intervals.push((now - last).as_secs_f64() * 1000.0);
         }
@@ -182,7 +175,7 @@ impl App {
             view.window.set_title(&format!("Charon | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
                 snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
             let row = format!(
-                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6}",
+                "{:.3},{draw_fps:.2},{sim_hz:.2},{p95:.3},{p99:.3},{:.3},{:.3},{},{},{},{},{},{:.6},{:.6},{:.6},{},{:.6},{:.6},{}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.work_ms,
                 snapshot.late_ms,
@@ -190,7 +183,7 @@ impl App {
                 frame.active_tiles,
                 frame.visited_cells,
                 frame.workers_configured,
-                frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms
+                frame.workers_used, frame.update_ms, frame.snapshot_ms, render.upload_enqueue_ms, render.upload_bytes, render.acquire_ms, render.encode_present_ms, frame.converted_cells
             );
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -317,20 +310,14 @@ fn main() -> Result<()> {
         }
         let instance = gpu::instance();
         let adapter = pollster::block_on(gpu::adapter(&instance, None, options.software))?;
-        let gpu = pollster::block_on(Gpu::new(
+        let mut gpu = pollster::block_on(Gpu::new(
             &adapter,
             wgpu::TextureFormat::Rgba8Unorm,
             options.width as u32,
             options.height as u32,
         ))?;
-        gpu.smoke(
-            &ImageView {
-                width: snapshot.frame.width,
-                height: snapshot.frame.height,
-                rgba: &snapshot.frame.rgba,
-            },
-            &options.output,
-        )?;
+        gpu.smoke_tiled(&snapshot.frame.image, &options.output)?;
+        smoke::verify_updates(&mut gpu, options.width, options.height)?;
         println!("simulation_tick={} sand={} workers_used={}/{} tick_work_ms={:.3} (smoke, not FPS verification)",
             snapshot.tick, snapshot.frame.sand, snapshot.frame.workers_used, snapshot.frame.workers_configured, snapshot.work_ms);
         return Ok(());

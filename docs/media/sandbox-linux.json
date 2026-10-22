@@ -1,11 +1,11 @@
 {
-  "source_sha256": "7515dc08550258efcec449b66620cb0a3a53468b0fda27e24cf6db67a519ab2e",
+  "source_sha256": "384d90f360a732ded4c0431ec7aacd8dde266b3a9153c8fce97acf223eaff130",
   "sample": "sandbox",
-  "base_revision": "7c82296eb6e9e24ea4fddba0a9aaff07a7e1b3ef",
+  "base_revision": "34db5d9298dd6c7aa030407af9ad7b8ef3dd4f7c",
   "platform": "Linux Xorg dummy / software GPU",
   "target_capture_fps": 8,
   "captured_frames": 112,
-  "gif_duration_ms": 13980,
+  "gif_duration_ms": 14010,
   "source_size": [
     1920,
     1080
@@ -14,12 +14,13 @@
     960,
     540
   ],
-  "peak_sand": 1703,
+  "peak_sand": 1667,
   "final_sand": 0,
   "checks": [
     "mouse painting",
     "keyboard reset",
     "sleep after reset",
+    "zero idle pixel conversion/upload",
     "Escape shutdown"
   ]
 }

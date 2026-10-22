@@ -41,7 +41,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb
       - name: Linux offscreen shader check
         if: runner.os == 'Linux'
-        run: ./target/debug/charon-sandbox --smoke --software --output artifacts/local/smoke.png
+        run: ./target/debug/charon-sandbox --smoke --software --grid 65x66 --output artifacts/local/smoke.png
       - name: Windows script and offscreen shader check
         if: runner.os == 'Windows'
         shell: pwsh

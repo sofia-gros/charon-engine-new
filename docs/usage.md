@@ -42,7 +42,7 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 タイトルに描画FPS・sim Hz・tick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
-PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。CSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。CSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
 
 ## Dialogue
 
@@ -64,9 +64,9 @@ cargo clippy --locked --workspace --all-targets -- -D warnings
 python3 scripts/measure.py
 ```
 
-measureは少量投入・連続投入・支えを壊す崩落・静止した堆積を、480×270/960×540セル、1/2/4ワーカーで比較する。各条件は60tickのウォームアップと240tickの計測。崩落は計測開始時に支えを削除する。CPU全体のp50/p95/p99/最大、更新/画像生成それぞれのp95、画像バイト数、実使用ワーカー数、最終状態checksumをCSVへ出す。異なるワーカー数で最終状態が違えば失敗する。
+measureは少量投入・連続投入・支えを壊す崩落・静止した堆積を、480×270/960×540セル、1/2/4ワーカーで比較する。各条件は60tickのウォームアップと240tickの計測。崩落は計測開始時に支えを削除する。CPU全体のp50/p95/p99/最大、更新/画像生成それぞれのp95、画像全体のバイト数（rgba_bytes_per_tick、実転送量とは別）、実使用ワーカー数、最終状態checksumをCSVへ出す。異なるワーカー数で最終状態が違えば失敗する。
 
-`scripts/measure.py` はPython標準ライブラリだけで実行でき、CSVとコンパイラ/CPU/ソースhashを `artifacts/local/benchmarks/` へ保存する。Rust単体では `cargo run --locked --release -p charon-sand --example measure`。実時間60 HzやGPUの試験とは別。[Linux計測CSV](benchmarks/sand-linux.csv)・[計測条件](benchmarks/sand-linux.json)も参照。複数ワーカーが常に速いという保証はない。
+`scripts/measure.py` はPython標準ライブラリだけで実行でき、CSVとコンパイラ/CPU/ソースhashを `artifacts/local/benchmarks/` へ保存する。Rust単体では `cargo run --locked --release -p charon-sand --example measure`。実時間60 HzやGPUの試験とは別。[初期実装のLinux計測CSV](benchmarks/sand-linux.csv)・[計測条件](benchmarks/sand-linux.json)は34db5d9時点の記録。差分化後の性能比較はまだ実施していない。複数ワーカーが常に速いという保証はない。
 
 ウィンドウなしでshader出力を検証:
 
@@ -74,7 +74,7 @@ measureは少量投入・連続投入・支えを壊す崩落・静止した堆�
 cargo run --locked -p charon-sandbox -- --smoke --output artifacts/local/smoke.png
 ```
 
-フルHD出力の全画素を、完了したシミュレーションのセル画像と比較し、PNGを保存する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
+フルHD出力の全画素を完成したセル画像と照合し、PNGを保存する。途中のtickを受け取らないケース・静止・端の区画・リセットでも部分転送の出力を照合する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
 
 Linuxで操作試験とMP4/GIF/PNGの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、FFmpeg、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。
 
@@ -82,6 +82,8 @@ Linuxで操作試験とMP4/GIF/PNGの記録を再実行する場合は、`source
 
 ## 制約
 
-サンプルはAir/Wall/Sandのみ。液体・剛体・保存・ゲーム用エディタは含まない。移動計算は32×32セルの活動領域へ限定するが、描画用スナップショットは全セルを変換・転送する初期実装。大規模世界向けの差分転送は今後の対象。
+サンプルはAir/Wall/Sandのみ。液体・剛体・保存・ゲーム用エディタは含まない。移動計算は32×32セルの活動領域へ限定する。画像も32×32の区画に分け、変化した区画だけ変換する。完了済み区画の不変データを共有するため、古いスナップショットの画素も変わらない。描画側は最後にGPUへ送った区画と照合するので、途中のtickを受け取れなくても変更が残る。
+
+静止時は画素の再生成/転送がゼロになるが、区画ハンドルの受け渡し・照合と描画自体は続く。初回は全区画を送る。動いたセルを含む区画は丸ごと更新し、変更が多ければ転送量も増える。世界のストリーミングやGPU computeによる物質計算は未実装。
 
 Windowsの実機操作と144 FPS/60 Hzの同時維持は、対象PCで別途確認する。CI成果物は開発確認用で、署名付きの製品配布物ではない。

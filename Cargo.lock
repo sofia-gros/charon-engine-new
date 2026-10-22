@@ -205,9 +205,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-image"
+version = "0.1.0"
+
+[[package]]
 name = "charon-render"
 version = "0.1.0"
 dependencies = [
+ "charon-image",
  "png",
  "pollster",
  "wgpu",
@@ -222,6 +227,7 @@ version = "0.1.0"
 name = "charon-sand"
 version = "0.1.0"
 dependencies = [
+ "charon-image",
  "charon-runtime",
  "rayon",
 ]

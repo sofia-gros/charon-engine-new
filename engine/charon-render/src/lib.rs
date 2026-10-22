@@ -1,3 +1,4 @@
+pub use charon_image::TiledImage;
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
 /// Borrowed RGBA8 image, independent of any simulation plugin.
@@ -52,6 +53,7 @@ pub struct Gpu {
     pipeline: wgpu::RenderPipeline,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
+    uploaded_tiles: Option<TiledImage>,
 }
 
 impl Gpu {
@@ -122,10 +124,11 @@ impl Gpu {
             pipeline,
             texture,
             bind,
+            uploaded_tiles: None,
         })
     }
 
-    pub fn upload(&self, frame: &ImageView<'_>) {
+    pub fn upload(&mut self, frame: &ImageView<'_>) {
         assert_eq!(
             (frame.width, frame.height),
             (
@@ -134,6 +137,7 @@ impl Gpu {
             )
         );
         assert_eq!(frame.rgba.len(), frame.width * frame.height * 4);
+        self.uploaded_tiles = None;
         self.queue.write_texture(
             self.texture.as_image_copy(),
             frame.rgba,
@@ -144,6 +148,54 @@ impl Gpu {
             },
             self.texture.size(),
         );
+    }
+
+    /// Compare against the last uploaded image, not the preceding simulation tick.
+    /// Retaining handles prevents lost updates when the consumer skips snapshots.
+    pub fn upload_tiled(&mut self, image: &TiledImage) -> usize {
+        assert_eq!(
+            (image.width(), image.height()),
+            (
+                self.texture.width() as usize,
+                self.texture.height() as usize
+            )
+        );
+        let mut bytes = 0;
+        for index in 0..image.tile_count() {
+            if self
+                .uploaded_tiles
+                .as_ref()
+                .is_some_and(|previous| image.shares_tile(previous, index))
+            {
+                continue;
+            }
+            let rect = image.rect(index);
+            let mut destination = self.texture.as_image_copy();
+            destination.origin = wgpu::Origin3d {
+                x: rect.x as u32,
+                y: rect.y as u32,
+                z: 0,
+            };
+            self.queue.write_texture(
+                destination,
+                image.pixels(index),
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(rect.width as u32 * 4),
+                    rows_per_image: None,
+                },
+                wgpu::Extent3d {
+                    width: rect.width as u32,
+                    height: rect.height as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+            bytes += image.pixels(index).len();
+        }
+        if bytes > 0 || self.uploaded_tiles.is_none() {
+            self.uploaded_tiles = Some(image.clone());
+        }
+        bytes
     }
 
     pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
@@ -170,10 +222,28 @@ impl Gpu {
 
     /// Exercise the same shader/pipeline as the window and verify every output
     /// pixel against the nearest-neighbour scaled simulation snapshot.
-    pub fn smoke(&self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
+    pub fn smoke(&mut self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
+        self.upload(frame);
+        self.verify(frame, output)
+    }
+
+    /// Verify the actual partial-upload path against a complete CPU image.
+    pub fn smoke_tiled(&mut self, image: &TiledImage, output: &Path) -> Result<usize> {
+        let bytes = self.upload_tiled(image);
+        self.verify(
+            &ImageView {
+                width: image.width(),
+                height: image.height(),
+                rgba: &image.to_rgba(),
+            },
+            output,
+        )?;
+        Ok(bytes)
+    }
+
+    fn verify(&self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
         const WIDTH: u32 = 1920;
         const HEIGHT: u32 = 1080;
-        self.upload(frame);
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d {
@@ -314,16 +384,16 @@ impl WindowRenderer {
     }
     /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
     pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
+        self.present_image(image.map(Upload::Full))
+    }
+    pub fn present_tiled(&mut self, image: &TiledImage) -> Result<Option<RenderStats>> {
+        self.present_image(Some(Upload::Tiled(image)))
+    }
+    fn present_image(&mut self, image: Option<Upload<'_>>) -> Result<Option<RenderStats>> {
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
             return Ok(None);
         }
-        let upload_start = std::time::Instant::now();
-        let upload_bytes = image.map_or(0, |image| {
-            self.gpu.upload(&image);
-            image.rgba.len()
-        });
-        let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let acquire_start = std::time::Instant::now();
         let (texture, reconfigure) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture) => (texture, false),
@@ -345,6 +415,16 @@ impl WindowRenderer {
             }
         };
         let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
+        let upload_start = std::time::Instant::now();
+        let upload_bytes = match image {
+            Some(Upload::Full(image)) => {
+                self.gpu.upload(&image);
+                image.rgba.len()
+            }
+            Some(Upload::Tiled(image)) => self.gpu.upload_tiled(image),
+            None => 0,
+        };
+        let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let encode_start = std::time::Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
         self.gpu.draw(
@@ -371,4 +451,9 @@ pub struct RenderStats {
     pub upload_bytes: usize,
     pub acquire_ms: f64,
     pub encode_present_ms: f64,
+}
+
+enum Upload<'a> {
+    Full(ImageView<'a>),
+    Tiled(&'a TiledImage),
 }

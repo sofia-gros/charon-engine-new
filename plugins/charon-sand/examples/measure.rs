@@ -86,7 +86,7 @@ fn main() -> Result<(), String> {
                 let p99 = percentile(&mut total, 0.99);
                 let max = *total.last().unwrap();
                 println!("{scene},{width},{height},{workers},{WARMUP},{SAMPLES},{p50:.6},{p95:.6},{p99:.6},{max:.6},{:.6},{:.6},{},{peak_workers},{},{},{},{:016x}",
-                    percentile(&mut update,0.95),percentile(&mut snapshot,0.95),frame.rgba.len(),frame.sand,frame.active_tiles,frame.visited_cells,result.0);
+                    percentile(&mut update,0.95),percentile(&mut snapshot,0.95),frame.image.byte_len(),frame.sand,frame.active_tiles,frame.visited_cells,result.0);
             }
         }
     }

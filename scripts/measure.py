@@ -25,6 +25,8 @@ def main():
             assert len({(row["checksum"], row["final_sand"]) for row in group}) == 1
     paths = [ROOT / "Cargo.toml", ROOT / "Cargo.lock"]
     paths += sorted((ROOT / "engine/charon-runtime").rglob("*.rs"))
+    paths += sorted((ROOT / "engine/charon-image").rglob("*.rs"))
+    paths += [ROOT / "engine/charon-image/Cargo.toml"]
     paths += sorted((ROOT / "plugins/charon-sand").rglob("*.rs"))
     paths += [ROOT / "plugins/charon-sand/Cargo.toml", ROOT / "engine/charon-runtime/Cargo.toml"]
     hashes = {str(path.relative_to(ROOT)): hashlib.sha256(path.read_bytes()).hexdigest() for path in paths}

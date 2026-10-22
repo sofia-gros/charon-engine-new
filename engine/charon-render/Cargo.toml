@@ -6,6 +6,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+charon-image.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true

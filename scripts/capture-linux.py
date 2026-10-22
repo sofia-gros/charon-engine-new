@@ -231,8 +231,10 @@ EndSection
                 assert peak > 147, "mouse painting did not add sand"
                 assert int(rows[-1]["sand"]) == 0, "keyboard reset did not clear sand"
                 assert int(rows[-1]["active_tiles"]) == 0, "reset world did not sleep"
+                assert int(rows[-1]["converted_cells"]) == 0, "idle image was regenerated"
+                assert int(rows[-1]["upload_bytes"]) == 0, "idle image was uploaded"
                 checks = {"peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
-                          "checks": ["mouse painting", "keyboard reset", "sleep after reset", "Escape shutdown"]}
+                          "checks": ["mouse painting", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
             else:
                 pages = [row["page"] for row in rows]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
