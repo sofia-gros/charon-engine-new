@@ -1,0 +1,3 @@
+[build]
+# Leave CPU capacity for the editor and the agent. Override with cargo -j N.
+jobs = 2

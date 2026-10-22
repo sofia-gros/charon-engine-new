@@ -1,0 +1,22 @@
+[workspace]
+members = ["engine/charon-runtime", "plugins/charon-sand", "samples/sandbox"]
+default-members = ["engine/charon-runtime", "plugins/charon-sand"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[workspace.dependencies]
+charon-runtime = { path = "engine/charon-runtime" }
+charon-sand = { path = "plugins/charon-sand" }
+rayon = "1.11"
+wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "gles", "wgsl"] }
+winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11"] }
+pollster = "0.4"
+png = "0.18"
+
+[profile.dev]
+debug = 1

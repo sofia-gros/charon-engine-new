@@ -1,1 +1,15 @@
-# charon-engine-new
+# Charon Engine
+
+Rust製のモジュール型2Dゲームエンジン。
+
+## Getting Started
+
+[導入と使い方](docs/usage.md)
+
+## Examples
+
+[Sandbox](docs/usage.md#sandbox)
+
+## License
+
+[MIT](LICENSE)

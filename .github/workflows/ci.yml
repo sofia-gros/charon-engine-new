@@ -1,0 +1,63 @@
+name: CI
+on:
+  push:
+    paths-ignore: ['**/*.md', 'LICENSE']
+  pull_request:
+    paths-ignore: ['**/*.md', 'LICENSE']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+      - name: Prepare Rust stable
+        run: rustup toolchain install stable --profile minimal --component rustfmt --component clippy
+      - name: Record compiler
+        run: rustc --version --verbose
+      - uses: Swatinem/rust-cache@8cbdedb5103daa674dcf46d3590fe06a76645684 # v2.8.0
+      - name: Format
+        run: cargo fmt --all -- --check
+      - name: Tests
+        run: cargo test --locked
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Build Linux sample
+        if: runner.os == 'Linux'
+        run: cargo build --locked -p charon-sandbox
+      - name: Build Windows sample
+        if: runner.os == 'Windows'
+        run: cargo build --locked --release -p charon-sandbox
+      - name: Linux software Vulkan
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb
+      - name: Linux offscreen shader check
+        if: runner.os == 'Linux'
+        run: ./target/debug/charon-sandbox --smoke --software --output artifacts/local/smoke.png
+      - name: Windows script and offscreen shader check
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: ./scripts/run.ps1 -Smoke -Software
+      - name: Linux virtual-window smoke
+        if: runner.os == 'Linux'
+        run: |
+          xvfb-run -a -s "-screen 0 1920x1080x24 -extension MIT-SHM" ./target/debug/charon-sandbox --seconds 4 --record artifacts/local/window-metrics.csv
+          python3 -c "from pathlib import Path; assert len(Path('artifacts/local/window-metrics.csv').read_text().splitlines()) >= 2"
+      - name: Upload sample and smoke images
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sandbox-${{ runner.os }}
+          path: |
+            target/debug/charon-sandbox
+            target/release/charon-sandbox.exe
+            artifacts/local/
+          if-no-files-found: error

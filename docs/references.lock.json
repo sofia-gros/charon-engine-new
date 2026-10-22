@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "repositories": [
+    {
+      "name": "FallingSandEngine",
+      "repository": "PieKing1215/FallingSandEngine",
+      "commit": "8ea0463b858105277000bd562e4cf638cfdca32f",
+      "snapshot_sha256": "d2e63f816b1fea61f1137bf8edf89a4707b38869e9b2051afedae7fb94464478"
+    },
+    {
+      "name": "FallingSandSurvival",
+      "repository": "PieKing1215/FallingSandSurvival",
+      "commit": "9b64a9f69e3f6293691f6496c6c4934e9ca1f724",
+      "snapshot_sha256": "6fe0e70a5d04faee3ce0bf9a2e9569e6a4e23ed49c68da86348853dfa2958efc"
+    },
+    {
+      "name": "rust-sandbox",
+      "repository": "Hugo-Dz/rust-sandbox",
+      "commit": "78ba5fb4f01727c171b1a2d524d1a0e8458fd902",
+      "snapshot_sha256": "54a54829cbac5e4a4147029d613eaf5004ac575b6e8d83b48de96bb5d0e3d51a"
+    }
+  ]
+}
