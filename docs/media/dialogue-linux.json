@@ -1,11 +1,24 @@
 {
-  "source_sha256": "7515dc08550258efcec449b66620cb0a3a53468b0fda27e24cf6db67a519ab2e",
+  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
   "sample": "dialogue",
-  "base_revision": "7c82296eb6e9e24ea4fddba0a9aaff07a7e1b3ef",
-  "platform": "Linux Xorg dummy / software GPU",
+  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
   "target_capture_fps": 8,
+  "observed_capture_fps": 7.996,
+  "gif_encoded_frames": 13,
+  "draw_submission_fps_range": [
+    37.02,
+    48.2
+  ],
+  "simulation_hz_range": [
+    0.0,
+    60.5
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 96,
-  "gif_duration_ms": 12000,
+  "gif_duration_ms": 12020,
   "source_size": [
     1920,
     1080

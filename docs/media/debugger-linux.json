@@ -1,11 +1,24 @@
 {
-  "source_sha256": "b22f4ea97131025973ec7116517cfe98b6b2349dbc4984212ae5486ebcf1d9be",
+  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
   "sample": "debugger",
-  "base_revision": "51843e0774189c8dd9882e10367e45b003438552",
-  "platform": "Linux Xorg dummy / software GPU",
+  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
   "target_capture_fps": 8,
+  "observed_capture_fps": 8.0,
+  "gif_encoded_frames": 104,
+  "draw_submission_fps_range": [
+    5.33,
+    48.64
+  ],
+  "simulation_hz_range": [
+    0.0,
+    73.55
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 112,
-  "gif_duration_ms": 13950,
+  "gif_duration_ms": 14060,
   "source_size": [
     1920,
     1080
@@ -15,12 +28,12 @@
     540
   ],
   "paused_step_ticks": [
-    77,
-    78,
-    79,
-    80
+    88,
+    89,
+    90,
+    91
   ],
-  "replay": "replay_ticks=844 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=854 checks=terrain,player,input_state workers=1",
   "checks": [
     "frozen terrain/actor",
     "display while paused",

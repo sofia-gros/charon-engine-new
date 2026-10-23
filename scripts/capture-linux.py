@@ -198,6 +198,11 @@ EndSection
                 client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play", "--input-log", str(trace_path)] if sample in ("platformer", "debugger") else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
+            def measured_frame_ready():
+                path = local / "metrics.csv"
+                if not path.exists(): return False
+                return any(float(row.get("draw_fps") or 0) > 0 for row in csv.DictReader(path.open()))
+            wait_for(measured_frame_ready)
             inputs = Input()
             inputs.focus()
             start = time.monotonic()
@@ -308,7 +313,7 @@ EndSection
                 checks = {"peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
                           "checks": ["mouse painting", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
             elif sample == "dialogue":
-                pages = [row["page"] for row in rows]
+                pages = [page for page, _ in itertools.groupby(row["page"] for row in rows)]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
                 checks = {"pages": pages, "checks": ["both choices", "keyboard restart", "Escape shutdown"]}
             elif sample == "platformer":
@@ -331,6 +336,10 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"paused_step_ticks": counts, "replay": replay.stdout.strip(),
                           "checks": ["frozen terrain/actor", "display while paused", "one tick per press", "paused edit and cell inspection", "reset preserves pause", "resume", "authoritative replay with 1 worker", "Escape shutdown"]}
+            rates = [float(row["draw_fps"]) for row in rows if float(row.get("draw_fps") or 0) > 0]
+            simulation_rates = [float(row["sim_hz"]) for row in rows if row.get("sim_hz")]
+            assert rates and simulation_rates and max(simulation_rates) > 0, "missing rendering/simulation measurements"
+            adapter_line = next(line for line in (local / f"{sample}.log").read_text().splitlines() if line.startswith("adapter="))
             assert "error:" not in (local / f"{sample}.log").read_text().lower()
             images = []
             for _, path in frames:
@@ -339,13 +348,21 @@ EndSection
             durations = [max(10, round((b[0] - a[0]) * 100) * 10) for a, b in zip(frames, frames[1:])]
             durations.append(130)
             images[0].save(MEDIA / f"{prefix}.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
+            with Image.open(MEDIA / f"{prefix}.gif") as gif:
+                encoded_frames = gif.n_frames
             source_hash = hashlib.sha256()
             for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
                 if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml"):
                     source_hash.update(str(path.relative_to(ROOT)).encode())
                     source_hash.update(path.read_bytes())
             report = {"source_sha256": source_hash.hexdigest(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
-                      "platform": "Linux Xorg dummy / software GPU", "target_capture_fps": 8,
+                      "platform": "Linux Xorg dummy", "adapter": adapter_line, "build_profile": "dev",
+                      "target_capture_fps": 8,
+                      "observed_capture_fps": round((len(frames) - 1) / (frames[-1][0] - frames[0][0]), 3),
+                      "gif_encoded_frames": encoded_frames,
+                      "draw_submission_fps_range": [min(rates), max(rates)],
+                      "simulation_hz_range": [min(simulation_rates), max(simulation_rates)],
+                      "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
                       "captured_frames": len(frames), "gif_duration_ms": sum(durations),
                       "source_size": [1920, 1080], "gif_size": [960, 540],
                       **checks}

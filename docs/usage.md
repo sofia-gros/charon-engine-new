@@ -38,7 +38,7 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 ウィンドウの初期サイズは1920×1080。左ドラッグで砂、右で消去、中で壁、Rで初期化、Escで終了。表示サイズとセル数は独立している。端の壁と床は消去できない。
 
-タイトルに描画FPS・sim Hz・tick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
+画面内にDRAW FPS・SIM Hz・GPU種別・ビルド種別を表示する。DRAWは描画送信回数を実時間で割った値、SIMは物質更新回数を実時間で割った値。最初の計測区間はWARMUPとなる。タイトルにはさらにtick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
 PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。通常モードのCSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
 
@@ -91,7 +91,7 @@ Spaceまたはクリックで進む。選択画面で1/2、Rで最初から、Es
 
 ![Dialogueの会話・選択肢・分岐](media/dialogue-linux.gif)
 
-実入力で2つの分岐と再開を確認した約12秒の記録。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
+実入力で2つの分岐と再開を確認した約12秒の記録。画面内のDRAW/SIMは描画送信と会話pluginの更新頻度。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
 
 ## 検証
 
@@ -113,7 +113,7 @@ cargo run --locked -p charon-sandbox -- --smoke
 
 フルHD出力の全画素を完成したセル画像と照合する。画像ファイルは出力しない。途中のtickを受け取らないケース・静止・端の区画・リセットでも部分転送の出力を照合する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
 
-Linuxで操作試験とGIFの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。
+Linuxで操作試験とGIFの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。GIFは8fpsを目安に間引いて収録し、静止フレームをまとめることもある。GIFのフレーム数から描画FPSは求められない。各GIFに付属するJSONにはアダプタ名・ビルド条件・実測収録fps・CSV上の描画送信FPS/更新Hzの範囲を保存する。範囲には起動直後・リセット・停止や短い計測区間も含む。数値は収録負荷とソフトウェアGPUを含むLinux環境の値で、Windows実機の144 FPSを示すものではない。
 
 既定の `cargo test` はGPU依存を持たないcore/pluginだけを対象にする。統合時は `cargo test --locked --workspace`。GitHub ActionsはLinux/Windowsでビルド・テスト・shader検証を行い、ActionsのArtifactsへ実行ファイルと検証記録を出力する。CIの実行結果は各runで確認する。
 

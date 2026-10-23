@@ -1,4 +1,6 @@
+mod debug_text;
 pub use charon_image::TiledImage;
+pub use debug_text::{append_debug_text, append_performance_overlay, DebugPerformance};
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
 /// Borrowed RGBA8 image, independent of any simulation plugin.
@@ -443,6 +445,7 @@ impl Gpu {
 
 pub struct WindowRenderer {
     pub window: Arc<Window>,
+    pub software_adapter: bool,
     instance: wgpu::Instance,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -466,6 +469,7 @@ impl WindowRenderer {
         let instance = window_instance(event_loop.owned_display_handle());
         let surface = instance.create_surface(window.clone())?;
         let adapter = pollster::block_on(adapter(&instance, Some(&surface), software))?;
+        let software_adapter = adapter.get_info().device_type == wgpu::DeviceType::Cpu;
         let size = window.inner_size();
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
@@ -487,6 +491,7 @@ impl WindowRenderer {
         println!("Draw FPS counts submissions; GPU execution and physical presentation are not measured.");
         Ok(Self {
             window,
+            software_adapter,
             instance,
             surface,
             config,
@@ -503,6 +508,13 @@ impl WindowRenderer {
     /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
     pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
         self.present_image(image.map(Upload::Full), &[])
+    }
+    pub fn present_with_overlays(
+        &mut self,
+        image: Option<ImageView<'_>>,
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(image.map(Upload::Full), overlays)
     }
     pub fn present_tiled(&mut self, image: &TiledImage) -> Result<Option<RenderStats>> {
         self.present_image(Some(Upload::Tiled(image)), &[])

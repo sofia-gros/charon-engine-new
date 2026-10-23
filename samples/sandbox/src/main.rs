@@ -2,7 +2,7 @@ mod debug_view;
 mod game;
 mod smoke;
 mod trace;
-use charon_render::{self as gpu, Gpu, Result, WindowRenderer};
+use charon_render::{self as gpu, DebugPerformance, Gpu, Result, WindowRenderer};
 use charon_runtime::Runtime;
 use charon_sand::{Command, AIR, SAND, WALL};
 use game::{Command as GameCommand, Game};
@@ -98,6 +98,8 @@ struct App {
     intervals: Vec<f64>,
     draws: u64,
     last_tick: u64,
+    last_sim_sample: Instant,
+    performance: Option<DebugPerformance>,
     record: Option<File>,
     error: Option<String>,
 }
@@ -130,6 +132,8 @@ impl App {
             intervals: vec![],
             draws: 0,
             last_tick: 0,
+            last_sim_sample: now,
+            performance: None,
             record,
             error: None,
         })
@@ -183,7 +187,13 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        let overlays = debug_view::overlays(&snapshot.frame, self.inspect_enabled);
+        let sampled_at = Instant::now();
+        let overlays = debug_view::overlays(
+            &snapshot.frame,
+            self.inspect_enabled,
+            self.performance,
+            view.software_adapter,
+        );
         let Some(render) =
             view.present_tiled_with_overlays(&snapshot.frame.terrain.image, &overlays)?
         else {
@@ -214,7 +224,13 @@ impl App {
                 .frame
                 .simulation_tick
                 .saturating_sub(self.last_tick) as f64
-                / elapsed;
+                / sampled_at
+                    .duration_since(self.last_sim_sample)
+                    .as_secs_f64();
+            self.performance = Some(DebugPerformance {
+                draw_fps,
+                simulation_hz: sim_hz,
+            });
             let frame = &snapshot.frame.terrain;
             view.window.set_title(&format!("Charon | {} tick {} | P pause N step I inspect | draw {draw_fps:.0} FPS · sim {sim_hz:.1} Hz · tick {:.2} ms · workers {}/{} · sand {} · p99 {p99:.1} ms",
                 if snapshot.frame.paused {"PAUSED"} else {"RUNNING"},snapshot.frame.simulation_tick,snapshot.work_ms, frame.workers_used, frame.workers_configured, frame.sand));
@@ -248,6 +264,7 @@ impl App {
                 file.flush()?;
             }
             self.last_tick = snapshot.frame.simulation_tick;
+            self.last_sim_sample = sampled_at;
             self.draws = 0;
             self.intervals.clear();
             self.report = Instant::now();
