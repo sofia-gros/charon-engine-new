@@ -340,6 +340,7 @@ dependencies = [
  "charon-render",
  "charon-runtime",
  "charon-sand",
+ "charon-world",
  "pollster",
  "wgpu",
  "winit",

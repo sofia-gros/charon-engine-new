@@ -6,6 +6,8 @@ param(
     [switch]$Smoke,
     [switch]$Play,
     [switch]$Game,
+    [switch]$World,
+    [string]$WorldDirectory = 'artifacts/local/worlds',
     [UInt64]$Seed = 42,
     [switch]$RecordInputs,
     [switch]$Software,
@@ -14,6 +16,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    if ($World -and ($Game -or $Play -or $Smoke)) { throw '-World cannot be combined with -Game, -Play or -Smoke.' }
     if ($Game -and $Smoke) { throw '-Game opens a start screen; use it without -Smoke.' }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $directory = 'artifacts/local'
@@ -27,7 +30,8 @@ try {
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
-    if ($Game) { $cargoArgs += @('--game', "$Seed") }
+    if ($World) { $cargoArgs += @('--world', "$Seed", '--world-dir', $WorldDirectory) }
+    elseif ($Game) { $cargoArgs += @('--game', "$Seed") }
     elseif ($Play) { $cargoArgs += '--play' }
     if ($Software) { $cargoArgs += '--software' }
     & cargo @cargoArgs

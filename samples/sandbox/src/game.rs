@@ -4,7 +4,7 @@ use charon_platformer::Body;
 use charon_projectiles::{Projectiles, Shot};
 use charon_runtime::Simulation;
 use charon_sand::{Command as SandCommand, SandWorld};
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 pub enum Command {
     Terrain(SandCommand),
     CupScene,
@@ -12,6 +12,11 @@ pub enum Command {
     AddOil,
     Explore(u64),
     NewRun(u64),
+    StartWorld(u64),
+    LoadRegion {
+        origin: [i64; 2],
+        cells: std::sync::Arc<[u8]>,
+    },
     Begin,
     PlaceImage([f32; 2]),
     EraseImage([f32; 2]),
@@ -48,7 +53,15 @@ pub struct Inspection {
     pub material: Option<u8>,
     pub awake: Option<bool>,
 }
+#[derive(Clone, Copy, Debug)]
+pub struct StreamFrame {
+    pub origin: [i64; 2],
+    pub waiting: bool,
+    pub loaded: bool,
+    pub seed: u64,
+}
 pub struct Frame {
+    pub stream: Option<StreamFrame>,
     pub combat: Option<crate::combat::Frame>,
     pub exploration_seed: Option<u64>,
     pub cup: Option<crate::cup::Status>,
@@ -69,6 +82,9 @@ pub struct Frame {
 }
 impl Frame {
     pub fn state_label(&self) -> &'static str {
+        if self.stream.is_some_and(|s| s.waiting) {
+            return "LOADING";
+        }
         match self.combat.as_ref().map(|c| c.phase) {
             Some(crate::combat::Phase::Ready) => "READY",
             Some(crate::combat::Phase::Defeated) => "DEFEATED",
@@ -83,6 +99,7 @@ impl Frame {
             if self.paused
                 || body.discontinuous
                 || body.embedded
+                || self.stream.is_some_and(|s| s.waiting)
                 || self
                     .combat
                     .as_ref()
@@ -108,6 +125,7 @@ struct Spark {
     life: u8,
 }
 pub struct Game {
+    stream: Option<StreamFrame>,
     combat: Option<crate::combat::Combat>,
     exploration_seed: Option<u64>,
     cup: Option<crate::cup::Cup>,
@@ -169,6 +187,7 @@ impl Game {
             SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
+            stream: None,
             combat: None,
             exploration_seed: None,
             cup: None,
@@ -271,6 +290,15 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if let Some(stream) = self.stream {
+            mix(0x776f726c64);
+            mix(stream.seed);
+            mix(stream.origin[0] as u64);
+            mix(stream.origin[1] as u64);
+            mix(u64::from(stream.waiting));
+            mix(u64::from(stream.loaded));
+            mix(self.world.tick());
+        }
         if let Some(combat) = &self.combat {
             mix(0x636f6d626174);
             for value in combat.signature() {
@@ -414,7 +442,9 @@ impl Game {
                 .spawn(Shot {
                     position,
                     velocity,
-                    remaining_ticks: 60,
+                    // Prototype streamed-world wand: range 192 cells. Keep its
+                    // entire lifetime inside the simulated window's guard band.
+                    remaining_ticks: if self.stream.is_some() { 16 } else { 60 },
                 })
                 .expect("one shot per tick with a 60 tick lifetime stays below capacity");
             self.fire_pending = false;
@@ -515,6 +545,13 @@ impl Game {
                 },
             );
         }
+        if let (Some(stream), Some(player)) = (&mut self.stream, self.player) {
+            if (player.x() - self.width as f32 / 2.).abs() > 256.
+                || (player.y() - self.height as f32 / 2.).abs() > 256.
+            {
+                stream.waiting = true;
+            }
+        }
         self.jump_pending = false;
         frame
     }
@@ -527,6 +564,35 @@ impl Simulation for Game {
         let mut terrain = Vec::new();
         let mut steps = 0;
         for command in commands {
+            if self.stream.is_some()
+                && matches!(
+                    command,
+                    Command::Explore(_)
+                        | Command::NewRun(_)
+                        | Command::CupScene
+                        | Command::DamScene
+                        | Command::AddOil
+                )
+            {
+                self.image_error = Some("WORLD MODE - EXIT BEFORE CHANGING SCENE");
+                continue;
+            }
+            if self.stream.is_some_and(|s| s.waiting)
+                && !matches!(
+                    command,
+                    Command::StartWorld(_)
+                        | Command::LoadRegion { .. }
+                        | Command::Left(_)
+                        | Command::Right(_)
+                        | Command::Dig(_)
+                        | Command::Inspect(_)
+                        | Command::Pause
+                        | Command::Step
+                )
+            {
+                self.image_error = Some("WORLD LOADING - ACTION NOT APPLIED");
+                continue;
+            }
             if self
                 .combat
                 .as_ref()
@@ -534,6 +600,8 @@ impl Simulation for Game {
                 && !matches!(
                     command,
                     Command::NewRun(_)
+                        | Command::StartWorld(_)
+                        | Command::LoadRegion { .. }
                         | Command::Begin
                         | Command::Explore(_)
                         | Command::Terrain(SandCommand::Clear)
@@ -545,6 +613,96 @@ impl Simulation for Game {
                 continue;
             }
             match command {
+                Command::StartWorld(seed) => {
+                    let recorder = self.recorder.take();
+                    let gpu = self.fluid_gpu.clone();
+                    *self = Self::with_materials(
+                        self.width,
+                        self.height,
+                        self.workers,
+                        true,
+                        self.world.materials().clone(),
+                    )
+                    .expect("validated scene");
+                    self.world.apply_edits(vec![SandCommand::Clear]);
+                    self.recorder = recorder;
+                    self.fluid_gpu = gpu;
+                    self.player = Some(Body::new(
+                        self.width as f32 / 2.,
+                        self.height as f32 / 2.,
+                        7.,
+                        12.,
+                    ));
+                    self.stream = Some(StreamFrame {
+                        origin: [-(self.width as i64) / 2, -(self.height as i64) / 2],
+                        waiting: true,
+                        loaded: false,
+                        seed,
+                    });
+                    terrain.clear();
+                    steps = 0;
+                }
+                Command::LoadRegion { origin, cells } => {
+                    if let Some(old) = self.stream {
+                        let Some(dx) = old.origin[0].checked_sub(origin[0]) else {
+                            self.image_error = Some("INVALID WORLD HANDOFF");
+                            continue;
+                        };
+                        let Some(dy) = old.origin[1].checked_sub(origin[1]) else {
+                            self.image_error = Some("INVALID WORLD HANDOFF");
+                            continue;
+                        };
+                        let offset = [dx as f32, dy as f32];
+                        if !old.waiting
+                            || offset[0].abs() > self.width as f32
+                            || offset[1].abs() > self.height as f32
+                        {
+                            self.image_error = Some("INVALID WORLD HANDOFF");
+                            continue;
+                        }
+                        match SandWorld::from_region(
+                            self.width,
+                            self.height,
+                            self.workers,
+                            cells.to_vec(),
+                            self.world.materials().clone(),
+                            origin,
+                            self.world.tick(),
+                        ) {
+                            Ok(world) => {
+                                self.world = world;
+                                if let Some(player) = &mut self.player {
+                                    player.translate(offset);
+                                }
+                                self.projectiles.translate(offset);
+                                for image in &mut self.images {
+                                    image[0] += offset[0];
+                                    image[1] += offset[1];
+                                }
+                                for spark in &mut self.sparks {
+                                    spark.position[0] += offset[0];
+                                    spark.position[1] += offset[1];
+                                }
+                                if let Some(target) = &mut self.fire_target {
+                                    target[0] += offset[0];
+                                    target[1] += offset[1];
+                                }
+                                self.previous_player = None;
+                                self.image_error = None;
+                                self.stream = Some(StreamFrame {
+                                    origin,
+                                    waiting: false,
+                                    loaded: true,
+                                    ..old
+                                });
+                            }
+                            Err(_) => self.image_error = Some("INVALID WORLD REGION"),
+                        }
+                    }
+                }
+                Command::Terrain(SandCommand::Clear) if self.stream.is_some() => {
+                    self.image_error = Some("WORLD MODE: EXIT SAVES TERRAIN");
+                }
                 Command::Terrain(SandCommand::Clear) if self.player.is_some() => {
                     self.restart(self.exploration_seed)
                         .expect("validated scene dimensions");
@@ -671,10 +829,11 @@ impl Simulation for Game {
                 Command::Inspect(point) => self.inspection = point,
             }
         }
-        let advances = if self
-            .combat
-            .as_ref()
-            .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
+        let advances = if self.stream.is_some_and(|s| s.waiting)
+            || self
+                .combat
+                .as_ref()
+                .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
         {
             0
         } else if steps > 0 {
@@ -687,10 +846,11 @@ impl Simulation for Game {
         } else {
             let mut frame = self.advance(terrain);
             for _ in 1..advances {
-                if self
-                    .combat
-                    .as_ref()
-                    .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
+                if self.stream.is_some_and(|s| s.waiting)
+                    || self
+                        .combat
+                        .as_ref()
+                        .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
                 {
                     break;
                 }
@@ -711,6 +871,7 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            stream: self.stream,
             combat: self.combat.as_ref().map(|c| c.frame()),
             exploration_seed: self.exploration_seed,
             cup: self.cup.as_ref().map(|c| c.status(&self.world)),

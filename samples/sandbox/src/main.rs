@@ -8,6 +8,7 @@ mod materials;
 mod scenes;
 mod smoke;
 mod trace;
+mod world_view;
 use charon_render::{
     self as gpu, Camera2D, DebugPerformance, Gpu, Placement, Result, WindowRenderer,
 };
@@ -61,6 +62,8 @@ impl Tool {
     }
 }
 struct Options {
+    world: Option<u64>,
+    world_dir: PathBuf,
     game: bool,
     explore: Option<u64>,
     fluid_gpu: bool,
@@ -80,6 +83,8 @@ struct Options {
 impl Options {
     fn parse() -> Result<Self> {
         let mut options = Self {
+            world: None,
+            world_dir: "artifacts/local/worlds".into(),
             game: false,
             explore: None,
             fluid_gpu: true,
@@ -113,6 +118,13 @@ impl Options {
                 "--input-log" => options.input_log = Some(value()?.into()),
                 "--replay" => options.replay = Some(value()?.into()),
                 "--play" => options.play = true,
+                "--world" => {
+                    options.world = Some(value()?.parse()?);
+                    options.play = true;
+                    options.width = 1920;
+                    options.height = 1080;
+                }
+                "--world-dir" => options.world_dir = value()?.into(),
                 "--game" => {
                     options.game = true;
                     options.explore = Some(value()?.parse()?);
@@ -136,11 +148,17 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--game SEED starts the combat prototype: Enter to begin, R to retry\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed; Q wand, click aims and fires\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--world SEED loads a Noita-scale streamed terrain prototype; --world-dir PATH selects chunk storage\n--game SEED starts the combat prototype: Enter to begin, R to retry\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed; Q wand, click aims and fires\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
             }
+        }
+        if options.world.is_some() && (options.game || options.explore.is_some() || options.smoke) {
+            return Err("--world cannot be combined with --game, --explore or --smoke".into());
+        }
+        if options.world.is_some() && (options.width < 1024 || options.height < 1024) {
+            return Err("streamed active windows need at least 1024 cells per axis for the current guard band".into());
         }
         if options.ticks == 0 || options.ticks > 3600 {
             return Err("ticks must be 1..3600".into());
@@ -149,6 +167,11 @@ impl Options {
     }
 }
 struct App {
+    world_session: Option<world_view::Session>,
+    world_target: Option<[i64; 2]>,
+    world_payload: Option<std::sync::Arc<[u8]>>,
+    world_sent: bool,
+    world_captured: Option<[i64; 2]>,
     options: Options,
     runtime: Runtime<Game>,
     actor: Option<actor_view::ActorVisual>,
@@ -187,16 +210,33 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
-        let tool = if options.explore.is_some() {
+        let streaming = options.world.is_some();
+        let world_session = if let Some(seed) = options.world {
+            Some(world_view::Session::new(
+                options.world_dir.join(seed.to_string()),
+                seed,
+                materials::palette().fingerprint(),
+                options.width,
+                options.height,
+            )?)
+        } else {
+            None
+        };
+        let tool = if options.explore.is_some() || options.world.is_some() {
             Tool::Wand
         } else {
             Tool::Brush
         };
         Ok(Self {
+            world_session,
+            world_target: None,
+            world_payload: None,
+            world_sent: false,
+            world_captured: None,
             material_visual: material_view::MaterialVisual::new()?,
             actor,
             options,
@@ -207,8 +247,8 @@ impl App {
             brush: SAND,
             tool,
             clicks: [false; 3],
-            follow_camera: false,
-            zoom: 1.,
+            follow_camera: streaming,
+            zoom: if streaming { 4. } else { 1. },
             inspect_enabled: false,
             inspected: None,
             rejected_edits: 0,
@@ -251,6 +291,56 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
+        if let (Some(session), Some(stream)) = (&mut self.world_session, snapshot.frame.stream) {
+            if !stream.waiting {
+                self.world_target = None;
+                self.world_payload = None;
+                self.world_sent = false;
+                self.world_captured = None;
+            } else if !self.world_sent {
+                if self.world_target.is_none() {
+                    if stream.loaded {
+                        session
+                            .capture(stream.origin, &snapshot.frame.terrain.indices.to_bytes())?;
+                        self.world_captured = Some(stream.origin);
+                    }
+                    let p = snapshot.frame.player.expect("streamed player");
+                    let target = [
+                        stream.origin[0]
+                            + if p.x() < self.options.width as f32 / 2. - 256. {
+                                -512
+                            } else if p.x() > self.options.width as f32 / 2. + 256. {
+                                512
+                            } else {
+                                0
+                            },
+                        stream.origin[1]
+                            + if p.y() < self.options.height as f32 / 2. - 256. {
+                                -512
+                            } else if p.y() > self.options.height as f32 / 2. + 256. {
+                                512
+                            } else {
+                                0
+                            },
+                    ];
+                    self.world_target = Some(target);
+                }
+                if self.world_payload.is_none() {
+                    self.world_payload =
+                        session.prepare(self.world_target.unwrap())?.map(Into::into);
+                }
+                if let Some(cells) = &self.world_payload {
+                    match self.runtime.submit(GameCommand::LoadRegion {
+                        origin: self.world_target.unwrap(),
+                        cells: cells.clone(),
+                    }) {
+                        Ok(()) => self.world_sent = true,
+                        Err(std::sync::mpsc::TrySendError::Full(_)) => {}
+                        Err(error) => return Err(format!("world handoff: {error}").into()),
+                    }
+                }
+            }
+        }
         let sampled_at = Instant::now();
         let displayed_player = snapshot
             .frame
@@ -291,7 +381,11 @@ impl App {
                 .transpose()?
                 .map(|[x, y]| [x, y, 8., 14.]),
         };
-        if let Some([x, y]) = pointer {
+        let world_loading = snapshot.frame.stream.is_some_and(|s| s.waiting);
+        if world_loading {
+            self.rejected_edits += self.clicks.iter().filter(|&&c| c).count() as u64;
+        }
+        if let Some([x, y]) = pointer.filter(|_| !world_loading) {
             match self.tool {
                 Tool::Wand => {
                     if self.clicks[0] {
@@ -372,7 +466,21 @@ impl App {
                 .map_err(|e| format!("inspection queue: {e}"))?;
             self.inspected = inspection;
         }
-        let input_label = if self.rejected_edits == 0 {
+        let input_label = if self.rejected_edits > 0 {
+            format!("{} ACTIONS NOT APPLIED", self.rejected_edits)
+        } else if let Some(stream) = snapshot.frame.stream {
+            let p = snapshot.frame.player.expect("stream player");
+            format!(
+                "WORLD {} {}{}",
+                stream.origin[0] + p.x() as i64,
+                stream.origin[1] + p.y() as i64,
+                if stream.waiting {
+                    " LOADING"
+                } else {
+                    " Q WAND 3 BUILD"
+                }
+            )
+        } else if self.rejected_edits == 0 {
             snapshot.frame.exploration_seed.map_or_else(
                 || self.tool.label().to_owned(),
                 |seed| format!("CAVE {seed} Q WAND 3 BUILD R RETRY"),
@@ -575,6 +683,22 @@ impl App {
             } else {
                 row.push_str(",,,,,");
             }
+            if let Some(stream) = snapshot.frame.stream {
+                let p = snapshot.frame.player.expect("world player");
+                row.push_str(&format!(
+                    ",{},{},{},{},{},{}",
+                    stream.origin[0] + p.x() as i64,
+                    stream.origin[1] + p.y() as i64,
+                    stream.origin[0],
+                    stream.origin[1],
+                    self.world_session
+                        .as_ref()
+                        .map_or(0, |s| s.storage.resident_count()),
+                    stream.waiting
+                ));
+            } else {
+                row.push_str(",,,,,,");
+            }
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -706,7 +830,7 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::Space) if down => {
                         self.game_command(GameCommand::Jump)
                     }
-                    PhysicalKey::Code(KeyCode::KeyC) if down => {
+                    PhysicalKey::Code(KeyCode::KeyC) if down && self.options.world.is_none() => {
                         self.follow_camera = !self.follow_camera;
                         self.zoom = if self.follow_camera { 2. } else { 1. };
                     }
@@ -714,7 +838,11 @@ impl ApplicationHandler for App {
                         self.zoom = (self.zoom * 1.25).min(4.)
                     }
                     PhysicalKey::Code(KeyCode::Minus) if down => {
-                        self.zoom = (self.zoom / 1.25).max(1.)
+                        self.zoom = (self.zoom / 1.25).max(if self.options.world.is_some() {
+                            4.
+                        } else {
+                            1.
+                        })
                     }
                     PhysicalKey::Code(KeyCode::KeyG) if down => {
                         let seed = self
@@ -779,6 +907,9 @@ fn main() -> Result<()> {
         );
         return Ok(());
     }
+    if options.world.is_some() {
+        println!("world_profile=noita base={:?} main_capture={:?} horizontal_period={} (capture bounds are not world limits)",world_view::BASE,world_view::MAIN_CAPTURE,world_view::PARALLEL_PERIOD);
+    }
     let mut game = Game::new(options.width, options.height, options.workers, options.play)?;
     if options.fluid_gpu {
         let gpu = std::sync::Arc::new(
@@ -800,6 +931,9 @@ fn main() -> Result<()> {
         game.record_to(path)?;
     }
     let runtime = Runtime::start(game)?;
+    if let Some(seed) = options.world {
+        runtime.submit(GameCommand::StartWorld(seed))?;
+    }
     if let Some(seed) = options.explore {
         runtime.submit(if options.game {
             GameCommand::NewRun(seed)
@@ -854,6 +988,19 @@ fn main() -> Result<()> {
     let event_loop = EventLoop::new()?;
     let mut app = App::new(options, runtime)?;
     event_loop.run_app(&mut app)?;
+    app.runtime
+        .finish()
+        .map_err(|_| "simulation worker failed during shutdown")?;
+    if let Some(session) = &mut app.world_session {
+        if let Some(snapshot) = app.runtime.latest() {
+            if let Some(stream) = snapshot.frame.stream.filter(|s| s.loaded) {
+                if !stream.waiting || app.world_captured != Some(stream.origin) {
+                    session.capture(stream.origin, &snapshot.frame.terrain.indices.to_bytes())?;
+                }
+            }
+        }
+        session.flush()?;
+    }
     if let Some(error) = app.error {
         return Err(error.into());
     }
@@ -934,11 +1081,15 @@ mod input_tests {
                 panic!("simulated worker failure");
             }
         }
-        let stopped = Runtime::start(Finished).unwrap();
+        let mut stopped = Runtime::start(Finished).unwrap();
         while !stopped.is_finished() {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
         assert!(submit_draw_command(&stopped, GameCommand::Inspect(None)).is_err());
+        assert!(
+            stopped.finish().is_err(),
+            "host must observe worker failure at shutdown"
+        );
     }
 }

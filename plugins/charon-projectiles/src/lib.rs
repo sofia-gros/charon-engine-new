@@ -23,6 +23,14 @@ impl Projectiles {
     pub fn shots(&self) -> &[Shot] {
         &self.shots
     }
+    pub fn translate(&mut self, offset: [f32; 2]) {
+        assert!(offset.into_iter().all(f32::is_finite));
+        for shot in &mut self.shots {
+            for (axis, delta) in offset.into_iter().enumerate() {
+                shot.position[axis] += delta;
+            }
+        }
+    }
     /// Prototype limits bound work: 1024 shots, 1024 cells/axis/tick, 3600 ticks.
     /// Reject invalid/excessive requests; never silently discard an active shot.
     pub fn spawn(&mut self, shot: Shot) -> Result<(), &'static str> {

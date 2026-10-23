@@ -29,6 +29,12 @@ impl Body {
             discontinuous: true,
         }
     }
+    pub fn translate(&mut self, offset: [f32; 2]) {
+        assert!(offset.into_iter().all(f32::is_finite));
+        self.x += offset[0];
+        self.y += offset[1];
+        self.discontinuous = true;
+    }
     pub fn x(&self) -> f32 {
         self.x
     }

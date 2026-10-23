@@ -1,0 +1,52 @@
+{
+  "source_sha256": "ed1da9e0313f0434cae8ebef2c905a5d9a572d446cea212c16c6504fddbda8fb",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "world",
+  "base_revision": "2741b75a8f130ad5da2dbe249fc4271647daf015",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.003,
+  "gif_encoded_frames": 160,
+  "draw_submission_fps_range": [
+    1.88,
+    35.7
+  ],
+  "simulation_hz_range": [
+    0.0,
+    154.49
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
+  "captured_frames": 160,
+  "gif_duration_ms": 20060,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": null,
+  "fluid_compute_adapter": null,
+  "simulation_grid": [
+    1920,
+    1080
+  ],
+  "resident_peak": 16,
+  "world_origins_x": [
+    -960,
+    -448
+  ],
+  "saved_chunks": 5,
+  "replay": "replay_ticks=1234 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "global world coordinates",
+    "active region boundary crossing and return",
+    "resident budget",
+    "jump/dig",
+    "terrain persisted on exit",
+    "explicit region payload replay without disk IO",
+    "Escape shutdown",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
+  ]
+}

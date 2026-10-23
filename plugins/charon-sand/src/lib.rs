@@ -70,6 +70,7 @@ pub struct SandWorld {
     pool: rayon::ThreadPool,
     tick: u64,
     full_scan: bool,
+    origin: Option<[i64; 2]>,
 }
 
 fn priority(index: usize, tick: u64) -> u64 {
@@ -125,6 +126,46 @@ impl SandWorld {
         Ok(world)
     }
 
+    /// Restore a bounded active window at a global origin and physics clock.
+    /// The caller supplies protected outer guard cells outside its playable view.
+    /// Global priorities keep overlapping interior cells independent of window
+    /// placement. This does not simulate or save cells outside the window.
+    pub fn from_region(
+        width: usize,
+        height: usize,
+        workers: usize,
+        cells: Vec<u8>,
+        materials: Materials,
+        origin: [i64; 2],
+        tick: u64,
+    ) -> Result<Self, String> {
+        origin[0]
+            .checked_add(width as i64)
+            .ok_or("region coordinate overflow")?;
+        origin[1]
+            .checked_add(height as i64)
+            .ok_or("region coordinate overflow")?;
+        if tick == u64::MAX {
+            return Err("region clock overflow".into());
+        }
+        let mut world = Self::from_material_cells(width, height, workers, cells, materials)?;
+        world.origin = Some(origin);
+        world.tick = tick;
+        Ok(world)
+    }
+    fn priority(&self, index: usize, tick: u64) -> u64 {
+        match self.origin {
+            None => priority(index, tick),
+            Some(origin) => {
+                let x = (origin[0] + (index % self.width) as i64) as u64;
+                let y = (origin[1] + (index / self.width) as i64) as u64;
+                let key = x.wrapping_mul(0x9e3779b97f4a7c15) ^ y.wrapping_mul(0xbf58476d1ce4e5b9);
+                let mut value = key ^ tick.wrapping_mul(0x94d049bb133111eb);
+                value = (value ^ (value >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
+                value ^ (value >> 27)
+            }
+        }
+    }
     /// Read authoritative material on the simulation owner thread. Out of bounds is None.
     /// Games decide which materials block actors, projectiles, or other systems.
     pub fn material_at(&self, x: i32, y: i32) -> Option<u8> {
@@ -201,6 +242,7 @@ impl SandWorld {
             pool,
             tick: 0,
             full_scan: false,
+            origin: None,
         };
         world.reset();
         Ok(world)
@@ -317,7 +359,7 @@ impl SandWorld {
             return Some(below);
         }
         let x = source % self.width;
-        let directions = if priority(source, tick) & 1 == 0 {
+        let directions = if self.priority(source, tick) & 1 == 0 {
             [-1, 1]
         } else {
             [1, -1]
@@ -471,7 +513,7 @@ impl SandWorld {
                             {
                                 Motion::Powder => {
                                     let below = source + width;
-                                    let diagonals = if priority(source, tick) & 1 == 0 {
+                                    let diagonals = if self.priority(source, tick) & 1 == 0 {
                                         [below - 1, below + 1]
                                     } else {
                                         [below + 1, below - 1]
@@ -510,7 +552,7 @@ impl SandWorld {
             .count_ones();
         let mut proposals: Vec<_> = batches.into_iter().flat_map(|batch| batch.0).collect();
         proposals.sort_unstable_by_key(|&(source, destination, _, _)| {
-            (priority(source, tick), source, destination)
+            (self.priority(source, tick), source, destination)
         });
         self.awake.fill(false);
         // Density swaps can share source/destination sets. Claim both endpoints

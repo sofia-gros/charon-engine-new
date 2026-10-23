@@ -151,6 +151,25 @@ impl World {
         }
         Ok(())
     }
+    /// Replace a completed chunk, incrementing its revision once if changed.
+    pub fn replace(&mut self, key: ChunkKey, cells: &[u8]) -> io::Result<()> {
+        if cells.len() != self.config.side * self.config.side {
+            return Err(invalid("chunk length mismatch"));
+        }
+        let chunk = self
+            .chunks
+            .get_mut(&key)
+            .ok_or_else(|| busy("chunk is not loaded"))?;
+        if chunk.cells.as_ref() != cells {
+            let next = chunk
+                .revision
+                .checked_add(1)
+                .ok_or_else(|| invalid("chunk revision overflow"))?;
+            chunk.cells = Arc::from(cells);
+            chunk.revision = next;
+        }
+        Ok(())
+    }
     pub fn is_dirty(&self, key: ChunkKey) -> bool {
         self.chunks
             .get(&key)

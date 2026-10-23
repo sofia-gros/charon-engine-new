@@ -178,6 +178,13 @@ impl<S: Simulation> Runtime<S> {
         }
     }
 
+    /// Explicit shutdown exposes worker panics to the host instead of discarding
+    /// them in Drop. The last snapshot includes the completed in-flight step.
+    pub fn finish(&mut self) -> thread::Result<()> {
+        self.request_stop();
+        self.thread.take().map_or(Ok(()), JoinHandle::join)
+    }
+
     pub fn latest(&self) -> Option<Arc<Snapshot<S::Frame>>> {
         self.latest.lock().expect("snapshot lock poisoned").clone()
     }

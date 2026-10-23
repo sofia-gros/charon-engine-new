@@ -58,6 +58,39 @@ fn encode(command: &Command) -> String {
         Command::AddOil => "oil".into(),
         Command::Explore(seed) => format!("explore:{seed}"),
         Command::NewRun(seed) => format!("run:{seed}"),
+        Command::StartWorld(seed) => format!("world:{seed}"),
+        Command::LoadRegion { origin, cells } => {
+            let mut runs = Vec::new();
+            let mut start = 0;
+            while start < cells.len() {
+                let mut end = start + 1;
+                while end < cells.len() && end - start < 65535 && cells[end] == cells[start] {
+                    end += 1;
+                }
+                runs.extend(((end - start) as u16).to_le_bytes());
+                runs.push(cells[start]);
+                start = end;
+            }
+            let packed = runs.len() < cells.len();
+            let bytes = if packed {
+                runs.as_slice()
+            } else {
+                cells.as_ref()
+            };
+            let mut hex = Vec::with_capacity(bytes.len() * 2);
+            const DIGITS: &[u8] = b"0123456789abcdef";
+            for &cell in bytes {
+                hex.push(DIGITS[(cell >> 4) as usize]);
+                hex.push(DIGITS[(cell & 15) as usize]);
+            }
+            format!(
+                "{}:{}:{}:{}",
+                if packed { "region-rle" } else { "region" },
+                origin[0],
+                origin[1],
+                String::from_utf8(hex).expect("hex ASCII")
+            )
+        }
         Command::Begin => "begin".into(),
         Command::Terrain(SandCommand::Paint { x, y, material }) => {
             format!("paint:{x}:{y}:{material}")
@@ -89,7 +122,12 @@ fn encode(command: &Command) -> String {
 }
 fn decode(text: &str) -> Result<Command, String> {
     let fields: Vec<_> = text.split(':').collect();
-    let bad = || format!("invalid input command: {text}");
+    let bad = || {
+        format!(
+            "invalid input command: {}",
+            text.chars().take(128).collect::<String>()
+        )
+    };
     Ok(match fields.as_slice() {
         ["paint", x, y, m] => Command::Terrain(SandCommand::Paint {
             x: x.parse().map_err(|_| bad())?,
@@ -124,6 +162,48 @@ fn decode(text: &str) -> Result<Command, String> {
         }
         ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
         ["run", seed] => Command::NewRun(seed.parse().map_err(|_| bad())?),
+        ["world", seed] => Command::StartWorld(seed.parse().map_err(|_| bad())?),
+        [kind @ ("region" | "region-rle"), x, y, hex] => {
+            if hex.len() > 1920 * 1080 * 2 || hex.len() % 2 != 0 {
+                return Err(bad());
+            }
+            fn digit(c: u8) -> Option<u8> {
+                match c {
+                    b'0'..=b'9' => Some(c - b'0'),
+                    b'a'..=b'f' => Some(c - b'a' + 10),
+                    _ => None,
+                }
+            }
+            let cells: Result<Vec<u8>, String> = hex
+                .as_bytes()
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|p| Ok((digit(p[0]).ok_or_else(bad)? << 4) | digit(p[1]).ok_or_else(bad)?))
+                .collect();
+            let bytes = cells?;
+            let cells = if *kind == "region-rle" {
+                let (runs, extra) = bytes.as_chunks::<3>();
+                if !extra.is_empty() {
+                    return Err(bad());
+                }
+                let mut expanded = Vec::new();
+                for &[lo, hi, cell] in runs {
+                    let count = u16::from_le_bytes([lo, hi]) as usize;
+                    if count == 0 || expanded.len() + count > 1920 * 1080 {
+                        return Err(bad());
+                    }
+                    expanded.resize(expanded.len() + count, cell);
+                }
+                expanded
+            } else {
+                bytes
+            };
+            Command::LoadRegion {
+                origin: [x.parse().map_err(|_| bad())?, y.parse().map_err(|_| bad())?],
+                cells: cells.into(),
+            }
+        }
         ["begin"] => Command::Begin,
         ["cup"] => Command::CupScene,
         ["dam"] => Command::DamScene,
