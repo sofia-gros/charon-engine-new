@@ -52,6 +52,7 @@ fn encode(command: &Command) -> String {
         Command::Right(down) => format!("right:{}", u8::from(*down)),
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
         Command::Jump => "jump".into(),
+        Command::Fire => "fire".into(),
         Command::ToggleSand => "sand".into(),
         Command::Pause => "pause".into(),
         Command::Step => "step".into(),
@@ -70,6 +71,7 @@ fn decode(text: &str) -> Result<Command, String> {
         }),
         ["clear"] => Command::Terrain(SandCommand::Clear),
         ["jump"] => Command::Jump,
+        ["fire"] => Command::Fire,
         ["sand"] => Command::ToggleSand,
         ["pause"] => Command::Pause,
         ["step"] => Command::Step,
@@ -157,7 +159,7 @@ mod tests {
         for tick in 0..120 {
             let commands = match tick {
                 1 => vec![Command::Right(true)],
-                10 => vec![Command::Right(false), Command::Jump],
+                10 => vec![Command::Right(false), Command::Jump, Command::Fire],
                 35 => vec![Command::ToggleSand, Command::Pause],
                 38 => vec![Command::Jump],
                 40 => vec![Command::Step, Command::Step],

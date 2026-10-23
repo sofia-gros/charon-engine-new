@@ -73,7 +73,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -117,7 +117,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts")?;
         }
         let now = Instant::now();
         Ok(Self {
@@ -262,6 +262,12 @@ impl App {
                 cell.and_then(|c| c.awake)
                     .map_or_else(String::new, |a| a.to_string())
             ));
+            row.push_str(&format!(
+                ",{},{},{}",
+                snapshot.frame.shots.len(),
+                snapshot.frame.sparks.len(),
+                snapshot.frame.impacts
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -346,6 +352,9 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::Space) if down => {
                         self.game_command(GameCommand::Jump)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyJ) if down => {
+                        self.game_command(GameCommand::Fire)
                     }
                     PhysicalKey::Code(KeyCode::KeyB) if down => {
                         self.game_command(GameCommand::ToggleSand)

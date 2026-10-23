@@ -207,6 +207,10 @@ name = "charon-platformer"
 version = "0.1.0"
 
 [[package]]
+name = "charon-projectiles"
+version = "0.1.0"
+
+[[package]]
 name = "charon-render"
 version = "0.1.0"
 dependencies = [
@@ -234,6 +238,7 @@ name = "charon-sandbox"
 version = "0.1.0"
 dependencies = [
  "charon-platformer",
+ "charon-projectiles",
  "charon-render",
  "charon-runtime",
  "charon-sand",

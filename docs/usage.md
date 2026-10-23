@@ -54,7 +54,7 @@ PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョ�
 cargo run --locked --release -p charon-sandbox -- --play --workers 4 --record artifacts/local/platformer.csv
 ```
 
-Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セル。A/Dまたは左右キーで移動、Spaceでジャンプ、Fを押している間は足元を掘る。Bで砂の当たり判定を切り替える。壁は常に足場になる。マウスの砂/壁/消去も使える。Rで地形・プレイヤー・判定設定を初期化する。
+Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セル。A/Dまたは左右キーで移動、Spaceでジャンプ、Fを押している間は足元を掘る。Bで砂の当たり判定を切り替える。Jで右へ発射する。壁は常に足場になる。マウスの砂/壁/消去も使える。Rで地形・プレイヤー・判定設定を初期化する。
 
 ![Platformerの移動・ジャンプ・地形破壊](media/platformer-linux.gif)
 
@@ -72,6 +72,14 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 記録は物質更新と同じスレッドでtickごとに保存する。再生はウィンドウ/GPUを起動せず、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
 
 入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。新規記録は素材定義の識別情報を含むv2で、定義の異なる版は再生前に拒否する。既存v1は従来の3素材だけを対象に再生できる。物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
+
+## 弾と破壊
+
+Jで右へ発射する。弾は固定tickで通過セルをたどり、最初の遮蔽物で止まる。素材の`blocks_projectiles`で判定し、ゲーム側が命中要求から7×7セルの穴と短命な火花を作る。端の保護壁は壊れない。火花には物質・当たり判定がなく、ゲーム状態を変えない。弾pluginは砂に依存しない。現在は点の弾とセル地形が対象で、敵へのダメージ・太い弾・跳弾は未実装。
+
+![弾の移動・命中・地形破壊と火花](media/projectiles-linux.gif)
+
+`python3 scripts/capture-linux.py --sample projectiles`で実入力・描画・別ワーカーでの再生を確認できる。[入力列](media/projectiles-linux.trace)も`--replay`で検証できる。停止中の発射は予約され、再開か次のコマ送りで1発生成する。再開前の複数発射入力は1発にまとめる。
 
 ## デバッグ操作
 

@@ -132,7 +132,7 @@ def check_debugger_rows(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
@@ -195,7 +195,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger", "projectiles") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -271,6 +271,25 @@ EndSection
                 at(9)
                 at(10)
                 inputs.key(ord("r"))
+            elif sample == "projectiles":
+                at(0.5)
+                inputs.key(ord("p"))
+                inputs.key(ord("i"))
+                inputs.move(960, 672)
+                inputs.button(2, True)
+                at(0.8)
+                inputs.button(2, False)
+                at(1.5)
+                inputs.key(ord("j"))
+                at(2)
+                inputs.key(ord("n"))
+                at(2.8)
+                inputs.key(ord("p"))
+                for index in range(10):
+                    at(3.5 + index * 0.65)
+                    inputs.key(ord("j"))
+                at(11)
+                inputs.key(ord("r"))
             else:
                 at(1)
                 inputs.key(ord(" "))
@@ -341,6 +360,16 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "player_x_range": [min(xs), max(xs)], "player_y_range": [min(ys), max(ys)],
                           "checks": ["movement", "jump", "sand/wall collision policy", "support destruction", "reset", "Escape shutdown", "authoritative input replay with 1 worker"]}
+            elif sample == "projectiles":
+                assert max(int(r["impacts"]) for r in rows) >= 2, "shots did not hit terrain"
+                assert any(int(r["sparks"]) > 0 for r in rows), "impact particles missing"
+                assert any(r["material"] == "2" for r in rows) and any(r["material"] == "0" and int(r["impacts"]) > 0 for r in rows), "hit did not destroy inspected wall"
+                assert any(int(r["shots"]) > 0 for r in rows), "moving shots missing"
+                assert rows[-1]["impacts"] == "0" and rows[-1]["sparks"] == "0", "reset did not clear projectile state"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"peak_impacts": max(int(r["impacts"]) for r in rows), "replay": replay.stdout.strip(),
+                          "checks": ["paused fire waits for step", "moving shots", "material collision", "wall destruction", "cosmetic sparks", "reset", "authoritative replay with 1 worker", "Escape shutdown"]}
             else:
                 counts = check_debugger_rows(rows)
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)

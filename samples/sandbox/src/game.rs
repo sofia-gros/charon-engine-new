@@ -1,6 +1,7 @@
 //! Sample composition owns both plugins on the simulation thread.
 use crate::materials::{palette, AIR, SAND, WALL};
 use charon_platformer::Body;
+use charon_projectiles::{Projectiles, Shot};
 use charon_runtime::Simulation;
 use charon_sand::{Command as SandCommand, SandWorld};
 #[derive(Clone, Copy, Debug)]
@@ -9,6 +10,7 @@ pub enum Command {
     Left(bool),
     Right(bool),
     Jump,
+    Fire,
     Dig(bool),
     ToggleSand,
     Pause,
@@ -24,14 +26,26 @@ pub struct Inspection {
 }
 pub struct Frame {
     pub terrain: charon_sand::Frame,
+    pub shots: Vec<[f32; 2]>,
+    pub sparks: Vec<[f32; 2]>,
+    pub impacts: u64,
     pub player: Option<Body>,
     pub sand_solid: bool,
     pub paused: bool,
     pub simulation_tick: u64,
     pub inspection: Option<Inspection>,
 }
+struct Spark {
+    position: [f32; 2],
+    velocity: [f32; 2],
+    life: u8,
+}
 pub struct Game {
     world: SandWorld,
+    projectiles: Projectiles,
+    sparks: Vec<Spark>,
+    fire_pending: bool,
+    impacts: u64,
     player: Option<Body>,
     sand_solid: bool,
     left: bool,
@@ -70,6 +84,10 @@ impl Game {
         };
         Ok(Self {
             world,
+            projectiles: Projectiles::default(),
+            sparks: vec![],
+            fire_pending: false,
+            impacts: 0,
             player: play
                 .then(|| Body::new(width as f32 / 4.0, (height * 2 / 3 - 18) as f32, 7.0, 12.0)),
             sand_solid: true,
@@ -118,6 +136,19 @@ impl Game {
             mix(u64::from(player.grounded));
             mix(u64::from(player.embedded));
         }
+        // Only authoritative projectile state enters replay checks; cosmetic sparks
+        // have no collision and cannot alter terrain or actors.
+        if self.fire_pending || self.impacts != 0 || !self.projectiles.shots().is_empty() {
+            mix(0x73686f7473);
+            mix(u64::from(self.fire_pending));
+            mix(self.impacts);
+            for shot in self.projectiles.shots() {
+                for value in shot.position.into_iter().chain(shot.velocity) {
+                    mix(u64::from(value.to_bits()));
+                }
+                mix(u64::from(shot.remaining_ticks));
+            }
+        }
         // Preserve signatures for existing unpaused v1 traces.
         if self.paused || self.jump_pending {
             mix(0x6465627567);
@@ -142,7 +173,66 @@ impl Game {
                 }
             }
         }
-        let frame = self.world.step(terrain);
+        let mut frame = self.world.step(terrain);
+        self.sparks.retain_mut(|spark| {
+            for axis in 0..2 {
+                spark.position[axis] += spark.velocity[axis];
+            }
+            spark.velocity[1] += 0.04;
+            spark.life -= 1;
+            spark.life > 0
+        });
+        if self.fire_pending {
+            let position = self
+                .player
+                .map_or([self.width as f32 / 4., self.height as f32 / 4.], |p| {
+                    [p.x() + p.width() + 0.5, p.y() + p.height() / 2.]
+                });
+            self.projectiles
+                .spawn(Shot {
+                    position,
+                    velocity: [12., 0.],
+                    remaining_ticks: 60,
+                })
+                .expect("one shot per tick with a 60 tick lifetime stays below capacity");
+            self.fire_pending = false;
+        }
+        let world = &self.world;
+        let impacts = self.projectiles.step(|x, y| {
+            world.material_at(x, y).is_none_or(|id| {
+                world
+                    .materials()
+                    .get(id)
+                    .is_some_and(|m| m.blocks_projectiles)
+            })
+        });
+        if !impacts.is_empty() {
+            let mut destruction = Vec::new();
+            for impact in impacts {
+                self.impacts += 1;
+                destruction.push(SandCommand::Paint {
+                    x: impact.cell[0].max(0) as usize,
+                    y: impact.cell[1].max(0) as usize,
+                    material: AIR,
+                });
+                // Sample visual effect, deliberately separate from physical cells.
+                for velocity in [[-0.5, -0.8], [0.4, -0.9], [-0.8, -0.3], [0.7, -0.2]] {
+                    self.sparks.push(Spark {
+                        position: impact.position,
+                        velocity,
+                        life: 24,
+                    });
+                }
+            }
+            // Render destruction immediately without an extra physics tick. Preserve
+            // the physics counters from the same step in the newly published frame.
+            let edited = self.world.edit(destruction);
+            frame.image = edited.image;
+            frame.sand = edited.sand;
+            frame.converted_cells += edited.converted_cells;
+            frame.update_ms += edited.update_ms;
+            frame.snapshot_ms += edited.snapshot_ms;
+        }
         if let Some(player) = &mut self.player {
             let world = &self.world;
             let sand_solid = self.sand_solid;
@@ -187,6 +277,7 @@ impl Simulation for Game {
                 Command::Left(down) => self.left = down,
                 Command::Right(down) => self.right = down,
                 Command::Jump => self.jump_pending = true,
+                Command::Fire => self.fire_pending = true,
                 Command::Dig(down) => self.dig = down,
                 Command::ToggleSand => self.sand_solid = !self.sand_solid,
                 Command::Pause => self.paused = !self.paused,
@@ -222,6 +313,14 @@ impl Simulation for Game {
         }
         Frame {
             terrain: frame,
+            shots: self
+                .projectiles
+                .shots()
+                .iter()
+                .map(|s| s.position)
+                .collect(),
+            sparks: self.sparks.iter().map(|s| s.position).collect(),
+            impacts: self.impacts,
             player: self.player,
             sand_solid: self.sand_solid,
             paused: self.paused,
@@ -238,6 +337,71 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn bullets_query_material_policy_destroy_on_hit_and_keep_effects_out_of_physics() {
+        let mut game = Game::new(160, 120, 4, true).unwrap();
+        game.step(vec![
+            Command::Pause,
+            Command::Terrain(SandCommand::Paint {
+                x: 70,
+                y: 68,
+                material: WALL,
+            }),
+            Command::Fire,
+        ]);
+        assert!(
+            game.projectiles.shots().is_empty(),
+            "paused fire advanced physics"
+        );
+        let flying = game.step(vec![Command::Step]);
+        assert_eq!(flying.shots.len(), 1);
+        let hit = game.step(vec![Command::Step]);
+        assert_eq!(hit.impacts, 1);
+        assert!(hit.shots.is_empty());
+        assert_eq!(hit.sparks.len(), 4);
+        assert_eq!(game.world.material_at(67, 68), Some(AIR));
+        let pixels = hit.terrain.image.to_rgba();
+        assert_eq!(
+            &pixels[(68 * 160 + 67) * 4..][..4],
+            &game.world.materials().get(AIR).unwrap().color
+        );
+        let signature = game.signature();
+        let frozen = game.step(vec![]);
+        assert_eq!(frozen.sparks, hit.sparks);
+        assert_eq!(signature, game.signature());
+        game.sparks.clear();
+        assert_eq!(
+            signature,
+            game.signature(),
+            "visual particles entered authoritative state"
+        );
+        // Ash passes actors but independently blocks bullets. Frozen terrain keeps
+        // this test focused on collision policy rather than powder settling.
+        game.world.edit(vec![SandCommand::Paint {
+            x: 90,
+            y: 68,
+            material: crate::materials::ASH,
+        }]);
+        let world = &game.world;
+        let mut shots = Projectiles::default();
+        shots
+            .spawn(Shot {
+                position: [80.5, 68.5],
+                velocity: [20., 0.],
+                remaining_ticks: 2,
+            })
+            .unwrap();
+        assert_eq!(
+            shots.step(|x, y| world.material_at(x, y).is_some_and(|id| world
+                .materials()
+                .get(id)
+                .unwrap()
+                .blocks_projectiles))[0]
+                .cell,
+            [87, 68]
+        );
+    }
+
     #[test]
     fn game_defined_powder_uses_its_own_actor_policy_and_render_color() {
         use crate::materials::ASH;

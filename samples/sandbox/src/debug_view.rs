@@ -53,6 +53,12 @@ pub fn overlays(
             rect(x + 0.8, y, 0.2, 1., accent),
         ]);
     }
+    for &[x, y] in &frame.shots {
+        result.push(rect(x - 2., y, 3., 0.7, [1., 0.95, 0.3, 1.]));
+    }
+    for &[x, y] in &frame.sparks {
+        result.push(rect(x, y, 0.8, 0.8, [1., 0.5, 0.15, 1.]));
+    }
     append_performance_overlay(&mut result, metrics, software);
     {
         result.push(rect(
