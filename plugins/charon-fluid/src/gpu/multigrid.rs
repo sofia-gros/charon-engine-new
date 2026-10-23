@@ -255,8 +255,9 @@ impl Hierarchy {
     pub fn dispatches(&self) -> u32 {
         // Zero-start first sweep is fused into RHS/restriction. Prolongation
         // includes the first post-sweep; the final fine sweep includes PCG dots.
+        // Fine preparation also includes the second pre-sweep.
         let last = self.counts.len() - 1;
         (4 * last + if self.direct { 1 } else { COARSE_SWEEPS - 1 } + 2
-            - usize::from(last > 0 || !self.direct)) as u32
+            - 2 * usize::from(last > 0 || !self.direct)) as u32
     }
 }

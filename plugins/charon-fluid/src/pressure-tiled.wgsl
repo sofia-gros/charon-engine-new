@@ -25,10 +25,6 @@ fn reduce(value:f32,lane:u32) -> f32 {
  let total=sums[0]; workgroupBarrier(); return total;
 }
 @compute @workgroup_size(LANES)
-fn initialize(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
- for(var i=id.x;i<arrayLength(&rows);i+=groups.x*LANES) {work[i]=Work(0.,right[i],0.,0.,0.,0.);}
-}
-@compute @workgroup_size(LANES)
 fn start(@builtin(local_invocation_index) lane:u32) {
  var rr=0.; var rz=0.;
  for(var i=lane;i<arrayLength(&partials);i+=LANES) {rr+=partials[i].rr; rz+=partials[i].rz;}
@@ -69,14 +65,6 @@ fn alpha(@builtin(local_invocation_index) lane:u32) {
  if lane==0u {
   if denominator<=0. || denominator!=denominator {control.done=2u;}
   else {control.alpha=control.rz/denominator;}
- }
-}
-@compute @workgroup_size(LANES)
-fn update(@builtin(global_invocation_id) id:vec3u,@builtin(local_invocation_index) lane:u32,@builtin(num_workgroups) groups:vec3u) {
- if finished(lane) {return;}
- for(var i=id.x;i<arrayLength(&rows);i+=groups.x*LANES) {
-  var d=work[i].d0; if control.iteration%2u!=0u {d=work[i].d1;}
-  work[i].p+=control.alpha*d; work[i].r-=control.alpha*work[i].product;
  }
 }
 @compute @workgroup_size(LANES)

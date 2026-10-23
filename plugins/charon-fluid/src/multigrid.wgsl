@@ -16,6 +16,7 @@ struct Params { offset:u32, count:u32, coarse_offset:u32, coarse_count:u32, inve
 @group(0) @binding(5) var<storage,read> data:array<u32>;
 @group(0) @binding(6) var<storage,read_write> values:array<Value>;
 @group(0) @binding(7) var<uniform> params:Params;
+@group(0) @binding(8) var<storage,read> right:array<f32>;
 var<workgroup> sums:array<vec2f,128>;
 var<workgroup> status:u32;
 fn value(i:u32,second:bool) -> f32 {
@@ -29,13 +30,41 @@ fn applied(i:u32,second:bool) -> f32 {
  }
  return ax;
 }
-@compute @workgroup_size(LANES)
-fn rhs(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
- if control.done!=0u {return;}
- for(var j=id.x;j<params.count;j+=groups.x*LANES) {
-  let i=params.offset+j; let r=work[j].r;
-  values[i]=Value(r,0.,(2./3.)*r/nodes[i].diagonal,0.);
+// Fine residuals remain immutable throughout the V-cycle. Initialization
+// and Krylov updates share both pre-sweeps instead of writing and then
+// rereading intermediate full-grid vectors in separate dispatches.
+fn fine_rhs(j:u32,initial:bool) -> f32 {
+ if initial {return right[j];}
+ return work[j].r-control.alpha*work[j].product;
+}
+fn prepare_fine(j:u32,initial:bool) {
+ let r=fine_rhs(j,initial); let node=nodes[j];
+ let x=(2./3.)*r/node.diagonal; var ax=node.boundary*x;
+ // Evaluate the zero-start first sweep on demand, from immutable residuals.
+ // Writing only the second-sweep result avoids another full-grid dispatch.
+ for(var k=0u;k<4u;k+=1u) {
+  let other=rows[j].adjacent[k]; let weight=rows[j].a[k];
+  if other!=0xffffffffu && weight>0. {
+   let neighbour=(2./3.)*fine_rhs(other,initial)/nodes[other].diagonal;
+   ax+=weight*(x-neighbour);
+  }
  }
+ if initial {work[j]=Work(0.,r,0.,0.,0.,0.);}
+ else {
+  var d=work[j].d0; if control.iteration%2u!=0u {d=work[j].d1;}
+  work[j].p+=control.alpha*d;
+ }
+ // Keep old work.r immutable until finish, so adjacent groups can read it.
+ values[j]=Value(r,x+(2./3.)*(r-ax)/node.diagonal,0.,0.);
+}
+@compute @workgroup_size(LANES)
+fn initialize_rhs(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
+ for(var j=id.x;j<params.count;j+=groups.x*LANES) {prepare_fine(j,true);}
+}
+@compute @workgroup_size(LANES)
+fn update_rhs(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
+ if control.done!=0u {return;}
+ for(var j=id.x;j<params.count;j+=groups.x*LANES) {prepare_fine(j,false);}
 }
 @compute @workgroup_size(LANES)
 fn smooth_first(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
@@ -96,7 +125,7 @@ fn finish(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) group
  workgroupBarrier(); if workgroupUniformLoad(&status)!=0u {return;}
  var local=vec2f(0.);
  for(var i=id.x;i<params.count;i+=groups.x*LANES) {
-  let r=work[i].r;
+  let r=values[i].rhs; work[i].r=r;
   // The finest final Jacobi sweep can directly produce PCG z and dot products.
   // A one-level direct hierarchy has no pending sweep.
   var z=values[i].x0;

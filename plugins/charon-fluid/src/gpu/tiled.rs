@@ -3,18 +3,16 @@
 //! kernel; only converged pressures cross back, not the Krylov work arrays.
 use super::multigrid::{Hierarchy, COARSE_SWEEPS};
 use super::{Error, GpuContext, Work};
-const INITIALIZE: usize = 0;
-const START: usize = 1;
-const PRODUCT: usize = 2;
-const ALPHA: usize = 3;
-const UPDATE: usize = 4;
-const BETA: usize = 5;
-const COLLECT: usize = 6;
+const START: usize = 0;
+const PRODUCT: usize = 1;
+const ALPHA: usize = 2;
+const BETA: usize = 3;
+const COLLECT: usize = 4;
 const BATCH: u32 = 16;
 pub(super) struct TiledPressure {
     layout: wgpu::BindGroupLayout,
-    pipelines: [wgpu::ComputePipeline; 7],
-    multigrid: [wgpu::ComputePipeline; 7],
+    pipelines: [wgpu::ComputePipeline; 5],
+    multigrid: [wgpu::ComputePipeline; 8],
 }
 impl TiledPressure {
     pub(super) fn new(device: &wgpu::Device, lanes: f64) -> Self {
@@ -62,22 +60,15 @@ impl TiledPressure {
                 cache: None,
             })
         };
-        let pipelines = [
-            "initialize",
-            "start",
-            "product",
-            "alpha",
-            "update",
-            "beta",
-            "collect",
-        ]
-        .map(|entry| pipeline(&shader, entry));
+        let pipelines =
+            ["start", "product", "alpha", "beta", "collect"].map(|entry| pipeline(&shader, entry));
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("aggregation multigrid"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../multigrid.wgsl").into()),
         });
         let multigrid = [
-            "rhs",
+            "initialize_rhs",
+            "update_rhs",
             "smooth_first",
             "smooth_second",
             "restrict_residual",
@@ -121,39 +112,44 @@ impl TiledPressure {
         pass: &mut wgpu::ComputePass<'_>,
         binds: &[wgpu::BindGroup],
         hierarchy: &Hierarchy,
+        initial: bool,
     ) {
         let dispatch = |pass: &mut wgpu::ComputePass<'_>, stage: usize, level: usize| {
             pass.set_bind_group(0, &binds[level], &[]);
             pass.set_pipeline(&self.multigrid[stage]);
             pass.dispatch_workgroups((hierarchy.counts[level] as u32).div_ceil(128), 1, 1);
         };
-        dispatch(pass, 0, 0);
+        dispatch(pass, usize::from(!initial), 0);
         let last = hierarchy.counts.len() - 1;
         for level in 0..last {
-            // RHS/restriction already computed the zero-start first sweep.
-            dispatch(pass, 2, level);
-            dispatch(pass, 3, level + 1);
+            // Finest preparation includes two sweeps; restriction includes one.
+            if level > 0 {
+                dispatch(pass, 3, level);
+            }
+            dispatch(pass, 4, level + 1);
         }
         if hierarchy.direct {
-            dispatch(pass, 4, last);
+            dispatch(pass, 5, last);
         } else {
             // First sweep came with RHS/restriction. A one-level hierarchy
             // defers its final sweep to the PCG dot-product pass.
-            dispatch(pass, 2, last);
+            if last > 0 {
+                dispatch(pass, 3, last);
+            }
             for sweep in (2..COARSE_SWEEPS).step_by(2) {
-                dispatch(pass, 1, last);
+                dispatch(pass, 2, last);
                 if last > 0 || sweep + 2 < COARSE_SWEEPS {
-                    dispatch(pass, 2, last);
+                    dispatch(pass, 3, last);
                 }
             }
         }
         for level in (0..last).rev() {
-            dispatch(pass, 5, level);
+            dispatch(pass, 6, level);
             if level > 0 {
-                dispatch(pass, 2, level);
+                dispatch(pass, 3, level);
             }
         }
-        dispatch(pass, 6, 0);
+        dispatch(pass, 7, 0);
     }
 }
 impl GpuContext {
@@ -284,9 +280,9 @@ impl GpuContext {
                 32,
                 &readback,
                 (
-                    (4 + hierarchy.dispatches()) * BATCH
+                    (3 + hierarchy.dispatches()) * BATCH
                         + if batch == 0 {
-                            2 + hierarchy.dispatches()
+                            1 + hierarchy.dispatches()
                         } else {
                             0
                         },
@@ -295,19 +291,17 @@ impl GpuContext {
                 |pass| {
                     pass.set_bind_group(0, &binds[0], &[]);
                     if batch == 0 {
-                        pass.set_pipeline(&self.tiled.pipelines[INITIALIZE]);
-                        pass.dispatch_workgroups(groups, 1, 1);
-                        self.tiled.cycle(pass, &binds, hierarchy);
+                        self.tiled.cycle(pass, &binds, hierarchy, true);
                         pass.set_bind_group(0, &binds[0], &[]);
                         pass.set_pipeline(&self.tiled.pipelines[START]);
                         pass.dispatch_workgroups(1, 1, 1);
                     }
                     for _ in 0..BATCH {
-                        for (pipeline, count) in [(PRODUCT, groups), (ALPHA, 1), (UPDATE, groups)] {
+                        for (pipeline, count) in [(PRODUCT, groups), (ALPHA, 1)] {
                             pass.set_pipeline(&self.tiled.pipelines[pipeline]);
                             pass.dispatch_workgroups(count, 1, 1);
                         }
-                        self.tiled.cycle(pass, &binds, hierarchy);
+                        self.tiled.cycle(pass, &binds, hierarchy, false);
                         pass.set_bind_group(0, &binds[0], &[]);
                         pass.set_pipeline(&self.tiled.pipelines[BETA]);
                         pass.dispatch_workgroups(1, 1, 1);
