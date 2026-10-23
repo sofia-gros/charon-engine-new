@@ -228,7 +228,7 @@ EndSection
             def measured_frame_ready():
                 path = local / "metrics.csv"
                 if not path.exists(): return False
-                return any(float(row.get("draw_fps") or 0) > 0 for row in csv.DictReader(path.open()))
+                return any(float(row.get("draw_fps") or 0) > 0 and (sample != "world" or row.get("world_waiting") == "false") for row in csv.DictReader(path.open()))
             wait_for(measured_frame_ready)
             inputs = Input()
             inputs.focus()
@@ -532,12 +532,18 @@ EndSection
                 inputs.button(3, False)
                 at(2.3)
                 inputs.key(ord("q"))
-                inputs.move(1166, 696)
-                for moment in (2.5, 3.2, 3.9):
+                # Aim through the real mouse input at the most recently observed
+                # enemy, rather than assuming it stays at its spawn position.
+                for moment in (2.4, 2.65, 2.9, 3.15, 3.4, 3.65, 3.9, 4.15):
                     at(moment)
-                    inputs.button(1, True)
-                    at(moment + 0.12)
-                    inputs.button(1, False)
+                    observed = list(csv.DictReader((local / "metrics.csv").open()))[-1]
+                    if observed.get("enemy_x"):
+                        x = (float(observed["enemy_x"]) - float(observed["camera_x"])) / float(observed["camera_width"]) * float(observed["window_width"])
+                        y = (float(observed["enemy_y"]) - float(observed["camera_y"])) / float(observed["camera_height"]) * float(observed["window_height"])
+                        inputs.move(round(x), round(y))
+                        inputs.button(1, True)
+                        at(moment + 0.1)
+                        inputs.button(1, False)
                 at(4.8)
                 inputs.hold(ord("d"), True)
                 at(5.3)
@@ -562,6 +568,15 @@ EndSection
                 inputs.key(ord("p"))
                 at(17)
                 inputs.key(ord("r"))
+                at(17.1)
+                inputs.key(ord("e"))
+                inputs.move(640, 640)
+                inputs.button(1, True)
+                at(17.25)
+                inputs.button(1, False)
+                for moment in (17.3, 17.4, 17.5, 17.6, 17.7, 17.8, 17.9):
+                    at(moment)
+                    inputs.key(ord("n"))
                 at(18)
                 inputs.key(ord("p"))
             elif sample == "exploration":
@@ -898,9 +913,13 @@ EndSection
                 assert max(float(r["player_x"]) for r in rows) > 90, "exploration missing"
                 assert max(float(r["player_y"]) for r in rows) > 180, "digging missing"
                 assert all(r["embedded"] == "false" for r in rows), "actor embedded"
+                hunters = [float(r["enemy_x"]) for r in rows if r.get("enemy_x") and r["run_phase"] == "Playing"]
+                assert max(hunters) - min(hunters) > 30, "enemy chase missing"
+                arcs = [r for r in rows if float(r.get("shot_gravity") or 0) > 0]
+                assert arcs and min(float(r["shot_vy"]) for r in arcs) < 0 and max(float(r["shot_vy"]) for r in arcs) > 0, "rising/falling gravity shot missing"
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
-                checks = {"seed": 42, "replay": replay.stdout.strip(), "checks": ["start screen", "aimed ranged combat", "enemy defeat", "enemy fire and player damage", "defeated game freezes", "same-seed retry restores health and enemy", "exploration", "digging", "grid placement/erasure", "authoritative replay with 1 worker", "Escape shutdown"]}
+                checks = {"seed": 42, "replay": replay.stdout.strip(), "checks": ["start screen", "aimed ranged combat", "chasing enemy", "rising/falling gravity shot", "enemy defeat", "enemy fire and player damage", "defeated game freezes", "same-seed retry restores health and enemy", "exploration", "digging", "grid placement/erasure", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "exploration":
                 assert {"42", "43"}.issubset({r["exploration_seed"] for r in rows}), "seed generation/switch missing"
                 inspected = [r for r in rows if r["inspect_x"] == "120" and r["inspect_y"] == "160"]

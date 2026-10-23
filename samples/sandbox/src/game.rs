@@ -25,6 +25,7 @@ pub enum Command {
     Jump,
     Fire,
     FireAt([f32; 2]),
+    LobAt([f32; 2]),
     Dig(bool),
     ToggleSand,
     Pause,
@@ -69,6 +70,7 @@ pub struct Frame {
     pub images: Vec<[f32; 2]>,
     pub image_error: Option<&'static str>,
     pub shots: Vec<[f32; 2]>,
+    pub shot_motion: Option<Shot>,
     pub sparks: Vec<[f32; 2]>,
     pub impacts: u64,
     pub player: Option<Body>,
@@ -136,6 +138,7 @@ pub struct Game {
     sparks: Vec<Spark>,
     fire_pending: bool,
     fire_target: Option<[f32; 2]>,
+    fire_acceleration: [f32; 2],
     impacts: u64,
     player: Option<Body>,
     previous_player: Option<[f32; 2]>,
@@ -201,6 +204,7 @@ impl Game {
             sparks: vec![],
             fire_pending: false,
             fire_target: None,
+            fire_acceleration: [0., 0.],
             impacts: 0,
             player: play
                 .then(|| Body::new(width as f32 / 4.0, (height * 2 / 3 - 18) as f32, 7.0, 12.0)),
@@ -257,7 +261,9 @@ impl Game {
             height: 16,
             material: AIR,
         }]);
-        self.combat = Some(crate::combat::Combat::new(self.width, self.height, ready));
+        let mut combat = crate::combat::Combat::new(self.width, self.height, ready);
+        combat.set_behavior(crate::combat::Behavior::Chase);
+        self.combat = Some(combat);
     }
     pub fn use_fluid_gpu(&mut self, gpu: std::sync::Arc<charon_fluid::gpu::GpuContext>) {
         self.fluid_gpu = Some(gpu);
@@ -335,6 +341,12 @@ impl Game {
             mix(u64::from(player.grounded));
             mix(u64::from(player.embedded));
         }
+        if self.fire_acceleration != [0., 0.] {
+            mix(0x616363656c);
+            for v in self.fire_acceleration {
+                mix(u64::from(v.to_bits()));
+            }
+        }
         if let Some(target) = self.fire_target {
             mix(0x61696d);
             for value in target {
@@ -352,6 +364,12 @@ impl Game {
                     mix(u64::from(value.to_bits()));
                 }
                 mix(u64::from(shot.remaining_ticks));
+                if shot.acceleration != [0., 0.] {
+                    mix(0x67726176);
+                    for v in shot.acceleration {
+                        mix(u64::from(v.to_bits()));
+                    }
+                }
             }
         }
         // Preserve signatures for existing unpaused v1 traces.
@@ -442,6 +460,7 @@ impl Game {
                 .spawn(Shot {
                     position,
                     velocity,
+                    acceleration: self.fire_acceleration,
                     // Prototype streamed-world wand: range 192 cells. Keep its
                     // entire lifetime inside the simulated window's guard band.
                     remaining_ticks: if self.stream.is_some() { 16 } else { 60 },
@@ -449,6 +468,7 @@ impl Game {
                 .expect("one shot per tick with a 60 tick lifetime stays below capacity");
             self.fire_pending = false;
             self.fire_target = None;
+            self.fire_acceleration = [0., 0.];
         }
         let world = &self.world;
         let enemies = self
@@ -753,6 +773,7 @@ impl Simulation for Game {
                             self.sparks.clear();
                             self.fire_pending = false;
                             self.fire_target = None;
+                            self.fire_acceleration = [0., 0.];
                             self.impacts = 0;
                             self.left = false;
                             self.right = false;
@@ -807,14 +828,21 @@ impl Simulation for Game {
                 Command::Fire => {
                     self.fire_pending = true;
                     self.fire_target = None;
+                    self.fire_acceleration = [0., 0.];
                 }
-                Command::FireAt(target) => {
+                command @ (Command::FireAt(_) | Command::LobAt(_)) => {
+                    let (target, gravity) = match command {
+                        Command::FireAt(p) => (p, 0.),
+                        Command::LobAt(p) => (p, 0.18),
+                        _ => unreachable!(),
+                    };
                     if target
                         .into_iter()
                         .all(|v| v.is_finite() && v.abs() <= 1_000_000.)
                     {
                         self.fire_pending = true;
                         self.fire_target = Some(target);
+                        self.fire_acceleration = [0., gravity];
                     } else {
                         self.image_error = Some("INVALID AIM POSITION");
                     }
@@ -884,6 +912,7 @@ impl Simulation for Game {
                 .iter()
                 .map(|s| s.position)
                 .collect(),
+            shot_motion: self.projectiles.shots().first().copied(),
             sparks: self.sparks.iter().map(|s| s.position).collect(),
             impacts: self.impacts,
             player: self.player,
@@ -1164,6 +1193,7 @@ mod tests {
             .spawn(Shot {
                 position: [80.5, 68.5],
                 velocity: [20., 0.],
+                acceleration: [0., 0.],
                 remaining_ticks: 2,
             })
             .unwrap();
@@ -1656,6 +1686,11 @@ mod tests {
         for blocked in [true, false] {
             let mut game = Game::new(480, 270, 1, true).unwrap();
             game.step(vec![Command::NewRun(42), Command::Begin]);
+            // Keep the damage/cover fixture stationary; chase is verified separately.
+            game.combat
+                .as_mut()
+                .unwrap()
+                .set_behavior(crate::combat::Behavior::Turret);
             if blocked {
                 game.step(vec![Command::Terrain(SandCommand::FillRect {
                     x: 120,
@@ -1704,6 +1739,34 @@ mod tests {
         }
     }
     #[test]
+    fn aimed_shots_can_defeat_a_chasing_enemy() {
+        let mut game = Game::new(480, 270, 4, true).unwrap();
+        game.step(vec![Command::NewRun(42), Command::Begin]);
+        let initial_x = game.combat.as_ref().unwrap().frame().enemies[0].rect[0];
+        let mut moved = false;
+        for tick in 0..180 {
+            let combat = game.combat.as_ref().unwrap().frame();
+            if combat.enemies.is_empty() {
+                break;
+            }
+            let rect = combat.enemies[0].rect;
+            moved |= rect[0] < initial_x;
+            let target = [rect[0] + rect[2] / 2., rect[1] + rect[3] / 2.];
+            game.step(if tick % 6 == 0 {
+                vec![Command::FireAt(target)]
+            } else {
+                vec![]
+            });
+        }
+        let combat = game.combat.as_ref().unwrap().frame();
+        assert!(moved, "enemy never chased the player");
+        assert!(
+            combat.enemies.is_empty(),
+            "aimed shots failed to hit the moving enemy"
+        );
+        assert_eq!((combat.kills, combat.health), (1, 3));
+    }
+    #[test]
     fn a_batch_of_single_steps_stops_at_the_defeat_boundary() {
         let mut reference = Game::new(480, 270, 1, true).unwrap();
         reference.step(vec![Command::NewRun(42), Command::Begin]);
@@ -1724,6 +1787,35 @@ mod tests {
         assert_eq!(
             frame.simulation_tick, defeat_tick,
             "queued steps advanced past game end"
+        );
+    }
+    #[test]
+    fn lobbed_shots_wait_while_paused_then_fall_and_collide_with_terrain() {
+        let mut game = Game::new(480, 270, 1, true).unwrap();
+        game.step(vec![Command::Explore(42), Command::Pause]);
+        let reserved = game.step(vec![Command::LobAt([400., 160.])]);
+        assert!(reserved.shots.is_empty());
+        assert_eq!(game.fire_acceleration, [0., 0.18]);
+        let launched = game.step(vec![Command::Step]);
+        assert_eq!(launched.shots.len(), 1);
+        let shot = game.projectiles.shots()[0];
+        assert_eq!(shot.acceleration, [0., 0.18]);
+        let signature = game.signature();
+        game.step(vec![]);
+        assert_eq!(game.signature(), signature, "gravity advanced while paused");
+        let mut fell = false;
+        let mut hit = false;
+        for _ in 0..50 {
+            let frame = game.step(vec![Command::Step]);
+            fell |= game.projectiles.shots().iter().any(|s| s.velocity[1] > 0.);
+            if frame.impacts > 0 {
+                hit = true;
+                break;
+            }
+        }
+        assert!(
+            fell && hit,
+            "gravity did not land the shot on actual terrain"
         );
     }
 }

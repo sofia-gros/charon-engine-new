@@ -112,6 +112,7 @@ fn encode(command: &Command) -> String {
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
         Command::Jump => "jump".into(),
         Command::Fire => "fire".into(),
+        Command::LobAt([x, y]) => format!("lob-at:{:08x}:{:08x}", x.to_bits(), y.to_bits()),
         Command::FireAt([x, y]) => format!("fire-at:{:08x}:{:08x}", x.to_bits(), y.to_bits()),
         Command::ToggleSand => "sand".into(),
         Command::Pause => "pause".into(),
@@ -141,7 +142,7 @@ fn decode(text: &str) -> Result<Command, String> {
             height: h.parse().map_err(|_| bad())?,
             material: m.parse().map_err(|_| bad())?,
         }),
-        [kind @ ("image" | "erase-image" | "fire-at"), x, y] => {
+        [kind @ ("image" | "erase-image" | "fire-at" | "lob-at"), x, y] => {
             let position = [x, y].map(|v| {
                 u32::from_str_radix(v, 16)
                     .map(f32::from_bits)
@@ -157,6 +158,7 @@ fn decode(text: &str) -> Result<Command, String> {
             match *kind {
                 "image" => Command::PlaceImage(point),
                 "fire-at" => Command::FireAt(point),
+                "lob-at" => Command::LobAt(point),
                 _ => Command::EraseImage(point),
             }
         }
@@ -464,7 +466,7 @@ mod tests {
                 0 => vec![Command::NewRun(42)],
                 1 => vec![Command::Begin],
                 400 => vec![Command::Terrain(SandCommand::Clear)],
-                405 => vec![Command::FireAt([291.5, 174.])],
+                405 => vec![Command::LobAt([291.5, 154.])],
                 _ => vec![],
             };
             let frame = game.step(commands);

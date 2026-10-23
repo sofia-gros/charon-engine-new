@@ -29,7 +29,7 @@ impl Session {
             side: SIDE,
             resident_limit: 32,
             seed,
-            generator_revision: 1,
+            generator_revision: 2,
             materials,
         };
         Ok(Self {
@@ -173,11 +173,6 @@ impl Session {
         }
     }
 }
-fn noise(mut v: u64) -> u64 {
-    v = (v ^ (v >> 30)).wrapping_mul(0xbf58476d1ce4e5b9);
-    v = (v ^ (v >> 27)).wrapping_mul(0x94d049bb133111eb);
-    v ^ (v >> 31)
-}
 /// Placeholder game terrain at Noita-scale coordinates, not a copy of its biome
 /// content or algorithm. Every cell depends only on the seed and global position.
 pub fn generate(key: ChunkKey, seed: u64) -> io::Result<Vec<u8>> {
@@ -188,25 +183,21 @@ pub fn generate(key: ChunkKey, seed: u64) -> io::Result<Vec<u8>> {
         .ok_or_else(|| io::Error::other("chunk overflow"))?;
     oy.checked_add(SIDE as i64 - 1)
         .ok_or_else(|| io::Error::other("chunk overflow"))?;
+    let coherent = charon_world::noise::Noise::new(seed);
+    let roofs: Vec<_> = (0..SIDE)
+        .map(|x| -48 - i64::from(coherent.sample(ox + x as i64, 0, 128) + 65535) * 32 / 131070)
+        .collect();
     let mut cells = vec![WALL; SIDE * SIDE];
     for y in 0..SIDE {
         for x in 0..SIDE {
             let gx = ox + x as i64;
             let gy = oy + y as i64;
-            let parallel = (gx + PARALLEL_PERIOD / 2).div_euclid(PARALLEL_PERIOD);
             let lx = (gx + PARALLEL_PERIOD / 2).rem_euclid(PARALLEL_PERIOD) - PARALLEL_PERIOD / 2;
-            let value = noise(
-                seed ^ (lx.div_euclid(96) as u64).wrapping_mul(0x9e3779b97f4a7c15)
-                    ^ (gy.div_euclid(96) as u64).wrapping_mul(0xbf58476d1ce4e5b9)
-                    ^ parallel as u64,
-            );
-            let dx = lx.rem_euclid(96) - 48;
-            let dy = gy.rem_euclid(96) - 48;
-            let room = dx * dx * 4 + dy * dy * 9 < 3600 + (value % 1200) as i64;
+            let room = gy >= 24 && coherent.fractal(gx, gy) > 6000;
             cells[y * SIDE + x] =
                 if (9..12).contains(&gy) && lx.abs() > 32 && lx.rem_euclid(128) > 120 {
                     SAND
-                } else if (-48..12).contains(&gy) || room {
+                } else if (roofs[x]..12).contains(&gy) || room {
                     AIR
                 } else {
                     WALL

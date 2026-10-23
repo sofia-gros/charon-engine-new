@@ -1,5 +1,6 @@
 //! Bounded, asynchronous material-chunk storage. The game owns generation and
 //! world extent; this plugin does no simulation and never allocates the world.
+pub mod noise;
 use atomic_write_file::AtomicWriteFile;
 use std::{
     collections::BTreeMap,

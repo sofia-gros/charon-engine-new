@@ -46,6 +46,7 @@ fn submit_draw_command<S: charon_runtime::Simulation<Command = GameCommand>>(
 
 #[derive(Clone, Copy)]
 enum Tool {
+    Lob,
     Wand,
     Brush,
     Blocks,
@@ -54,6 +55,7 @@ enum Tool {
 impl Tool {
     fn label(self) -> &'static str {
         match self {
+            Self::Lob => "E ARC SHOT CLICK FIRE Q STRAIGHT",
             Self::Wand => "Q WAND CLICK FIRE 3 BUILD",
             Self::Brush => "1 SAND 2 ASH 3 BLOCK 4 IMAGE 5 WATER 6 OIL L SEA",
             Self::Blocks => "3 BLOCK GRID 8",
@@ -148,7 +150,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--world SEED loads a Noita-scale streamed terrain prototype; --world-dir PATH selects chunk storage\n--game SEED starts the combat prototype: Enter to begin, R to retry\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed; Q wand, click aims and fires\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--world SEED loads a Noita-scale streamed terrain prototype; --world-dir PATH selects chunk storage\n--game SEED starts the combat prototype: Enter to begin, R to retry\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed; Q straight shot, E gravity shot; click aims and fires\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -210,7 +212,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting,shot_x,shot_y,shot_vx,shot_vy,shot_gravity,enemy_x,enemy_y")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -364,7 +366,7 @@ impl App {
             )
         });
         let preview = match self.tool {
-            Tool::Wand => pointer.map(|[x, y]| [x - 0.5, y - 0.5, 1., 1.]),
+            Tool::Wand | Tool::Lob => pointer.map(|[x, y]| [x - 0.5, y - 0.5, 1., 1.]),
             Tool::Brush => None,
             Tool::Blocks => pointer
                 .map(|point| {
@@ -387,11 +389,15 @@ impl App {
         }
         if let Some([x, y]) = pointer.filter(|_| !world_loading) {
             match self.tool {
-                Tool::Wand => {
+                Tool::Wand | Tool::Lob => {
                     if self.clicks[0] {
                         self.rejected_edits += u64::from(!submit_draw_command(
                             &self.runtime,
-                            GameCommand::FireAt([x, y]),
+                            if matches!(self.tool, Tool::Lob) {
+                                GameCommand::LobAt([x, y])
+                            } else {
+                                GameCommand::FireAt([x, y])
+                            },
                         )?);
                     }
                 }
@@ -483,7 +489,7 @@ impl App {
         } else if self.rejected_edits == 0 {
             snapshot.frame.exploration_seed.map_or_else(
                 || self.tool.label().to_owned(),
-                |seed| format!("CAVE {seed} Q WAND 3 BUILD R RETRY"),
+                |seed| format!("CAVE {seed} {} R RETRY", self.tool.label()),
             )
         } else {
             format!("QUEUE FULL: {} ACTIONS NOT APPLIED", self.rejected_edits)
@@ -699,6 +705,32 @@ impl App {
             } else {
                 row.push_str(",,,,,,");
             }
+            if let Some(shot) = snapshot.frame.shot_motion {
+                row.push_str(&format!(
+                    ",{:.6},{:.6},{:.6},{:.6},{:.6}",
+                    shot.position[0],
+                    shot.position[1],
+                    shot.velocity[0],
+                    shot.velocity[1],
+                    shot.acceleration[1]
+                ));
+            } else {
+                row.push_str(",,,,,");
+            }
+            if let Some(enemy) = snapshot
+                .frame
+                .combat
+                .as_ref()
+                .and_then(|c| c.enemies.first())
+            {
+                row.push_str(&format!(
+                    ",{:.6},{:.6}",
+                    enemy.rect[0] + enemy.rect[2] / 2.,
+                    enemy.rect[1] + enemy.rect[3] / 2.
+                ));
+            } else {
+                row.push_str(",,");
+            }
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -786,6 +818,7 @@ impl ApplicationHandler for App {
                         self.game_command(GameCommand::Begin)
                     }
                     PhysicalKey::Code(KeyCode::KeyQ) if down => self.tool = Tool::Wand,
+                    PhysicalKey::Code(KeyCode::KeyE) if down => self.tool = Tool::Lob,
                     PhysicalKey::Code(KeyCode::Digit1) if down => {
                         self.brush = SAND;
                         self.tool = Tool::Brush;

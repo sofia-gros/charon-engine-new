@@ -59,7 +59,16 @@ pub fn overlays(
     if let Some(combat) = &frame.combat {
         for enemy in &combat.enemies {
             let [x, y, w, h] = enemy.rect;
-            result.push(rect(x, y, w, h, [0.9, 0.25, 0.25, 1.]));
+            result.push(rect(
+                x,
+                y,
+                w,
+                h,
+                match enemy.behavior {
+                    crate::combat::Behavior::Turret => [0.9, 0.25, 0.25, 1.],
+                    crate::combat::Behavior::Chase => [0.95, 0.35, 0.15, 1.],
+                },
+            ));
             result.push(rect(
                 x,
                 y - 2.,

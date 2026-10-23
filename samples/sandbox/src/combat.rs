@@ -8,10 +8,16 @@ pub enum Phase {
     Playing,
     Defeated,
 }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Behavior {
+    Turret,
+    Chase,
+}
 #[derive(Clone, Copy)]
 pub struct EnemyView {
     pub rect: [f32; 4],
     pub health: u8,
+    pub behavior: Behavior,
 }
 pub struct Frame {
     pub phase: Phase,
@@ -21,6 +27,7 @@ pub struct Frame {
     pub kills: u32,
 }
 struct Enemy {
+    behavior: Behavior,
     body: Body,
     health: u8,
     cooldown: u16,
@@ -48,6 +55,7 @@ impl Combat {
             phase: if ready { Phase::Ready } else { Phase::Playing },
             health: 3,
             enemies: vec![Enemy {
+                behavior: Behavior::Turret,
                 body: Body::new(
                     (width * 3 / 5) as f32,
                     (height * 2 / 3 - 12) as f32,
@@ -60,6 +68,11 @@ impl Combat {
             shots: Projectiles::default(),
             invulnerable: 0,
             kills: 0,
+        }
+    }
+    pub fn set_behavior(&mut self, behavior: Behavior) {
+        for enemy in &mut self.enemies {
+            enemy.behavior = behavior;
         }
     }
     pub fn phase(&self) -> Phase {
@@ -110,7 +123,29 @@ impl Combat {
             if enemy.health == 0 {
                 continue;
             }
-            enemy.body.step(0, false, &actor_solid);
+            let dx = player.x() + player.width() / 2. - enemy.body.x() - enemy.body.width() / 2.;
+            let direction = if enemy.behavior == Behavior::Chase && dx.abs() > 16. {
+                if dx < 0. {
+                    -1
+                } else {
+                    1
+                }
+            } else {
+                0
+            };
+            let front = if direction < 0 {
+                enemy.body.x() - 1.
+            } else {
+                enemy.body.x() + enemy.body.width() + 1.
+            };
+            let obstacle = direction != 0
+                && actor_solid(
+                    front.floor() as i32,
+                    (enemy.body.y() + enemy.body.height() - 1.).floor() as i32,
+                );
+            enemy
+                .body
+                .step(direction, obstacle && enemy.body.grounded, &actor_solid);
             enemy.cooldown = enemy.cooldown.saturating_sub(1);
             if enemy.cooldown == 0 && !enemy.body.embedded {
                 let aim = [
@@ -138,6 +173,7 @@ impl Combat {
                     .spawn(Shot {
                         position,
                         velocity,
+                        acceleration: [0., 0.],
                         remaining_ticks: 180,
                     })
                     .expect("bounded prototype enemy fire");
@@ -172,6 +208,7 @@ impl Combat {
                 .map(|e| EnemyView {
                     rect: rect(e.body),
                     health: e.health,
+                    behavior: e.behavior,
                 })
                 .collect(),
             shots: self.shots.shots().iter().map(|s| s.position).collect(),
@@ -186,6 +223,9 @@ impl Combat {
             self.kills as u64,
         ];
         for enemy in &self.enemies {
+            if enemy.behavior == Behavior::Chase {
+                values.push(0x6368617365);
+            }
             values.extend([
                 enemy.health as u64,
                 enemy.cooldown as u64,
@@ -206,5 +246,53 @@ impl Combat {
             values.push(shot.remaining_ticks as u64);
         }
         values
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn hunters_follow_both_directions_jump_small_obstacles_and_respect_tall_walls() {
+        for player_x in [20., 130.] {
+            let player = Body::new(player_x, 68., 7., 12.);
+            let mut combat = Combat::new(160, 120, false);
+            combat.set_behavior(Behavior::Chase);
+            let start = combat.frame().enemies[0].rect[0];
+            for _ in 0..15 {
+                combat.tick(player, |_, y| y >= 80, |_, y| y >= 80);
+            }
+            let end = combat.frame().enemies[0].rect[0];
+            assert!((player_x - start).abs() > (player_x - end).abs());
+        }
+        for height in [4, 40] {
+            let player = Body::new(20., 68., 7., 12.);
+            let mut combat = Combat::new(160, 120, false);
+            combat.set_behavior(Behavior::Chase);
+            let solid = |x, y| y >= 80 || ((70..75).contains(&x) && y >= 80 - height);
+            let mut highest = 68_f32;
+            for _ in 0..80 {
+                combat.tick(player, solid, solid);
+                highest = highest.min(combat.enemies[0].body.y());
+                assert!(!combat.enemies[0].body.embedded);
+            }
+            assert!(highest < 63., "hunter never jumped at obstacle");
+            let x = combat.enemies[0].body.x();
+            if height == 4 {
+                assert!(x < 70., "small obstacle was not traversed");
+            } else {
+                assert!(x >= 75., "hunter passed through a tall wall");
+            }
+        }
+        let player = Body::new(20., 68., 7., 12.);
+        let mut turret = Combat::new(160, 120, false);
+        for _ in 0..15 {
+            turret.tick(player, |_, y| y >= 80, |_, y| y >= 80);
+        }
+        assert_eq!(
+            turret.frame().enemies[0].rect[0],
+            96.,
+            "stationary behavior was lost"
+        );
     }
 }

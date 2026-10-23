@@ -46,8 +46,12 @@ pub fn cave(width: usize, height: usize, seed: u64) -> (Vec<u8>, [f32; 2]) {
     let floor = height * 2 / 3;
     let mut cells = vec![WALL; width * height];
     // Guaranteed entry route, broad enough for the 7x12 starter actor.
-    for y in floor - 32..floor {
-        cells[y * width + 1..y * width + width - 1].fill(AIR);
+    let noise = charon_world::noise::Noise::new(seed);
+    for x in 1..width - 1 {
+        let extra = ((noise.sample(x as i64, 0, 64) + 65535) as usize * 16 / 131070).min(16);
+        for y in floor - 32 - extra..floor {
+            cells[y * width + x] = AIR;
+        }
     }
     for index in 0..(width / 48).max(2) {
         let value = random(seed.wrapping_add(index as u64));
