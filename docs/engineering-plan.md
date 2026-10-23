@@ -65,7 +65,7 @@ Windows動作/144 FPS・60 Hzの実機確認は最後へまとめず、実機利
 - 同版の共有クラウドの960×540崩落は4workerでp95約5.40ms/最大16.16ms。1/2workerでは最大tickが16.67msを超える試行あり。実機性能保証ではない。
 - CPU計測の再実行はscripts/measure.py。条件/ソースhash付きCSV/JSONはdocs/benchmarks/。ユーザー希望により差分化後の追加性能比較は省略。過去データを現在の測定値として扱わない。
 - Linux SwiftShaderでフルHD shader出力全2,073,600画素を、部分転送・静止・途中tick省略・端・リセットごとに照合。共通描画を使う砂/会話の実ウィンドウもXorg dummy+llvmpipeで検証。
-- Linux実入力のMP4/GIF/PNG・状態CSVはdocs/media/、入口はusage.md。砂は追加/壁/穴開け/リセットと静止後の変換/転送ゼロ、操作モードは移動/ジャンプ/砂の判定切替/掘削/リセット、会話は2分岐/再開/終了を対象にする。
+- Linux実入力のGIF・状態CSVはdocs/media/、入口はusage.md。共有用画像はGIFのみ。砂は追加/壁/穴開け/リセットと静止後の変換/転送ゼロ、操作モードは移動/ジャンプ/砂の判定切替/掘削/リセット、会話は2分岐/再開/終了を対象にする。
 - Windows MSVCターゲットのcargo checkは両サンプルで成功。Windows実機操作、ハードウェアGPU、144 FPS達成は未検証。クラウドCPU値で代用しない。
 - Rust stable、Cargo.lock管理。初回導入/ツール更新はsetup、日常は既存ビルドを再利用。操作と検証方法はdocs/usage.md。
 - Windows用PowerShell起動/記録とLinux/Windows CI定義あり。GitHub CIの成功は未確認。APIはネットワーク拒否で、PR作成は未完了。

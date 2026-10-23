@@ -8,7 +8,7 @@ pub struct ImageView<'a> {
     pub height: usize,
     pub rgba: &'a [u8],
 }
-use std::{error::Error, fs::File, io::BufWriter, path::Path, sync::mpsc, time::Duration};
+use std::{error::Error, sync::mpsc, time::Duration};
 
 /// Opaque screen-aligned rectangle in logical image coordinates, independent of terrain.
 #[derive(Clone, Copy, PartialEq)]
@@ -328,26 +328,23 @@ impl Gpu {
 
     /// Exercise the same shader/pipeline as the window and verify every output
     /// pixel against the nearest-neighbour scaled simulation snapshot.
-    pub fn smoke(&mut self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
+    pub fn smoke(&mut self, frame: &ImageView<'_>) -> Result<()> {
         self.upload(frame);
-        self.verify(frame, output)
+        self.verify(frame)
     }
 
     /// Verify the actual partial-upload path against a complete CPU image.
-    pub fn smoke_tiled(&mut self, image: &TiledImage, output: &Path) -> Result<usize> {
+    pub fn smoke_tiled(&mut self, image: &TiledImage) -> Result<usize> {
         let bytes = self.upload_tiled(image);
-        self.verify(
-            &ImageView {
-                width: image.width(),
-                height: image.height(),
-                rgba: &image.to_rgba(),
-            },
-            output,
-        )?;
+        self.verify(&ImageView {
+            width: image.width(),
+            height: image.height(),
+            rgba: &image.to_rgba(),
+        })?;
         Ok(bytes)
     }
 
-    pub fn smoke_overlay(&mut self, image: &TiledImage, output: &Path) -> Result<()> {
+    pub fn smoke_overlay(&mut self, image: &TiledImage) -> Result<()> {
         self.upload_tiled(image);
         let (x, y, width, height) = (2, 2, 3, 4);
         self.set_overlays(&[OverlayRect {
@@ -364,19 +361,16 @@ impl Gpu {
                 rgba[i..i + 4].copy_from_slice(&[255, 0, 0, 255]);
             }
         }
-        let result = self.verify(
-            &ImageView {
-                width: image.width(),
-                height: image.height(),
-                rgba: &rgba,
-            },
-            output,
-        );
+        let result = self.verify(&ImageView {
+            width: image.width(),
+            height: image.height(),
+            rgba: &rgba,
+        });
         self.set_overlays(&[]);
         result
     }
 
-    fn verify(&self, frame: &ImageView<'_>, output: &Path) -> Result<()> {
+    fn verify(&self, frame: &ImageView<'_>) -> Result<()> {
         const WIDTH: u32 = 1920;
         const HEIGHT: u32 = 1080;
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
@@ -442,18 +436,7 @@ impl Gpu {
                 }
             }
         }
-        if let Some(parent) = output.parent().filter(|p| !p.as_os_str().is_empty()) {
-            std::fs::create_dir_all(parent)?;
-        }
-        let mut png = png::Encoder::new(BufWriter::new(File::create(output)?), WIDTH, HEIGHT);
-        png.set_color(png::ColorType::Rgba);
-        png.set_depth(png::BitDepth::Eight);
-        png.write_header()?.write_image_data(&rgba)?;
-        println!(
-            "shader_pixels_checked={} screenshot={}",
-            WIDTH * HEIGHT,
-            output.display()
-        );
+        println!("shader_pixels_checked={}", WIDTH * HEIGHT);
         Ok(())
     }
 }

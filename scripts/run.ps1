@@ -18,7 +18,7 @@ try {
     $cargoArgs = @('run', '--locked', '-p', 'charon-sandbox')
     if (-not $DebugBuild) { $cargoArgs += '--release' }
     $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid)
-    if ($Smoke) { $cargoArgs += @('--smoke', '--output', "$directory/$stamp-smoke.png") }
+    if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
     if ($Play) { $cargoArgs += '--play' }

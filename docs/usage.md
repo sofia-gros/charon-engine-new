@@ -16,7 +16,7 @@ cd charon-engine-new
 
 ## Sandbox
 
-[Linux実行動画（MP4）](media/sandbox-linux.mp4) · [GIF](media/sandbox-linux.gif) · [スクリーンショット](media/sandbox-linux.png)
+[Linux操作記録（GIF）](media/sandbox-linux.gif)
 
 壁を描く→砂を積もらせる→壁に穴を開ける→リセットする、実際のマウス/キー入力とウィンドウ描画の記録。Linuxの仮想画面とソフトウェアGPUで約14秒収録。フルHDの画面を動画では960×540に縮小し、8fpsを目安にキャプチャしている。動画のfpsはエンジンの性能値ではない。
 
@@ -52,7 +52,7 @@ cargo run --locked --release -p charon-sandbox -- --play --workers 4 --record ar
 
 Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セル。A/Dまたは左右キーで移動、Spaceでジャンプ、Fを押している間は足元を掘る。Bで砂の当たり判定を切り替える。壁は常に足場になる。マウスの砂/壁/消去も使える。Rで地形・プレイヤー・判定設定を初期化する。
 
-[Linux操作動画（MP4）](media/platformer-linux.mp4) · [GIF](media/platformer-linux.gif) · [スクリーンショット](media/platformer-linux.png)
+[Linux操作記録（GIF）](media/platformer-linux.gif)
 
 物質は砂plugin、移動は砂に依存しないplatformer plugin、両者をつなぐ判定方針はサンプル側が所有する。キャラクターは地形と別の矩形としてGPU描画し、地形画像へ焼き込まない。`upload_bytes` は地形、`overlay_upload_bytes` は矩形頂点の転送量。操作モードのCSVは約0.1秒ごとに位置・着地・埋まり・砂の判定設定も記録する。
 
@@ -77,7 +77,7 @@ SandboxとPlatformerで共通。Pで停止/再開、Nで停止したまま1 tick
 
 CSVの `runtime_tick` は入力受付/状態公開の回数、`simulation_tick` は実際の物質更新回数。停止中は前者だけ増える。`sim_hz` も後者から計算する。`paused`・`inspect_x/y`・`material`（0=Air、1=Sand、2=Wall、空欄=範囲外）・`next_tile_awake` を記録する。調査なしの場合も座標は空欄になる。`--play`・停止・セル調査中は約0.1秒ごとの記録。
 
-[Linux操作動画（MP4）](media/debugger-linux.mp4) · [GIF](media/debugger-linux.gif) · [画面](media/debugger-linux.png) · [再生用入力列](media/debugger-linux.trace)
+[Linux操作記録（GIF）](media/debugger-linux.gif) · [再生用入力列](media/debugger-linux.trace)
 
 `python3 scripts/capture-linux.py --sample debugger` で停止・編集・3回のコマ送り・リセット・再開と入力再生を確認し、録画を更新できる。Pause/Step/Inspectも `--input-log` の対象。既存の停止操作を含まないv1入力列も再生できる。
 
@@ -89,7 +89,7 @@ cargo run --locked --release -p charon-dialogue-sample
 
 Spaceまたはクリックで進む。選択画面で1/2、Rで最初から、Escで終了。砂を依存に含めず、同じ実行基盤とwgpu描画基盤を使う小さな会話サンプル。文章表示はサンプル用の英字ビットマップで、日本語組版・音声・シナリオ編集機能はまだ含まない。
 
-[Linux実行動画（MP4）](media/dialogue-linux.mp4) · [GIF](media/dialogue-linux.gif) · [スクリーンショット](media/dialogue-linux.png)
+[Linux操作記録（GIF）](media/dialogue-linux.gif)
 
 実入力で2つの分岐と再開を確認した約12秒の記録。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
 
@@ -108,14 +108,14 @@ measureは少量投入・連続投入・支えを壊す崩落・静止した堆�
 ウィンドウなしでshader出力を検証:
 
 ```console
-cargo run --locked -p charon-sandbox -- --smoke --output artifacts/local/smoke.png
+cargo run --locked -p charon-sandbox -- --smoke
 ```
 
-フルHD出力の全画素を完成したセル画像と照合し、PNGを保存する。途中のtickを受け取らないケース・静止・端の区画・リセットでも部分転送の出力を照合する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
+フルHD出力の全画素を完成したセル画像と照合する。画像ファイルは出力しない。途中のtickを受け取らないケース・静止・端の区画・リセットでも部分転送の出力を照合する。`--software` はソフトウェアアダプタを要求する。クラウドは `bash scripts/dev.sh smoke` で利用可能なSwiftShaderを選べる。これは実機のFPS検証ではない。
 
-Linuxで操作試験とMP4/GIF/PNGの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、FFmpeg、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。
+Linuxで操作試験とGIFの記録を再実行する場合は、`source scripts/env.sh` 後に `python3 scripts/capture-linux.py`。Xorgのdummyドライバ、X11/XTest、xauth、ImageMagick、Python/Pillowが必要。録画用ツールはエンジン本体の依存には含まれない。
 
-既定の `cargo test` はGPU依存を持たないcore/pluginだけを対象にする。統合時は `cargo test --locked --workspace`。GitHub ActionsはLinux/Windowsでビルド・テスト・shader検証を行い、ActionsのArtifactsへ実行ファイルと検証画像を出力する。CIの実行結果は各runで確認する。
+既定の `cargo test` はGPU依存を持たないcore/pluginだけを対象にする。統合時は `cargo test --locked --workspace`。GitHub ActionsはLinux/Windowsでビルド・テスト・shader検証を行い、ActionsのArtifactsへ実行ファイルと検証記録を出力する。CIの実行結果は各runで確認する。
 
 ## 制約
 

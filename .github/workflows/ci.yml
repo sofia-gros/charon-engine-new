@@ -47,7 +47,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb
       - name: Linux offscreen shader check
         if: runner.os == 'Linux'
-        run: ./target/debug/charon-sandbox --smoke --software --grid 65x66 --output artifacts/local/smoke.png
+        run: ./target/debug/charon-sandbox --smoke --software --grid 65x66
       - name: Windows script and offscreen shader check
         if: runner.os == 'Windows'
         shell: pwsh
@@ -67,7 +67,7 @@ jobs:
         run: |
           xvfb-run -a -s "-screen 0 1920x1080x24 -extension MIT-SHM" ./target/debug/charon-dialogue-sample --seconds 3 --record artifacts/local/dialogue.csv
           python3 -c "import csv; rows=list(csv.DictReader(open('artifacts/local/dialogue.csv'))); assert rows and rows[0]['page']=='Intro'"
-      - name: Upload sample and smoke images
+      - name: Upload samples and validation records
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

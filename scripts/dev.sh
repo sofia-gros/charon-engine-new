@@ -59,7 +59,7 @@ case "${1:-help}" in
       export XDG_RUNTIME_DIR="$smoke_runtime_dir"
       trap 'rm -rf "$smoke_runtime_dir"' EXIT
     fi
-    cargo run --locked -p charon-sandbox -- --smoke --output artifacts/local/smoke.png
+    cargo run --locked -p charon-sandbox -- --smoke
     ;;
   bench)
     if [ "$#" -ne 3 ] || [[ "$2" == -* ]] || [[ "$3" == -* ]]; then

@@ -30,7 +30,6 @@ struct Options {
     smoke: bool,
     software: bool,
     ticks: u64,
-    output: PathBuf,
     record: Option<PathBuf>,
     seconds: Option<u64>,
 }
@@ -48,7 +47,6 @@ impl Options {
             smoke: false,
             software: false,
             ticks: 40,
-            output: "artifacts/local/smoke.png".into(),
             record: None,
             seconds: None,
         };
@@ -70,11 +68,10 @@ impl Options {
                 "--smoke" => options.smoke = true,
                 "--software" => options.software = true,
                 "--ticks" => options.ticks = value()?.parse()?,
-                "--output" => options.output = value()?.into(),
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N --output PNG\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -417,7 +414,7 @@ fn main() -> Result<()> {
             options.width as u32,
             options.height as u32,
         ))?;
-        gpu.smoke_tiled(&snapshot.frame.terrain.image, &options.output)?;
+        gpu.smoke_tiled(&snapshot.frame.terrain.image)?;
         smoke::verify_updates(&mut gpu, options.width, options.height)?;
         println!("simulation_tick={} sand={} workers_used={}/{} tick_work_ms={:.3} (smoke, not FPS verification)",
             snapshot.tick, snapshot.frame.terrain.sand, snapshot.frame.terrain.workers_used, snapshot.frame.terrain.workers_configured, snapshot.work_ms);

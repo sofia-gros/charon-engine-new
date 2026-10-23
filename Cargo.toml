@@ -20,7 +20,6 @@ rayon = "1.11"
 wgpu = { version = "30.0.1", default-features = false, features = ["std", "parking_lot", "vulkan", "dx12", "gles", "wgsl"] }
 winit = { version = "0.30", default-features = false, features = ["rwh_06", "x11"] }
 pollster = "0.4"
-png = "0.18"
 
 [profile.dev]
 debug = 1

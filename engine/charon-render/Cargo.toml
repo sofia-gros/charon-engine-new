@@ -10,4 +10,3 @@ charon-image.workspace = true
 wgpu.workspace = true
 winit.workspace = true
 pollster.workspace = true
-png.workspace = true

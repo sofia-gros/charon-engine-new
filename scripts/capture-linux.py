@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Record real X11 input and rendering to MP4/GIF/PNG on a private display."""
+"""Record real X11 input and rendering to GIF on a private display."""
 
 import argparse
 import csv
@@ -143,7 +143,7 @@ def main():
     local.mkdir(parents=True, exist_ok=True)
     MEDIA.mkdir(parents=True, exist_ok=True)
     xorg = "/usr/lib/xorg/Xorg"
-    for tool in (xorg, "xauth", "import", "ffmpeg", "cargo"):
+    for tool in (xorg, "xauth", "import", "cargo"):
         if not shutil.which(tool):
             raise SystemExit(f"missing recording prerequisite: {tool}")
     if not Path("/usr/lib/xorg/modules/drivers/dummy_drv.so").exists():
@@ -209,11 +209,11 @@ EndSection
                             break
                         if time.monotonic() >= start + duration:
                             break
-                        path = temporary / f"frame-{index:04}.png"
+                        path = temporary / f"frame-{index:04}.ppm"
                         before = time.monotonic()
                         # XGetImage works even when the virtual display has no
                         # shared-memory transport. This captures the actual window.
-                        subprocess.run(["import", "-window", "root", "-filter", "point", "-resize", "960x540!", str(path)], env=env, check=True, capture_output=True, timeout=5)
+                        subprocess.run(["import", "-window", "root", "-filter", "point", "-resize", "960x540!", "-depth", "8", str(path)], env=env, check=True, capture_output=True, timeout=5)
                         frames.append(((before + time.monotonic()) / 2, path))
                 except Exception as error:
                     capture_errors.append(error)
@@ -227,7 +227,6 @@ EndSection
                 at(3.4)
                 inputs.drag(1, [(880 + (i % 20) * 8, 180) for i in range(65)])
                 at(7)
-                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
                 at(8)
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
@@ -244,7 +243,6 @@ EndSection
                 at(9)
                 inputs.key(ord("2"))
                 at(10)
-                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
             elif sample == "platformer":
                 at(1)
                 inputs.hold(ord("d"), True)
@@ -258,7 +256,6 @@ EndSection
                 at(8.5)
                 inputs.hold(ord("f"), False)
                 at(9)
-                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
                 at(10)
                 inputs.key(ord("r"))
             else:
@@ -289,7 +286,6 @@ EndSection
                 at(8)
                 inputs.key(ord("r"))
                 at(9)
-                subprocess.run(["import", "-window", "root", str(MEDIA / f"{prefix}.png")], env=env, check=True, timeout=10)
                 at(10)
                 inputs.key(ord("n"))
                 at(11)
@@ -343,9 +339,6 @@ EndSection
             durations = [max(10, round((b[0] - a[0]) * 100) * 10) for a, b in zip(frames, frames[1:])]
             durations.append(130)
             images[0].save(MEDIA / f"{prefix}.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
-            # The timed image sequence is also available as an ordinary H.264
-            # video. GIF input preserves the measured, quantized frame delays.
-            subprocess.run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-i", str(MEDIA / f"{prefix}.gif"), "-fps_mode", "vfr", "-c:v", "libx264", "-threads", "2", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(MEDIA / f"{prefix}.mp4")], check=True, timeout=30)
             source_hash = hashlib.sha256()
             for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
                 if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml"):
@@ -360,7 +353,7 @@ EndSection
             (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")
             shutil.copyfile(local / "metrics.csv", MEDIA / f"{prefix}.csv")
             print(json.dumps(report, indent=2))
-            print(f"Recorded docs/media/{prefix}.mp4, .gif and .png")
+            print(f"Recorded docs/media/{prefix}.gif")
         finally:
             capture_stop.set()
             if capture_thread:

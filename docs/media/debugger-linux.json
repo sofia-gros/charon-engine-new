@@ -1,7 +1,7 @@
 {
-  "source_sha256": "51d5837002693b4915abb06a9ba2077a4abaeb49e87f9585f57e6a048fbdfe6e",
+  "source_sha256": "b22f4ea97131025973ec7116517cfe98b6b2349dbc4984212ae5486ebcf1d9be",
   "sample": "debugger",
-  "base_revision": "9082806490e80bbfc5187b633b2c519938486918",
+  "base_revision": "51843e0774189c8dd9882e10367e45b003438552",
   "platform": "Linux Xorg dummy / software GPU",
   "target_capture_fps": 8,
   "captured_frames": 112,
@@ -15,12 +15,12 @@
     540
   ],
   "paused_step_ticks": [
+    77,
+    78,
     79,
-    80,
-    81,
-    82
+    80
   ],
-  "replay": "replay_ticks=845 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=844 checks=terrain,player,input_state workers=1",
   "checks": [
     "frozen terrain/actor",
     "display while paused",
