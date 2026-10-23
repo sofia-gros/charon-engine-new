@@ -44,6 +44,8 @@ impl Recorder {
 }
 fn encode(command: &Command) -> String {
     match command {
+        Command::CupScene => "cup".into(),
+        Command::AddOil => "oil".into(),
         Command::Terrain(SandCommand::Paint { x, y, material }) => {
             format!("paint:{x}:{y}:{material}")
         }
@@ -106,6 +108,8 @@ fn decode(text: &str) -> Result<Command, String> {
                 Command::EraseImage(point)
             }
         }
+        ["cup"] => Command::CupScene,
+        ["oil"] => Command::AddOil,
         ["clear"] => Command::Terrain(SandCommand::Clear),
         ["jump"] => Command::Jump,
         ["fire"] => Command::Fire,
@@ -265,6 +269,10 @@ mod tests {
                 56 => vec![Command::Inspect(None)],
                 50 => vec![Command::Dig(true)],
                 100 => vec![Command::Terrain(SandCommand::Clear)],
+                105 => vec![Command::CupScene],
+                106 => vec![Command::AddOil],
+                107 => vec![Command::Right(true)],
+                113 => vec![Command::Right(false), Command::Left(true)],
                 _ => vec![],
             };
             game.step(commands);

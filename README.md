@@ -22,6 +22,10 @@ Charon Engineは、サンドボックスや横スクロールアクション、�
 
 ![海への砂投入と水のあふれ](docs/media/sea-linux.gif)
 
+水の入ったコップを左右へ動かし、油が水の上へ浮かぶ様子も試せます。
+
+![動くコップと水・油の分離](docs/media/cup-linux.gif)
+
 [流体テストの操作方法](docs/usage.md#流体テスト)
 
 ### Platformer

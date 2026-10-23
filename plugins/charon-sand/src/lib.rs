@@ -3,10 +3,13 @@
 use charon_image::{IndexedImage, TiledImage};
 use charon_runtime::Simulation;
 use rayon::prelude::*;
-use std::{sync::Arc, time::Instant};
+use std::{collections::BTreeMap, sync::Arc, time::Instant};
+type DensityRoutes = BTreeMap<u16, Vec<[Option<usize>; 2]>>;
 
 mod material;
+mod obstacle;
 pub use material::{Material, Materials, Motion};
+pub use obstacle::{ObstacleError, ObstacleId};
 
 pub const AIR: u8 = 0;
 pub const SAND: u8 = 1;
@@ -54,9 +57,11 @@ pub struct SandWorld {
     height: usize,
     cells: Vec<u8>,
     claimed: Vec<u64>,
+    obstacles: obstacle::Obstacles,
     materials: Arc<Materials>,
     sand: usize,
     liquid: usize,
+    counts: [usize; 256],
     liquid_rows: Vec<usize>,
     image: TiledImage,
     indices: IndexedImage,
@@ -112,6 +117,10 @@ impl SandWorld {
         for (index, &id) in cells.iter().enumerate() {
             world.liquid_rows[index / width] += usize::from(world.is_liquid(id));
         }
+        world.counts.fill(0);
+        for &id in &cells {
+            world.counts[id as usize] += 1;
+        }
         world.cells = cells;
         Ok(world)
     }
@@ -137,6 +146,10 @@ impl SandWorld {
         Self::with_materials(width, height, workers, Materials::default())
     }
 
+    /// Cached material counts, updated by edits and conserving physical moves.
+    pub fn material_count(&self, id: u8) -> usize {
+        self.counts[id as usize]
+    }
     pub fn materials(&self) -> &Materials {
         &self.materials
     }
@@ -175,10 +188,12 @@ impl SandWorld {
             height,
             cells: vec![materials.air(); width * height],
             claimed: vec![0; width * height],
+            obstacles: obstacle::Obstacles::default(),
             liquid_rows: vec![0; height],
             materials: Arc::new(materials),
             sand: 0,
             liquid: 0,
+            counts: [0; 256],
             image: TiledImage::new(width, height, TILE),
             indices: IndexedImage::new(width, height, TILE),
             dirty: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
@@ -192,6 +207,7 @@ impl SandWorld {
     }
 
     fn reset(&mut self) {
+        self.obstacles.clear();
         self.cells.fill(self.materials.air());
         self.sand = 0;
         self.liquid = 0;
@@ -202,6 +218,10 @@ impl SandWorld {
             self.cells[y * self.width + self.width - 1] = self.materials.boundary();
         }
         self.cells[(self.height - 1) * self.width..].fill(self.materials.boundary());
+        self.counts.fill(0);
+        let walls = 2 * self.height + self.width - 2;
+        self.counts[self.materials.boundary() as usize] = walls;
+        self.counts[self.materials.air() as usize] = self.width * self.height - walls;
         self.awake.fill(true);
     }
 
@@ -262,13 +282,15 @@ impl SandWorld {
         for py in y..end_y.min(self.height - 1) {
             for px in x.max(1)..end_x.min(self.width - 1) {
                 let index = py * self.width + px;
-                if self.cells[index] != material {
+                if self.cells[index] != material && !self.obstacles.contains(index) {
                     self.sand -= usize::from(self.is_powder(self.cells[index]));
                     self.sand += usize::from(self.is_powder(material));
                     self.liquid -= usize::from(self.is_liquid(self.cells[index]));
                     self.liquid += usize::from(self.is_liquid(material));
                     self.liquid_rows[py] -= usize::from(self.is_liquid(self.cells[index]));
                     self.liquid_rows[py] += usize::from(self.is_liquid(material));
+                    self.counts[self.cells[index] as usize] -= 1;
+                    self.counts[material as usize] += 1;
                     self.cells[index] = material;
                     self.wake(index);
                 }
@@ -287,7 +309,7 @@ impl SandWorld {
         &self,
         source: usize,
         tick: u64,
-        routes: Option<&[[Option<usize>; 2]]>,
+        routes: Option<&DensityRoutes>,
     ) -> Option<usize> {
         let air = self.materials.air();
         let below = source + self.width;
@@ -300,12 +322,30 @@ impl SandWorld {
         } else {
             [1, -1]
         };
-        // Routes are shared by every source on an active row. Each row is
-        // scanned twice, rather than searching the entire row for every grain.
-        if let Some(routes) = routes {
+        // A heavier liquid must also be able to sink diagonally at a vertical
+        // interface. Otherwise side-by-side oil/water columns falsely sleep,
+        // despite both materials being vertically sorted within each column.
+        for direction in directions {
+            let side = (source as isize + direction) as usize;
+            let target = side + self.width;
+            if self.is_liquid(self.cells[target])
+                && self.can_fall_into(self.cells[source], self.cells[target])
+                && matches!(
+                    self.materials.get(self.cells[side]).unwrap().motion,
+                    Motion::Empty | Motion::Liquid
+                )
+            {
+                return Some(target);
+            }
+        }
+        // Connected liquid transmits displacement to a lower endpoint. This
+        // levels density layers and fills the trailing space of moving walls.
+        if let Some(routes) = routes
+            .and_then(|routes| routes.get(&self.materials.get(self.cells[source]).unwrap().density))
+        {
             for direction in directions {
-                if let Some(destination) = routes[x][usize::from(direction > 0)] {
-                    return Some(destination);
+                if let Some(target) = routes[x][usize::from(direction > 0)] {
+                    return Some(target);
                 }
             }
         }
@@ -331,7 +371,17 @@ impl SandWorld {
         None
     }
 
-    fn flow_routes(&self) -> Vec<Option<Vec<[Option<usize>; 2]>>> {
+    fn flow_routes(&self) -> Vec<Option<DensityRoutes>> {
+        let mut densities: Vec<_> = (0..=255)
+            .filter_map(|id| {
+                self.materials
+                    .get(id)
+                    .filter(|m| m.motion == Motion::Liquid && self.counts[id as usize] > 0)
+                    .map(|m| m.density)
+            })
+            .collect();
+        densities.sort_unstable();
+        densities.dedup();
         let columns = self.width.div_ceil(TILE);
         (0..self.height - 1)
             .map(|y| {
@@ -344,23 +394,40 @@ impl SandWorld {
                     return None;
                 }
                 let row = &self.cells[y * self.width..(y + 1) * self.width];
-                if !row.contains(&self.materials.air()) {
-                    return None;
-                }
-                let mut routes = vec![[None; 2]; self.width];
-                for (direction, reverse) in [false, true].into_iter().enumerate() {
-                    let mut drop = None;
-                    for i in 0..self.width {
-                        let x = if !reverse { i } else { self.width - 1 - i };
-                        routes[x][direction] = drop;
-                        if row[x] != self.materials.air() {
-                            drop = None;
-                        } else if self.cells[(y + 1) * self.width + x] == self.materials.air() {
-                            drop = Some((y + 1) * self.width + x);
+                let below = &self.cells[(y + 1) * self.width..(y + 2) * self.width];
+                let mut plans = BTreeMap::new();
+                for &density in &densities {
+                    if !row.iter().any(|&id| {
+                        self.is_liquid(id) && self.materials.get(id).unwrap().density == density
+                    }) || !below.iter().any(|&id| {
+                        id == self.materials.air()
+                            || (self.is_liquid(id)
+                                && self.materials.get(id).unwrap().density < density)
+                    }) {
+                        continue;
+                    }
+                    let mut routes = vec![[None; 2]; self.width];
+                    for (direction, reverse) in [false, true].into_iter().enumerate() {
+                        let mut drop = None;
+                        for i in 0..self.width {
+                            let x = if reverse { self.width - 1 - i } else { i };
+                            routes[x][direction] = drop;
+                            let material = self.materials.get(row[x]).unwrap();
+                            if material.motion != Motion::Empty
+                                && (material.motion != Motion::Liquid || material.density > density)
+                            {
+                                drop = None;
+                            } else if below[x] == self.materials.air()
+                                || (self.is_liquid(below[x])
+                                    && self.materials.get(below[x]).unwrap().density < density)
+                            {
+                                drop = Some((y + 1) * self.width + x);
+                            }
                         }
                     }
+                    plans.insert(density, routes);
                 }
-                Some(routes)
+                (!plans.is_empty()).then_some(plans)
             })
             .collect()
     }
@@ -416,7 +483,7 @@ impl SandWorld {
                                         })
                                 }
                                 Motion::Liquid => {
-                                    self.liquid_destination(source, tick, row_routes.as_deref())
+                                    self.liquid_destination(source, tick, row_routes.as_ref())
                                 }
                                 _ => None,
                             };
@@ -482,6 +549,13 @@ impl SandWorld {
     pub fn awake_at(&self, x: i32, y: i32) -> Option<bool> {
         self.material_at(x, y)?;
         Some(self.awake[y as usize / TILE * self.width.div_ceil(TILE) + x as usize / TILE])
+    }
+    /// Owner-thread edits without generating an intermediate image. The next
+    /// step/edit publishes all dirty tiles; this does not advance the tick.
+    pub fn apply_edits(&mut self, commands: Vec<Command>) {
+        for command in commands {
+            self.command(command);
+        }
     }
     /// Apply explicit editor operations without advancing falling material.
     pub fn edit(&mut self, commands: Vec<Command>) -> Frame {
@@ -755,6 +829,56 @@ mod tests {
     }
 
     #[test]
+    fn adjacent_immiscible_columns_form_horizontal_density_layers() {
+        let base = liquid_materials();
+        let mut entries: Vec<_> = (0..5).map(|id| base.get(id).unwrap().clone()).collect();
+        entries[4].density = 800;
+        let materials = Materials::new(entries, AIR, WALL).unwrap();
+        let mut world = SandWorld::with_materials(33, 34, 4, materials.clone()).unwrap();
+        world.edit(vec![
+            Command::FillRect {
+                x: 1,
+                y: 13,
+                width: 15,
+                height: 20,
+                material: 3,
+            },
+            Command::FillRect {
+                x: 16,
+                y: 13,
+                width: 16,
+                height: 20,
+                material: 4,
+            },
+        ]);
+        let mut reference =
+            SandWorld::from_material_cells(33, 34, 1, world.cells.clone(), materials).unwrap();
+        reference.full_scan = true;
+        for _ in 0..500 {
+            world.step(vec![]);
+            reference.step(vec![]);
+            assert_eq!(world.cells, reference.cells);
+        }
+        let rows = |id| {
+            world
+                .cells
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &c)| (c == id).then_some(i / 33))
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            rows(4).iter().max().unwrap() <= &(rows(3).iter().min().unwrap() + 1),
+            "oil remained trapped in a side column"
+        );
+        assert_eq!(
+            (world.material_count(3), world.material_count(4)),
+            (300, 320)
+        );
+        assert_eq!(world.step(vec![]).active_tiles, 0);
+    }
+
+    #[test]
     fn dense_powder_displaces_liquid_and_lighter_liquid_rises_without_mass_loss() {
         let mut materials = liquid_materials();
         // Give the second liquid a lighter game-defined density.
@@ -982,6 +1106,7 @@ mod tests {
         let mut reference =
             SandWorld::from_material_cells(65, 66, 1, parallel.cells.clone(), materials).unwrap();
         parallel.sand = reference.sand;
+        parallel.counts = reference.counts;
         reference.full_scan = true;
         let counts = |w: &SandWorld| [2, 3].map(|id| w.cells.iter().filter(|&&c| c == id).count());
         let original = counts(&parallel);

@@ -1,4 +1,5 @@
 mod actor_view;
+mod cup;
 mod debug_view;
 mod game;
 mod material_view;
@@ -93,7 +94,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -143,7 +144,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -425,6 +426,14 @@ impl App {
                 last_image[1]
             ));
             row.push_str(&format!(",{}", frame.liquid));
+            if let Some(cup) = snapshot.frame.cup {
+                row.push_str(&format!(
+                    ",{},{},{},{},{},{},{},{}",
+                    cup.x, cup.y, cup.width, cup.height, cup.moves, cup.blocked, cup.water, cup.oil
+                ));
+            } else {
+                row.push_str(",,,,,,,,");
+            }
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -520,6 +529,12 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::Digit6) if down => {
                         self.brush = OIL;
                         self.tool = Tool::Brush;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyK) if down => {
+                        self.game_command(GameCommand::CupScene)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyO) if down => {
+                        self.game_command(GameCommand::AddOil)
                     }
                     PhysicalKey::Code(KeyCode::KeyL) if down => {
                         for command in scenes::sea(self.options.width, self.options.height) {

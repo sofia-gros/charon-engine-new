@@ -46,6 +46,7 @@ jobs:
           ./target/debug/charon-sandbox --replay docs/media/camera-linux.trace --workers 1
           ./target/debug/charon-sandbox --replay docs/media/placement-linux.trace --workers 1
           ./target/debug/charon-sandbox --replay docs/media/sea-linux.trace --workers 1
+          ./target/debug/charon-sandbox --replay docs/media/cup-linux.trace --workers 1
       - name: Windows recorded input replay
         if: runner.os == 'Windows'
         run: |
@@ -56,6 +57,8 @@ jobs:
           ./target/release/charon-sandbox.exe --replay docs/media/placement-linux.trace --workers 1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           ./target/release/charon-sandbox.exe --replay docs/media/sea-linux.trace --workers 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          ./target/release/charon-sandbox.exe --replay docs/media/cup-linux.trace --workers 1
       - name: Linux software Vulkan
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb

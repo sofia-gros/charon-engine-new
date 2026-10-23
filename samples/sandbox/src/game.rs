@@ -7,6 +7,8 @@ use charon_sand::{Command as SandCommand, SandWorld};
 #[derive(Clone, Copy, Debug)]
 pub enum Command {
     Terrain(SandCommand),
+    CupScene,
+    AddOil,
     PlaceImage([f32; 2]),
     EraseImage([f32; 2]),
     Left(bool),
@@ -27,6 +29,7 @@ pub struct Inspection {
     pub awake: Option<bool>,
 }
 pub struct Frame {
+    pub cup: Option<crate::cup::Status>,
     pub terrain: charon_sand::Frame,
     pub images: Vec<[f32; 2]>,
     pub image_error: Option<&'static str>,
@@ -66,6 +69,7 @@ struct Spark {
     life: u8,
 }
 pub struct Game {
+    cup: Option<crate::cup::Cup>,
     world: SandWorld,
     images: Vec<[f32; 2]>,
     image_error: Option<&'static str>,
@@ -122,6 +126,7 @@ impl Game {
             SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
+            cup: None,
             images: vec![],
             image_error: None,
             previous_player: None,
@@ -169,6 +174,12 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if let Some(cup) = &self.cup {
+            mix(0x637570);
+            for value in cup.signature() {
+                mix(value);
+            }
+        }
         if !self.images.is_empty() {
             mix(0x696d616765);
             mix(self.images.len() as u64);
@@ -231,7 +242,17 @@ impl Game {
                 }
             }
         }
-        let mut frame = self.world.step(terrain);
+        let mut frame = if let Some(cup) = &mut self.cup {
+            let start = std::time::Instant::now();
+            self.world.apply_edits(terrain);
+            self.image_error = cup.step(&mut self.world, self.presentation_direction);
+            let coupling_ms = start.elapsed().as_secs_f64() * 1000.;
+            let mut frame = self.world.step(vec![]);
+            frame.update_ms += coupling_ms;
+            frame
+        } else {
+            self.world.step(terrain)
+        };
         self.sparks.retain_mut(|spark| {
             for axis in 0..2 {
                 spark.position[axis] += spark.velocity[axis];
@@ -338,7 +359,32 @@ impl Simulation for Game {
                     terrain.clear();
                     steps = 0;
                 }
+                Command::CupScene => {
+                    terrain.clear();
+                    match crate::cup::Cup::create(&mut self.world, self.width, self.height) {
+                        Ok(cup) => {
+                            self.cup = Some(cup);
+                            self.player = None;
+                            self.images.clear();
+                            self.projectiles = Projectiles::default();
+                            self.sparks.clear();
+                            self.fire_pending = false;
+                            self.impacts = 0;
+                            self.left = false;
+                            self.right = false;
+                            self.image_error = None;
+                        }
+                        Err(error) => self.image_error = Some(error),
+                    }
+                }
+                Command::AddOil => {
+                    if let Some(cup) = &self.cup {
+                        self.world.apply_edits(std::mem::take(&mut terrain));
+                        cup.add_oil(&mut self.world);
+                    }
+                }
                 Command::Terrain(SandCommand::Clear) => {
+                    self.cup = None;
                     self.images.clear();
                     self.image_error = None;
                     terrain.push(SandCommand::Clear);
@@ -406,6 +452,7 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            cup: self.cup.as_ref().map(|c| c.status(&self.world)),
             terrain: frame,
             images: self.images.clone(),
             image_error: self.image_error,
@@ -436,6 +483,59 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cup_shakes_with_immiscible_oil_preserves_counts_and_freezes_with_pause() {
+        let mut game = Game::new(480, 270, 4, false).unwrap();
+        let frame = game.step(vec![Command::CupScene]);
+        let initial = frame.cup.unwrap();
+        let frame = game.step(vec![Command::AddOil]);
+        let oil = frame.cup.unwrap().oil;
+        assert!(initial.water > 0 && oil > 0);
+        for tick in 0..600 {
+            let commands = match tick {
+                0 => vec![Command::Right(true)],
+                120 => vec![Command::Right(false), Command::Left(true)],
+                240 => vec![Command::Left(false), Command::Right(true)],
+                360 => vec![Command::Right(false), Command::Left(true)],
+                480 => vec![Command::Left(false)],
+                _ => vec![],
+            };
+            let frame = game.step(commands);
+            let cup = frame.cup.unwrap();
+            assert_eq!((cup.water, cup.oil), (initial.water, oil));
+            assert_eq!(cup.blocked, 0);
+        }
+        let frame = game.step(vec![Command::Pause, Command::Right(true)]);
+        let x = frame.cup.unwrap().x;
+        let clock = frame.simulation_tick;
+        for _ in 0..8 {
+            let frame = game.step(vec![]);
+            assert_eq!((frame.cup.unwrap().x, frame.simulation_tick), (x, clock));
+        }
+        game.step(vec![Command::Right(false), Command::Pause]);
+        let mut settled = false;
+        for _ in 0..2400 {
+            let frame = game.step(vec![]);
+            if frame.terrain.active_tiles == 0 {
+                settled = true;
+                break;
+            }
+        }
+        assert!(settled, "shaken cup did not settle");
+        let cup = game.cup.as_ref().unwrap().status(&game.world);
+        let inside_rows = |id| {
+            (cup.y..cup.y + cup.height - 2)
+                .flat_map(|y| (cup.x + 2..cup.x + cup.width - 2).map(move |x| (x, y)))
+                .filter_map(|(x, y)| (game.world.material_at(x, y) == Some(id)).then_some(y))
+                .collect::<Vec<_>>()
+        };
+        let oil_rows = inside_rows(crate::materials::OIL);
+        let water_rows = inside_rows(crate::materials::WATER);
+        assert!(
+            oil_rows.iter().max().unwrap() <= &(water_rows.iter().min().unwrap() + 1),
+            "oil did not form an upper layer"
+        );
+    }
     #[test]
     fn sea_acceptance_sand_displaces_water_over_bank_without_deleting_material() {
         use crate::materials::WATER;

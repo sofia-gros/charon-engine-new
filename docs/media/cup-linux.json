@@ -1,0 +1,56 @@
+{
+  "source_sha256": "bb46c0318e9d9f37aef76af7c6417d8943de61a48c1e1406cebfa0a3fcfd52af",
+  "sample": "cup",
+  "base_revision": "4c5ee703f46ac4c01867de133181fae059581f59",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.001,
+  "gif_encoded_frames": 288,
+  "draw_submission_fps_range": [
+    25.98,
+    43.62
+  ],
+  "simulation_hz_range": [
+    0.0,
+    61.26
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "captured_frames": 288,
+  "gif_duration_ms": 36010,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "water_cells": 2944,
+  "oil_cells": 736,
+  "rendered_layers": {
+    "oil_y": [
+      338,
+      362
+    ],
+    "water_y": [
+      363,
+      462
+    ]
+  },
+  "cup_x_range": [
+    192,
+    222
+  ],
+  "replay": "replay_ticks=2222 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "game-owned cup shape",
+    "left/right real input",
+    "separate water/oil mass conservation",
+    "oil injection into air",
+    "oil above water in rendered output",
+    "pause freezes cup and liquid",
+    "resting contents sleep",
+    "authoritative replay with one worker",
+    "Escape shutdown"
+  ]
+}

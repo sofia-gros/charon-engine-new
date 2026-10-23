@@ -1,7 +1,7 @@
 {
-  "source_sha256": "d61422ac45f86b2e6a80e62fd0b02e601627611c31ae4fbe9a9205bdb1d117c2",
+  "source_sha256": "bb46c0318e9d9f37aef76af7c6417d8943de61a48c1e1406cebfa0a3fcfd52af",
   "sample": "sea",
-  "base_revision": "38eb87a2c07790d0211af9459d0eddc888564eec",
+  "base_revision": "4c5ee703f46ac4c01867de133181fae059581f59",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
@@ -9,16 +9,16 @@
   "observed_capture_fps": 7.999,
   "gif_encoded_frames": 320,
   "draw_submission_fps_range": [
-    23.38,
-    39.3
+    19.71,
+    40.25
   ],
   "simulation_hz_range": [
     0.0,
-    61.47
+    67.83
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 320,
-  "gif_duration_ms": 40000,
+  "gif_duration_ms": 39980,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -27,8 +27,8 @@
   ],
   "water_cells": 31070,
   "water_pixels_right_before": 0,
-  "water_pixels_right_after": 4848,
-  "replay": "replay_ticks=2462 checks=terrain,player,input_state workers=1",
+  "water_pixels_right_after": 4748,
+  "replay": "replay_ticks=2463 checks=terrain,player,input_state workers=1",
   "checks": [
     "left sea and right sand scene",
     "real mouse sand rain",

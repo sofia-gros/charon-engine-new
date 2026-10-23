@@ -139,12 +139,12 @@ def check_debugger_rows(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
     local = LOCAL / sample
-    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else 14)
+    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else 14))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -257,6 +257,37 @@ EndSection
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
                 inputs.key(ord("r"))
+            elif sample == "cup":
+                at(.5)
+                inputs.key(ord("k"))
+                at(1)
+                inputs.key(ord("="))
+                inputs.key(ord("="))
+                at(2)
+                inputs.hold(ord("d"),True)
+                at(4)
+                inputs.hold(ord("d"),False)
+                at(4.5)
+                inputs.key(ord("o"))
+                at(6)
+                inputs.hold(ord("a"),True)
+                at(8)
+                inputs.hold(ord("a"),False)
+                at(9)
+                inputs.hold(ord("d"),True)
+                at(11)
+                inputs.hold(ord("d"),False)
+                at(12)
+                inputs.hold(ord("a"),True)
+                at(14)
+                inputs.hold(ord("a"),False)
+                at(16)
+                inputs.key(ord("p"))
+                inputs.hold(ord("d"),True)
+                at(17)
+                inputs.hold(ord("d"),False)
+                at(17.5)
+                inputs.key(ord("p"))
             elif sample == "sea":
                 at(.5)
                 inputs.key(ord("l"))
@@ -493,6 +524,37 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "custom_material": "demo.ash", "peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
                           "checks": ["mouse painting", "game-defined ash selection/inspection", "authoritative replay with 1 worker", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
+            elif sample == "cup":
+                cup_rows=[r for r in rows if r["cup_x"]]
+                assert cup_rows, "cup was not created"
+                water=int(cup_rows[0]["water"])
+                assert water>0 and all(int(r["water"])==water for r in cup_rows), "cup motion lost or created water"
+                oil=[int(r["oil"]) for r in cup_rows if int(r["oil"])>0]
+                assert oil and min(oil)==max(oil), "oil injection or motion lost/created oil"
+                xs=[int(r["cup_x"]) for r in cup_rows]
+                assert max(xs)-min(xs)>20 and any(b>a for a,b in zip(xs,xs[1:])) and any(b<a for a,b in zip(xs,xs[1:])), "cup did not move both ways"
+                assert all(r["cup_blocked"]=="0" for r in cup_rows), "cup movement was blocked"
+                paused=[r for r in cup_rows if r["paused"]=="true"]
+                assert len(paused)>=2 and len({(r["cup_x"],r["simulation_tick"]) for r in paused})==1, "paused cup moved"
+                assert all(r["active_tiles"]=="0" and r["converted_cells"]=="0" and r["upload_bytes"]=="0" for r in cup_rows[-2:]), "stopped cup contents did not sleep"
+                with Image.open(frames[-1][1]) as im:
+                    rgb=im.convert("RGB")
+                    blue=[]; yellow=[]
+                    last=cup_rows[-1]
+                    cx,cy,cw,ch=[float(last[k]) for k in ("cup_x","cup_y","cup_width","cup_height")]
+                    ox,oy,vw,vh=[float(last[k]) for k in ("camera_x","camera_y","camera_width","camera_height")]
+                    left=max(0,math.ceil((cx+2-ox)/vw*960)); right=min(960,math.floor((cx+cw-2-ox)/vw*960))
+                    top=max(0,math.ceil((cy-oy)/vh*540)); bottom=min(540,math.floor((cy+ch-2-oy)/vh*540))
+                    for y in range(top,bottom):
+                        for x in range(left,right):
+                            r,g,b=rgb.getpixel((x,y))
+                            if r<80 and g>90 and b>180: blue.append(y)
+                            if r>170 and g>140 and b<100: yellow.append(y)
+                    assert blue and yellow and max(yellow)<=min(blue)+math.ceil(540/vh), "rendered oil did not form an upper layer"
+                    layer_bands={"oil_y":[min(yellow),max(yellow)],"water_y":[min(blue),max(blue)]}
+                replay=subprocess.run([str(ROOT / "target/debug" / package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=50)
+                shutil.copyfile(trace_path,MEDIA / f"{prefix}.trace")
+                checks={"water_cells":water,"oil_cells":oil[-1],"rendered_layers":layer_bands,"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["game-owned cup shape", "left/right real input", "separate water/oil mass conservation", "oil injection into air", "oil above water in rendered output", "pause freezes cup and liquid", "resting contents sleep", "authoritative replay with one worker", "Escape shutdown"]}
             elif sample == "sea":
                 sea_rows=[r for r in rows if int(r["liquid"])>0]
                 assert sea_rows, "sea was not created"
