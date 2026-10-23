@@ -1,32 +1,36 @@
 {
-  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
+  "source_sha256": "93da86c70a4b0bb0e204ea34e6e0692222917a5c4b3bd50094677a761a3d7ee5",
   "sample": "dialogue",
-  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "base_revision": "547601bd2d333881f15d7069c7fdecd474b54c35",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.996,
-  "gif_encoded_frames": 13,
+  "observed_capture_fps": 8.002,
+  "gif_encoded_frames": 16,
   "draw_submission_fps_range": [
-    37.02,
-    48.2
+    14.75,
+    57.55
   ],
   "simulation_hz_range": [
     0.0,
-    60.5
+    60.61
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 96,
-  "gif_duration_ms": 12020,
-  "source_size": [
-    1920,
-    1080
-  ],
+  "gif_duration_ms": 12050,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
     960,
     540
   ],
+  "font_source": {
+    "source": "https://github.com/google/fonts/tree/e7db6ca603fd4862010383ff17ffd6cc4ffac1c0/ofl/mplus1p",
+    "file": "MPLUS1p-Regular.ttf",
+    "sha256": "2f294ad496432b1608f070d310e3aa2adcf1de4af429f4901df97ec4bd361ed1",
+    "license": "OFL.txt"
+  },
   "pages": [
     "Intro",
     "Choice",
@@ -37,7 +41,13 @@
   ],
   "checks": [
     "both choices",
-    "keyboard restart",
+    "mouse button hit testing",
+    "cancel release outside button",
+    "keyboard choice and focus",
+    "restart button",
+    "resize and pointer remapping",
+    "Japanese font cache",
+    "idle UI texture reuse",
     "Escape shutdown"
   ]
 }

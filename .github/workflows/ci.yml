@@ -86,4 +86,6 @@ jobs:
             target/release/charon-sandbox.exe
             target/release/charon-dialogue-sample.exe
             artifacts/local/
+            LICENSE
+            samples/dialogue/assets/OFL.txt
           if-no-files-found: error

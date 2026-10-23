@@ -91,7 +91,7 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 
 `Clip::new(atlas, &["walk0", "walk1"], true)`のようにゲーム側で待機/歩行/走行/攻撃などを組み立てる。複数クリップで同じ画像を共有し、`frame_at(Duration)`で表示フレームを得る。末尾で止まるクリップも作れる。時刻は呼出側から渡すため、物理時計と見た目の時計を分離できる。読込は開始前に行い、フレームごとにファイルを開かない。
 
-[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。回転/トリミング取込と汎用UIは今後の工程。
+[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。回転/トリミング取込は今後の工程。UIは別の画面固定レイヤーへ描画できる。
 
 素材の画像には`present_indexed_with_sprites`を使う。1セル1バイトの素材IDを不変タイルで渡し、GPUが素材の色またはアトラス矩形を選ぶ。現在は共有アトラス1枚・256項目の表示表・画像の繰り返し配置に対応し、透過部分には素材の単色を使う。アニメーションは表示表だけを更新し、静止セルや画像本体を再転送しない。`upload_bytes`はセル、`appearance_upload_bytes`は表示表、`atlas_upload_bytes`は画像本体。CPU側には画素照合用のRGBAスナップショットも保持している。大量画像の自動パックや多アトラスの管理は未実装。
 
@@ -135,11 +135,19 @@ CSVの `runtime_tick` は入力受付/状態公開の回数、`simulation_tick` 
 cargo run --locked --release -p charon-dialogue-sample
 ```
 
-Spaceまたはクリックで進む。選択画面で1/2、Rで最初から、Escで終了。砂を依存に含めず、同じ実行基盤とwgpu描画基盤を使う小さな会話サンプル。文章表示はサンプル用の英字ビットマップで、日本語組版・音声・シナリオ編集機能はまだ含まない。
+日本語の本文と選択肢を表示する。ボタンのクリック、Enter/Spaceで決定、Tab/Shift+Tabまたは矢印でフォーカス移動、1/2で選択肢を直接指定、Rで最初から、Escで終了する。ボタンを押した後に外へ移動して離すとキャンセルする。640×360の論理画面をウィンドウへ拡縮し、クリックも同じ座標変換で判定する。
+
+物語と分岐はゲーム側の[story.rs](../samples/dialogue/src/story.rs)、見た目は[picture.rs](../samples/dialogue/src/picture.rs)へ置く。`charon-dialogue`はゲームが渡す型付きキー・本文・次のページ・選択肢を管理し、不明な遷移先や重複キーを開始時に拒否する。砂や描画へ依存しない。
+
+`charon-ui`はRect/Buttons/Text/Canvasを提供し、ウィンドウや砂へ依存しない。文字はNFCで正規化し、横書き日本語/Latinの折り返し（UAX #14）と矩形クリップに対応する。フォントの文字ラスタを再利用し、未収録文字はコードポイント付きエラーにする。文字サイズは1〜256、1回の文章は64 KiB以下、Canvasは各辺4096以下。ルビ・縦書き・IME・複雑な文字シェーピング・自動リフロー/スクロールは未実装。
+
+描画はCanvasからRGBA画像を作ってGPUへ一度送り、`present_with_ui`または地形向けの`present_indexed_with_ui`で画面固定の画像として重ねる。ワールドカメラはUIの位置・大きさへ影響しない。サンプルはページ/ホバー/フォーカス変更時だけUI画像を再生成し、静止中は前の画像を使う。CSVのui_redraws/cached_glyphsで再生成と文字キャッシュ、ui_vertex_bytesでUI頂点の転送量を確認できる。
+
+同梱のM PLUS 1p Regularは[SIL Open Font License](../samples/dialogue/assets/OFL.txt)。元ファイル・版・SHA-256は[font-source.json](../samples/dialogue/assets/font-source.json)に記録し、Linux/Windowsで同じフォントを使う。ゲーム側で別のフォントを`Text::new`へ渡せる。
 
 ![Dialogueの会話・選択肢・分岐](media/dialogue-linux.gif)
 
-実入力で2つの分岐と再開を確認した約12秒の記録。画面内のDRAW/SIMは描画送信と会話pluginの更新頻度。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
+実入力で2つの分岐・クリックのキャンセル・フォーカス・再開・1280×720へのリサイズを確認した約12秒の記録。画面内のDRAW/SIMは描画送信と会話pluginの更新頻度。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
 
 ## 検証
 

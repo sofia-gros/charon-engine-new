@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+charon-ui.workspace = true
+charon-assets.workspace = true
 charon-runtime.workspace = true
 charon-render.workspace = true
 charon-dialogue.workspace = true

@@ -73,6 +73,7 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     sprites: sprites::SpriteLayer,
+    ui_sprites: sprites::SpriteLayer,
     indexed: Option<indexed::IndexedLayer>,
     indexed_active: bool,
     camera: Camera2D,
@@ -208,6 +209,7 @@ impl Gpu {
             ],
         });
         let sprites = sprites::SpriteLayer::new(&device, format);
+        let ui_sprites = sprites.fork(&device);
         let camera = Camera2D::new([0., 0.], [width as f32, height as f32])?;
         let initial_camera: Vec<_> = [0., 0., width as f32, height as f32]
             .into_iter()
@@ -218,6 +220,7 @@ impl Gpu {
             camera,
             camera_buffer,
             sprites,
+            ui_sprites,
             indexed: None,
             indexed_active: false,
             format,
@@ -408,6 +411,7 @@ impl Gpu {
             pass.draw(0..3, 0..1);
         }
         self.sprites.draw(&mut pass);
+        self.ui_sprites.draw(&mut pass);
         if self.overlay_vertices > 0 {
             pass.set_pipeline(&self.overlay_pipeline);
             pass.set_vertex_buffer(0, self.overlay_buffer.slice(..));
@@ -534,6 +538,49 @@ impl Gpu {
             rgba: &rgba,
         })?;
         Ok(bytes)
+    }
+
+    pub fn smoke_screen_ui(&mut self) -> Result<()> {
+        let (width, height) = (
+            self.texture.width() as usize,
+            self.texture.height() as usize,
+        );
+        let original = self.camera;
+        self.upload(&ImageView {
+            width,
+            height,
+            rgba: &vec![0; width * height * 4],
+        });
+        self.set_camera(Camera2D::new(
+            [0., 0.],
+            [width as f32 / 2., height as f32 / 2.],
+        )?);
+        let cpu = charon_assets::Texture::from_rgba(1, 1, vec![255, 0, 0, 255])?;
+        let texture = self.upload_sprite_texture(&cpu);
+        self.ui_sprites.set(
+            &self.queue,
+            &[Sprite {
+                texture: &texture,
+                source: [0, 0, 1, 1],
+                destination: [2., 2., 4., 4.],
+                flip_x: false,
+            }],
+            original,
+        )?;
+        let mut expected = vec![0; width * height * 4];
+        for y in 1..3 {
+            for x in 1..3 {
+                expected[(y * width + x) * 4..][..4].copy_from_slice(&[255, 0, 0, 255]);
+            }
+        }
+        let result = self.verify(&ImageView {
+            width,
+            height,
+            rgba: &expected,
+        });
+        self.ui_sprites.set(&self.queue, &[], original)?;
+        self.set_camera(original);
+        result
     }
 
     fn verify(&self, frame: &ImageView<'_>) -> Result<()> {
@@ -684,24 +731,24 @@ impl WindowRenderer {
     }
     /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
     pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
-        self.present_image(image.map(Upload::Full), &[], &[])
+        self.present_image(image.map(Upload::Full), &[], &[], &[])
     }
     pub fn present_with_overlays(
         &mut self,
         image: Option<ImageView<'_>>,
         overlays: &[OverlayRect],
     ) -> Result<Option<RenderStats>> {
-        self.present_image(image.map(Upload::Full), overlays, &[])
+        self.present_image(image.map(Upload::Full), overlays, &[], &[])
     }
     pub fn present_tiled(&mut self, image: &TiledImage) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)), &[], &[])
+        self.present_image(Some(Upload::Tiled(image)), &[], &[], &[])
     }
     pub fn present_tiled_with_overlays(
         &mut self,
         image: &TiledImage,
         overlays: &[OverlayRect],
     ) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)), overlays, &[])
+        self.present_image(Some(Upload::Tiled(image)), overlays, &[], &[])
     }
     pub fn upload_sprite_texture(&self, texture: &charon_assets::Texture) -> SpriteTexture {
         self.gpu.upload_sprite_texture(texture)
@@ -712,7 +759,7 @@ impl WindowRenderer {
         sprites: &[Sprite<'_>],
         overlays: &[OverlayRect],
     ) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)), overlays, sprites)
+        self.present_image(Some(Upload::Tiled(image)), overlays, sprites, &[])
     }
     pub fn present_indexed_with_sprites(
         &mut self,
@@ -730,13 +777,44 @@ impl WindowRenderer {
             }),
             overlays,
             sprites,
+            &[],
         )
+    }
+    pub fn present_indexed_with_ui(
+        &mut self,
+        image: &IndexedImage,
+        looks: &[TileAppearance],
+        atlas: &Arc<charon_assets::Texture>,
+        sprites: &[Sprite<'_>],
+        ui: &[Sprite<'_>],
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(
+            Some(Upload::Indexed {
+                image,
+                looks,
+                atlas,
+            }),
+            overlays,
+            sprites,
+            ui,
+        )
+    }
+    /// UI sprites use logical screen coordinates and ignore the world camera.
+    pub fn present_with_ui(
+        &mut self,
+        image: Option<ImageView<'_>>,
+        ui: &[Sprite<'_>],
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(image.map(Upload::Full), overlays, &[], ui)
     }
     fn present_image(
         &mut self,
         image: Option<Upload<'_>>,
         overlays: &[OverlayRect],
         sprites: &[Sprite<'_>],
+        ui: &[Sprite<'_>],
     ) -> Result<Option<RenderStats>> {
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -789,6 +867,14 @@ impl WindowRenderer {
             self.gpu
                 .sprites
                 .set(&self.gpu.queue, sprites, self.gpu.camera)?;
+        let screen = Camera2D::new(
+            [0., 0.],
+            [
+                self.gpu.texture.width() as f32,
+                self.gpu.texture.height() as f32,
+            ],
+        )?;
+        let ui_upload_bytes = self.gpu.ui_sprites.set(&self.gpu.queue, ui, screen)?;
         let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let encode_start = std::time::Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -809,6 +895,7 @@ impl WindowRenderer {
             atlas_upload_bytes,
             overlay_upload_bytes,
             sprite_upload_bytes,
+            ui_upload_bytes,
             acquire_ms,
             encode_present_ms: encode_start.elapsed().as_secs_f64() * 1000.0,
         }))
@@ -822,6 +909,7 @@ pub struct RenderStats {
     pub atlas_upload_bytes: usize,
     pub overlay_upload_bytes: usize,
     pub sprite_upload_bytes: usize,
+    pub ui_upload_bytes: usize,
     pub acquire_ms: f64,
     pub encode_present_ms: f64,
 }

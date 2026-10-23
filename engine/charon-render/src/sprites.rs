@@ -79,6 +79,18 @@ impl SpriteLayer {
             binds: vec![],
         }
     }
+    pub fn fork(&self, device: &wgpu::Device) -> Self {
+        Self {
+            pipeline: self.pipeline.clone(),
+            buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("UI sprite vertices"),
+                size: 1024 * 6 * 16,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            binds: vec![],
+        }
+    }
     pub fn upload_texture(
         &self,
         device: &wgpu::Device,

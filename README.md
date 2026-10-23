@@ -45,3 +45,5 @@ Windowsでの起動、各サンプルの操作、対応範囲は[導入と使い
 ## License
 
 [MIT](LICENSE) © 2026 sofia gros
+
+同梱フォントは[SIL Open Font License](samples/dialogue/assets/OFL.txt)です。

@@ -89,6 +89,7 @@ pub fn verify_updates(gpu: &mut Gpu, width: usize, height: usize) -> Result<()> 
         [0., 0.],
         [width as f32, height as f32],
     )?);
+    gpu.smoke_screen_ui()?;
     println!("partial_upload_checks=idle,skipped_snapshots,edge_tiles,clear");
     Ok(())
 }

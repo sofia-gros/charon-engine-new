@@ -1,0 +1,11 @@
+[package]
+name = "charon-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+fontdue = { version = "0.9", default-features = false, features = ["std"] }
+unicode-linebreak = "0.1"
+unicode-normalization = "0.1"

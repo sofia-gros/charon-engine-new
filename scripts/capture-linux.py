@@ -254,16 +254,35 @@ EndSection
                 inputs.key(ord("r"))
             elif sample == "dialogue":
                 at(1)
-                inputs.key(ord(" "))
+                inputs.move(1470,918)
+                inputs.button(1,True)
+                inputs.button(1,False)
+                at(2)
+                inputs.move(420,918)
+                inputs.button(1,True)
+                at(2.2)
+                inputs.move(50,400)
+                inputs.button(1,False)
                 at(3)
                 inputs.key(ord("1"))
                 at(5)
-                inputs.key(ord("r"))
+                inputs.move(1470,918)
+                inputs.button(1,True)
+                inputs.button(1,False)
+                at(6.3)
+                inputs.resize(1280,720)
                 at(7)
-                inputs.key(ord(" "))
+                inputs.move(980,612)
+                inputs.button(1,True)
+                inputs.button(1,False)
+                at(8)
+                inputs.key(0xff09)  # Tab selects the second choice.
                 at(9)
-                inputs.key(ord("2"))
+                inputs.move(920,612)
+                inputs.button(1,True)
+                inputs.button(1,False)
                 at(10)
+                inputs.resize(1920,1080)
             elif sample == "platformer":
                 at(1)
                 inputs.hold(ord("d"), True)
@@ -434,7 +453,14 @@ EndSection
             elif sample == "dialogue":
                 pages = [page for page, _ in itertools.groupby(row["page"] for row in rows)]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
-                checks = {"pages": pages, "checks": ["both choices", "keyboard restart", "Escape shutdown"]}
+                first_choice = next(float(r["elapsed_s"]) for r in rows if r["page"]=="Choice")
+                first_river = next(float(r["elapsed_s"]) for r in rows if r["page"]=="River")
+                assert first_river-first_choice >= 1.5, "release outside button activated an early choice"
+                assert any(r["window_width"]=="1280" and r["window_height"]=="720" for r in rows), "dialogue client did not resize"
+                assert any(r["focused"] == "Some(Choose(1))" and r["page"] == "Choice" for r in rows), "keyboard focus did not reach second choice"
+                assert max(int(r["cached_glyphs"]) for r in rows)>80, "Japanese font glyphs were not cached"
+                assert any(a["page"]==b["page"] and a["ui_redraws"]==b["ui_redraws"] for a,b in zip(rows,rows[1:])), "idle UI rerendered every sample"
+                checks = {"pages": pages, "checks": ["both choices", "mouse button hit testing", "cancel release outside button", "keyboard choice and focus", "restart button", "resize and pointer remapping", "Japanese font cache", "idle UI texture reuse", "Escape shutdown"]}
             elif sample == "platformer":
                 xs = [float(row["player_x"]) for row in rows]
                 ys = [float(row["player_y"]) for row in rows]
@@ -523,7 +549,7 @@ EndSection
                 encoded_frames = gif.n_frames
             source_hash = hashlib.sha256()
             for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
-                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml", ".png", ".jpg", ".json"):
+                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml", ".png", ".jpg", ".json", ".ttf", ".otf"):
                     source_hash.update(str(path.relative_to(ROOT)).encode())
                     source_hash.update(path.read_bytes())
             report = {"source_sha256": source_hash.hexdigest(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
@@ -537,6 +563,7 @@ EndSection
                       "captured_frames": len(frames), "gif_duration_ms": sum(durations),
                       "capture_target": "game client window (desktop excluded)",
                       "source_size": "actual client size; see window_width/window_height in CSV", "gif_size": [960, 540],
+                      **({"font_source": json.loads((ROOT / "samples/dialogue/assets/font-source.json").read_text())} if sample == "dialogue" else {}),
                       **checks}
             (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")
             (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")

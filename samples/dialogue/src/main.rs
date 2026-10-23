@@ -1,15 +1,18 @@
 mod picture;
-use charon_dialogue::{Command, Dialogue, Page};
+mod story;
+use charon_dialogue::{Command, Dialogue};
 use charon_render::{
-    append_performance_overlay, DebugPerformance, ImageView, Result, WindowRenderer,
+    append_performance_overlay, DebugPerformance, ImageView, Result, Sprite, WindowRenderer,
 };
 use charon_runtime::Runtime;
+use picture::Action;
 use std::{
     fs::File,
     io::Write,
     path::PathBuf,
     time::{Duration, Instant},
 };
+use story::Page;
 use winit::{
     application::ApplicationHandler,
     event::{ElementState, MouseButton, WindowEvent},
@@ -19,7 +22,10 @@ use winit::{
 };
 
 struct App {
-    runtime: Runtime<Dialogue>,
+    runtime: Runtime<Dialogue<Page>>,
+    ui: picture::Ui,
+    cursor: Option<[f32; 2]>,
+    shift: bool,
     view: Option<WindowRenderer>,
     page: Option<Page>,
     next_draw: Instant,
@@ -39,6 +45,22 @@ impl App {
             eprintln!("Input not applied: {error}");
         }
     }
+    fn action(&self, action: Action) {
+        self.command(match action {
+            Action::Continue => Command::Advance,
+            Action::Choose(index) => Command::Choose(index),
+            Action::Reset => Command::Reset,
+        });
+    }
+    fn pointer(&mut self) {
+        let point = self.view.as_ref().and_then(|view| {
+            let size = view.window.inner_size();
+            self.cursor.and_then(|p| {
+                charon_ui::logical_pointer(p, [size.width as f32, size.height as f32], [640., 360.])
+            })
+        });
+        self.ui.pointer_move(point);
+    }
     fn draw(&mut self) -> Result<()> {
         self.next_draw = Instant::now() + Duration::from_secs_f64(1.0 / 144.0);
         if self.runtime.is_finished() {
@@ -51,8 +73,17 @@ impl App {
         let Some(view) = self.view.as_mut() else {
             return Ok(());
         };
+        let size = view.window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(());
+        }
         let changed = self.page != Some(snapshot.frame.page);
-        let pixels = changed.then(|| picture::draw(&snapshot.frame));
+        self.ui.set_page(&snapshot.frame)?;
+        self.ui.pointer_move(self.cursor.and_then(|p| {
+            charon_ui::logical_pointer(p, [size.width as f32, size.height as f32], [640., 360.])
+        }));
+        let ui_changed = self.ui.render(view, &snapshot.frame)?;
+        let pixels = changed.then(|| picture::background(snapshot.frame.page));
         let image = pixels.as_ref().map(|rgba| ImageView {
             width: 640,
             height: 360,
@@ -60,9 +91,15 @@ impl App {
         });
         let mut overlays = Vec::new();
         append_performance_overlay(&mut overlays, self.performance, view.software_adapter);
-        if view.present_with_overlays(image, &overlays)?.is_none() {
+        let ui = [Sprite {
+            texture: self.ui.texture(),
+            source: [0, 0, 640, 360],
+            destination: [0., 0., 640., 360.],
+            flip_x: false,
+        }];
+        let Some(render) = view.present_with_ui(image, &ui, &overlays)? else {
             return Ok(());
-        }
+        };
         self.draws += 1;
         let elapsed = self.report.elapsed().as_secs_f64();
         let report = elapsed >= 1.0;
@@ -82,12 +119,19 @@ impl App {
         if changed || report {
             self.page = Some(snapshot.frame.page);
             let row = format!(
-                "{:.3},{},{:?},{:.2},{:.2}",
+                "{:.3},{},{:?},{:.2},{:.2},{},{},{},{},{},{},{:?}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.tick,
                 snapshot.frame.page,
                 self.performance.map_or(0.0, |m| m.draw_fps),
-                self.performance.map_or(0.0, |m| m.simulation_hz)
+                self.performance.map_or(0.0, |m| m.simulation_hz),
+                self.ui.redraws,
+                self.ui.cached_glyphs(),
+                u8::from(ui_changed),
+                render.ui_upload_bytes,
+                size.width,
+                size.height,
+                self.ui.buttons.focused()
             );
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -123,17 +167,49 @@ impl ApplicationHandler for App {
                 if let Some(view) = &mut self.view {
                     view.resize(size);
                 }
+                self.pointer();
             }
+            WindowEvent::CursorMoved { position, .. } => {
+                self.cursor = Some([position.x as f32, position.y as f32]);
+                self.pointer();
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.cursor = None;
+                self.pointer();
+            }
+            WindowEvent::Focused(false) => {
+                self.ui.cancel();
+                self.shift = false;
+            }
+            WindowEvent::ModifiersChanged(modifiers) => self.shift = modifiers.state().shift_key(),
             WindowEvent::MouseInput {
-                state: ElementState::Pressed,
+                state,
                 button: MouseButton::Left,
                 ..
-            } => self.command(Command::Advance),
+            } => {
+                self.pointer();
+                if state == ElementState::Pressed {
+                    self.ui.press();
+                } else if let Some(action) = self.ui.release() {
+                    self.action(action);
+                }
+            }
             WindowEvent::KeyboardInput { event, .. }
                 if event.state == ElementState::Pressed && !event.repeat =>
             {
                 match event.physical_key {
-                    PhysicalKey::Code(KeyCode::Space) => self.command(Command::Advance),
+                    PhysicalKey::Code(KeyCode::Space | KeyCode::Enter) => {
+                        if let Some(action) = self.ui.buttons.focused() {
+                            self.action(action);
+                        }
+                    }
+                    PhysicalKey::Code(KeyCode::Tab) => self.ui.navigate(self.shift),
+                    PhysicalKey::Code(KeyCode::ArrowLeft | KeyCode::ArrowUp) => {
+                        self.ui.navigate(true)
+                    }
+                    PhysicalKey::Code(KeyCode::ArrowRight | KeyCode::ArrowDown) => {
+                        self.ui.navigate(false)
+                    }
                     PhysicalKey::Code(KeyCode::Digit1) => self.command(Command::Choose(0)),
                     PhysicalKey::Code(KeyCode::Digit2) => self.command(Command::Choose(1)),
                     PhysicalKey::Code(KeyCode::KeyR) => self.command(Command::Reset),
@@ -186,11 +262,14 @@ fn main() -> Result<()> {
         })
         .transpose()?;
     if let Some(file) = &mut record {
-        writeln!(file, "elapsed_s,tick,page,draw_fps,sim_hz")?;
+        writeln!(file, "elapsed_s,tick,page,draw_fps,sim_hz,ui_redraws,cached_glyphs,ui_texture_changed,ui_vertex_bytes,window_width,window_height,focused")?;
     }
     let now = Instant::now();
     let mut app = App {
-        runtime: Runtime::start(Dialogue::default())?,
+        runtime: Runtime::start(story::build()?)?,
+        ui: picture::Ui::new()?,
+        cursor: None,
+        shift: false,
         view: None,
         page: None,
         next_draw: now,

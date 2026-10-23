@@ -1,106 +1,198 @@
-//! Deliberately small ASCII presentation for the composition example; not a text engine.
-use charon_dialogue::{Frame, Page};
-const W: usize = 640;
-const H: usize = 360;
-fn glyph(c: char) -> [u8; 7] {
-    match c {
-        'A' => [14, 17, 17, 31, 17, 17, 17],
-        'B' => [30, 17, 17, 30, 17, 17, 30],
-        'C' => [14, 17, 16, 16, 16, 17, 14],
-        'D' => [30, 17, 17, 17, 17, 17, 30],
-        'E' => [31, 16, 16, 30, 16, 16, 31],
-        'F' => [31, 16, 16, 30, 16, 16, 16],
-        'G' => [14, 17, 16, 23, 17, 17, 14],
-        'H' => [17, 17, 17, 31, 17, 17, 17],
-        'I' => [14, 4, 4, 4, 4, 4, 14],
-        'J' => [7, 2, 2, 2, 18, 18, 12],
-        'K' => [17, 18, 20, 24, 20, 18, 17],
-        'L' => [16, 16, 16, 16, 16, 16, 31],
-        'M' => [17, 27, 21, 21, 17, 17, 17],
-        'N' => [17, 25, 21, 19, 17, 17, 17],
-        'O' => [14, 17, 17, 17, 17, 17, 14],
-        'P' => [30, 17, 17, 30, 16, 16, 16],
-        'Q' => [14, 17, 17, 17, 21, 18, 13],
-        'R' => [30, 17, 17, 30, 20, 18, 17],
-        'S' => [15, 16, 16, 14, 1, 1, 30],
-        'T' => [31, 4, 4, 4, 4, 4, 4],
-        'U' => [17, 17, 17, 17, 17, 17, 14],
-        'V' => [17, 17, 17, 17, 17, 10, 4],
-        'W' => [17, 17, 17, 21, 21, 21, 10],
-        'X' => [17, 17, 10, 4, 10, 17, 17],
-        'Y' => [17, 17, 10, 4, 4, 4, 4],
-        'Z' => [31, 1, 2, 4, 8, 16, 31],
-        '1' => [4, 12, 4, 4, 4, 4, 14],
-        '2' => [14, 17, 1, 2, 4, 8, 31],
-        ':' => [0, 4, 4, 0, 4, 4, 0],
-        '.' => [0, 0, 0, 0, 0, 12, 12],
-        _ => [0; 7],
-    }
+//! Game-specific panel layout and scenery composed from the reusable UI plugin.
+use crate::story::{self, Page};
+use charon_assets::Texture;
+use charon_dialogue::Frame;
+use charon_render::{Result, SpriteTexture, WindowRenderer};
+use charon_ui::{Button, Buttons, Canvas, Rect, Text};
+
+pub const WIDTH: usize = 640;
+pub const HEIGHT: usize = 360;
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Action {
+    Continue,
+    Choose(usize),
+    Reset,
 }
-fn rect(image: &mut [u8], x: usize, y: usize, w: usize, h: usize, color: [u8; 4]) {
-    for py in y..(y + h).min(H) {
-        for px in x..(x + w).min(W) {
-            image[(py * W + px) * 4..(py * W + px + 1) * 4].copy_from_slice(&color);
-        }
-    }
+pub struct Ui {
+    pub buttons: Buttons<Action>,
+    text: Text,
+    texture: Option<SpriteTexture>,
+    page: Option<Page>,
+    dirty: bool,
+    pub redraws: u64,
 }
-fn text(image: &mut [u8], x: usize, y: usize, content: &str, color: [u8; 4]) {
-    let (mut px, mut py) = (x, y);
-    for c in content.chars() {
-        if c == '\n' {
-            px = x;
-            py += 24;
-            continue;
-        }
-        for (row, bits) in glyph(c).into_iter().enumerate() {
-            for col in 0..5 {
-                if bits & (1 << (4 - col)) != 0 {
-                    rect(image, px + col * 2, py + row * 2, 2, 2, color);
-                }
+impl Ui {
+    pub fn new() -> Result<Self> {
+        let mut text = Text::new(include_bytes!("../assets/MPLUS1p-Regular.ttf"))?;
+        // Validate all game text before opening the window, not only visited pages.
+        for node in story::nodes() {
+            text.layout(&node.text, 20., 536.)?;
+            for choice in node.choices.iter() {
+                text.layout(&choice.label, 18., 244.)?;
             }
         }
-        px += 12;
+        Ok(Self {
+            buttons: Buttons::default(),
+            text,
+            texture: None,
+            page: None,
+            dirty: true,
+            redraws: 0,
+        })
+    }
+    pub fn cached_glyphs(&self) -> usize {
+        self.text.cached_glyphs()
+    }
+    pub fn texture(&self) -> &SpriteTexture {
+        self.texture.as_ref().expect("render UI before presenting")
+    }
+    pub fn set_page(&mut self, frame: &Frame<Page>) -> Result<()> {
+        if self.page == Some(frame.page) {
+            return Ok(());
+        }
+        let mut buttons = Vec::new();
+        if !frame.choices.is_empty() {
+            for (index, choice) in frame.choices.iter().enumerate() {
+                buttons.push(Button {
+                    id: Action::Choose(index),
+                    rect: Rect::new(44. + index as f32 * 280., 284., 272., 44.)?,
+                    label: format!("{}  {}", index + 1, choice.label),
+                });
+            }
+        } else {
+            buttons.push(Button {
+                id: if frame.can_advance {
+                    Action::Continue
+                } else {
+                    Action::Reset
+                },
+                rect: Rect::new(388., 284., 208., 44.)?,
+                label: if frame.can_advance {
+                    "次へ"
+                } else {
+                    "最初から"
+                }
+                .into(),
+            });
+        }
+        self.buttons.replace(buttons)?;
+        self.page = Some(frame.page);
+        self.dirty = true;
+        Ok(())
+    }
+    pub fn pointer_move(&mut self, point: Option<[f32; 2]>) {
+        let before = self.buttons.hovered();
+        self.buttons.pointer_move(point);
+        self.dirty |= before != self.buttons.hovered();
+    }
+    pub fn press(&mut self) {
+        self.buttons.press();
+        self.dirty = true;
+    }
+    pub fn release(&mut self) -> Option<Action> {
+        self.dirty = true;
+        self.buttons.release()
+    }
+    pub fn cancel(&mut self) {
+        self.buttons.cancel();
+        self.dirty = true;
+    }
+    pub fn navigate(&mut self, backwards: bool) {
+        self.buttons.navigate(backwards);
+        self.dirty = true;
+    }
+    pub fn render(&mut self, view: &WindowRenderer, frame: &Frame<Page>) -> Result<bool> {
+        if !self.dirty {
+            return Ok(false);
+        }
+        let mut canvas = Canvas::new(WIDTH, HEIGHT)?;
+        let all = Rect::new(0., 0., WIDTH as f32, HEIGHT as f32)?;
+        let accent = match frame.page {
+            Page::River => [95, 199, 211, 255],
+            Page::Hill => [167, 204, 128, 255],
+            _ => [231, 186, 110, 255],
+        };
+        let title = self.text.layout("分かれ道の物語", 24., 540.)?;
+        self.text
+            .paint(&mut canvas, &title, [40., 37.], accent, all);
+        let help = self.text.layout(
+            "クリック / Enter：決定　Tab / 矢印：選択　R：最初から",
+            12.,
+            560.,
+        )?;
+        self.text
+            .paint(&mut canvas, &help, [40., 76.], [190, 199, 214, 255], all);
+        canvas.fill(Rect::new(28., 152., 584., 190.)?, [17, 25, 40, 255]);
+        canvas.fill(Rect::new(28., 152., 584., 2.)?, accent);
+        let body = self.text.layout(&frame.text, 20., 536.)?;
+        if body.height > 116. {
+            return Err("sample dialogue text exceeds its panel; paginate this game node".into());
+        }
+        self.text.paint(
+            &mut canvas,
+            &body,
+            [52., 164.],
+            [229, 234, 242, 255],
+            Rect::new(52., 164., 536., 116.)?,
+        );
+        for button in self.buttons.items() {
+            let [x, y, w, h] = button.rect.xywh();
+            let focused = self.buttons.focused() == Some(button.id);
+            let hovered = self.buttons.hovered() == Some(button.id);
+            canvas.fill(
+                button.rect,
+                if focused {
+                    [65, 81, 104, 255]
+                } else if hovered {
+                    [47, 63, 84, 255]
+                } else {
+                    [31, 44, 62, 255]
+                },
+            );
+            if focused {
+                canvas.fill(Rect::new(x, y, w, 2.)?, accent);
+                canvas.fill(Rect::new(x, y + h - 2., w, 2.)?, accent);
+            }
+            let label = self.text.layout(&button.label, 18., w - 24.)?;
+            self.text.paint(
+                &mut canvas,
+                &label,
+                [x + (w - label.width) / 2., y + (h - label.height) / 2.],
+                [245, 240, 224, 255],
+                button.rect,
+            );
+        }
+        let image = Texture::from_rgba(WIDTH as u32, HEIGHT as u32, canvas.into_rgba())?;
+        self.texture = Some(view.upload_sprite_texture(&image));
+        self.dirty = false;
+        self.redraws += 1;
+        Ok(true)
     }
 }
-pub fn draw(frame: &Frame) -> Vec<u8> {
-    let mut image = vec![0; W * H * 4];
-    for y in 0..H {
-        rect(
-            &mut image,
-            0,
-            y,
-            W,
-            1,
-            [
-                14 + (y / 20) as u8,
-                20 + (y / 16) as u8,
-                40 + (y / 10) as u8,
-                255,
-            ],
-        );
+pub fn background(page: Page) -> Vec<u8> {
+    let mut rgba = vec![0; WIDTH * HEIGHT * 4];
+    for y in 0..HEIGHT {
+        for x in 0..WIDTH {
+            let hill = 118 + ((x as isize - 400).unsigned_abs() / 7).min(70);
+            let color = if y >= hill {
+                [35, 53, 72, 255]
+            } else {
+                [
+                    14 + (y / 20) as u8,
+                    20 + (y / 16) as u8,
+                    40 + (y / 10) as u8,
+                    255,
+                ]
+            };
+            rgba[(y * WIDTH + x) * 4..][..4].copy_from_slice(&color);
+        }
     }
-    let accent = match frame.page {
-        Page::River => [95, 199, 211, 255],
-        Page::Hill => [167, 204, 128, 255],
-        _ => [231, 186, 110, 255],
-    };
-    rect(&mut image, 36, 38, 4, 34, accent);
-    text(&mut image, 54, 40, "CHARON", accent);
-    text(
-        &mut image,
-        54,
-        62,
-        "A CROSSROADS STORY",
-        [190, 199, 214, 255],
-    );
-    // Simple scenery is intentionally independent of cell simulation.
-    for x in 0..W {
-        let hill = 140 + ((x as isize - 400).unsigned_abs() / 7).min(70);
-        rect(&mut image, x, hill, 1, 90, [35, 53, 72, 255]);
+    if page == Page::River {
+        for y in 118..152 {
+            for x in 390..440 {
+                rgba[(y * WIDTH + x) * 4..][..4].copy_from_slice(&[58, 123, 154, 255]);
+            }
+        }
     }
-    rect(&mut image, 30, 205, 580, 130, [17, 25, 40, 255]);
-    rect(&mut image, 30, 205, 580, 2, accent);
-    text(&mut image, 48, 224, frame.text, [229, 234, 242, 255]);
-    text(&mut image, 48, 286, frame.prompt, accent);
-    image
+    rgba
 }
