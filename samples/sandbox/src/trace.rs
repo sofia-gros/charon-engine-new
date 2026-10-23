@@ -77,6 +77,7 @@ fn encode(command: &Command) -> String {
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
         Command::Jump => "jump".into(),
         Command::Fire => "fire".into(),
+        Command::FireAt([x, y]) => format!("fire-at:{:08x}:{:08x}", x.to_bits(), y.to_bits()),
         Command::ToggleSand => "sand".into(),
         Command::Pause => "pause".into(),
         Command::Step => "step".into(),
@@ -100,7 +101,7 @@ fn decode(text: &str) -> Result<Command, String> {
             height: h.parse().map_err(|_| bad())?,
             material: m.parse().map_err(|_| bad())?,
         }),
-        [kind @ ("image" | "erase-image"), x, y] => {
+        [kind @ ("image" | "erase-image" | "fire-at"), x, y] => {
             let position = [x, y].map(|v| {
                 u32::from_str_radix(v, 16)
                     .map(f32::from_bits)
@@ -113,10 +114,10 @@ fn decode(text: &str) -> Result<Command, String> {
             if !point.into_iter().all(f32::is_finite) {
                 return Err(bad());
             }
-            if *kind == "image" {
-                Command::PlaceImage(point)
-            } else {
-                Command::EraseImage(point)
+            match *kind {
+                "image" => Command::PlaceImage(point),
+                "fire-at" => Command::FireAt(point),
+                _ => Command::EraseImage(point),
             }
         }
         ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
@@ -346,7 +347,7 @@ mod tests {
                 0 => vec![Command::Explore(42)],
                 1 => vec![Command::Right(true)],
                 15 => vec![Command::Right(false), Command::Dig(true)],
-                25 => vec![Command::Dig(false), Command::Fire],
+                25 => vec![Command::Dig(false), Command::FireAt([250.25, 150.5])],
                 30 => vec![Command::Terrain(SandCommand::FillRect {
                     x: 120,
                     y: 160,

@@ -44,6 +44,7 @@ fn submit_draw_command<S: charon_runtime::Simulation<Command = GameCommand>>(
 
 #[derive(Clone, Copy)]
 enum Tool {
+    Wand,
     Brush,
     Blocks,
     Images,
@@ -51,6 +52,7 @@ enum Tool {
 impl Tool {
     fn label(self) -> &'static str {
         match self {
+            Self::Wand => "Q WAND CLICK FIRE 3 BUILD",
             Self::Brush => "1 SAND 2 ASH 3 BLOCK 4 IMAGE 5 WATER 6 OIL L SEA",
             Self::Blocks => "3 BLOCK GRID 8",
             Self::Images => "4 IMAGE FREE",
@@ -126,7 +128,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed; Q wand, click aims and fires\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -181,6 +183,11 @@ impl App {
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
+        let tool = if options.explore.is_some() {
+            Tool::Wand
+        } else {
+            Tool::Brush
+        };
         Ok(Self {
             material_visual: material_view::MaterialVisual::new()?,
             actor,
@@ -190,7 +197,7 @@ impl App {
             cursor: None,
             buttons: [false; 3],
             brush: SAND,
-            tool: Tool::Brush,
+            tool,
             clicks: [false; 3],
             follow_camera: false,
             zoom: 1.,
@@ -259,6 +266,7 @@ impl App {
             )
         });
         let preview = match self.tool {
+            Tool::Wand => pointer.map(|[x, y]| [x - 0.5, y - 0.5, 1., 1.]),
             Tool::Brush => None,
             Tool::Blocks => pointer
                 .map(|point| {
@@ -277,6 +285,14 @@ impl App {
         };
         if let Some([x, y]) = pointer {
             match self.tool {
+                Tool::Wand => {
+                    if self.clicks[0] {
+                        self.rejected_edits += u64::from(!submit_draw_command(
+                            &self.runtime,
+                            GameCommand::FireAt([x, y]),
+                        )?);
+                    }
+                }
                 Tool::Brush => {
                     for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL])
                     {
@@ -351,10 +367,10 @@ impl App {
         let input_label = if self.rejected_edits == 0 {
             snapshot.frame.exploration_seed.map_or_else(
                 || self.tool.label().to_owned(),
-                |seed| format!("CAVE {seed} G NEW R RETRY 3 BUILD"),
+                |seed| format!("CAVE {seed} Q WAND 3 BUILD R RETRY"),
             )
         } else {
-            format!("QUEUE FULL: {} EDITS NOT APPLIED", self.rejected_edits)
+            format!("QUEUE FULL: {} ACTIONS NOT APPLIED", self.rejected_edits)
         };
         let overlays = debug_view::overlays(
             &snapshot.frame,
@@ -622,6 +638,7 @@ impl ApplicationHandler for App {
                         self.game_command(GameCommand::Right(down))
                     }
                     PhysicalKey::Code(KeyCode::KeyF) => self.game_command(GameCommand::Dig(down)),
+                    PhysicalKey::Code(KeyCode::KeyQ) if down => self.tool = Tool::Wand,
                     PhysicalKey::Code(KeyCode::Digit1) if down => {
                         self.brush = SAND;
                         self.tool = Tool::Brush;

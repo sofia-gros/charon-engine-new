@@ -17,6 +17,7 @@ pub enum Command {
     Right(bool),
     Jump,
     Fire,
+    FireAt([f32; 2]),
     Dig(bool),
     ToggleSand,
     Pause,
@@ -95,6 +96,7 @@ pub struct Game {
     projectiles: Projectiles,
     sparks: Vec<Spark>,
     fire_pending: bool,
+    fire_target: Option<[f32; 2]>,
     impacts: u64,
     player: Option<Body>,
     previous_player: Option<[f32; 2]>,
@@ -157,6 +159,7 @@ impl Game {
             projectiles: Projectiles::default(),
             sparks: vec![],
             fire_pending: false,
+            fire_target: None,
             impacts: 0,
             player: play
                 .then(|| Body::new(width as f32 / 4.0, (height * 2 / 3 - 18) as f32, 7.0, 12.0)),
@@ -262,6 +265,12 @@ impl Game {
             mix(u64::from(player.grounded));
             mix(u64::from(player.embedded));
         }
+        if let Some(target) = self.fire_target {
+            mix(0x61696d);
+            for value in target {
+                mix(u64::from(value.to_bits()));
+            }
+        }
         // Only authoritative projectile state enters replay checks; cosmetic sparks
         // have no collision and cannot alter terrain or actors.
         if self.fire_pending || self.impacts != 0 || !self.projectiles.shots().is_empty() {
@@ -326,19 +335,48 @@ impl Game {
             spark.life > 0
         });
         if self.fire_pending {
-            let position = self
-                .player
-                .map_or([self.width as f32 / 4., self.height as f32 / 4.], |p| {
-                    [p.x() + p.width() + 0.5, p.y() + p.height() / 2.]
-                });
+            let direction = if self.exploration_seed.is_some() {
+                self.facing as f32
+            } else {
+                1.
+            };
+            let position =
+                self.player
+                    .map_or([self.width as f32 / 4., self.height as f32 / 4.], |p| {
+                        let side = self.fire_target.map_or(direction, |target| {
+                            if target[0] < p.x() + p.width() / 2. {
+                                -1.
+                            } else {
+                                1.
+                            }
+                        });
+                        [
+                            if side < 0. {
+                                p.x() - 0.5
+                            } else {
+                                p.x() + p.width() + 0.5
+                            },
+                            p.y() + p.height() / 2.,
+                        ]
+                    });
+            let velocity = self.fire_target.map_or([12. * direction, 0.], |target| {
+                let delta = [target[0] - position[0], target[1] - position[1]];
+                let length = delta[0].hypot(delta[1]);
+                if length < 0.001 {
+                    [12. * direction, 0.]
+                } else {
+                    delta.map(|v| v / length * 12.)
+                }
+            });
             self.projectiles
                 .spawn(Shot {
                     position,
-                    velocity: [12., 0.],
+                    velocity,
                     remaining_ticks: 60,
                 })
                 .expect("one shot per tick with a 60 tick lifetime stays below capacity");
             self.fire_pending = false;
+            self.fire_target = None;
         }
         let world = &self.world;
         let impacts = self.projectiles.step(|x, y| {
@@ -437,6 +475,7 @@ impl Simulation for Game {
                             self.projectiles = Projectiles::default();
                             self.sparks.clear();
                             self.fire_pending = false;
+                            self.fire_target = None;
                             self.impacts = 0;
                             self.left = false;
                             self.right = false;
@@ -488,7 +527,21 @@ impl Simulation for Game {
                 Command::Left(down) => self.left = down,
                 Command::Right(down) => self.right = down,
                 Command::Jump => self.jump_pending = true,
-                Command::Fire => self.fire_pending = true,
+                Command::Fire => {
+                    self.fire_pending = true;
+                    self.fire_target = None;
+                }
+                Command::FireAt(target) => {
+                    if target
+                        .into_iter()
+                        .all(|v| v.is_finite() && v.abs() <= 1_000_000.)
+                    {
+                        self.fire_pending = true;
+                        self.fire_target = Some(target);
+                    } else {
+                        self.image_error = Some("INVALID AIM POSITION");
+                    }
+                }
                 Command::Dig(down) => self.dig = down,
                 Command::ToggleSand => self.sand_solid = !self.sand_solid,
                 Command::Pause => self.paused = !self.paused,
@@ -1212,5 +1265,38 @@ mod tests {
             assert_eq!(game.exploration_seed, Some(43));
             assert_ne!(game.world.checksum(), cells);
         }
+    }
+    #[test]
+    fn aimed_shots_use_world_coordinates_and_wait_for_single_step() {
+        for target in [[120., 74.], [5., 74.], [23., 40.]] {
+            let mut game = Game::new(160, 120, 1, true).unwrap();
+            game.step(vec![Command::Explore(42), Command::Pause]);
+            let reserved = game.step(vec![Command::FireAt(target)]);
+            assert!(reserved.shots.is_empty());
+            assert_eq!(reserved.simulation_tick, 0);
+            assert!(game.fire_pending);
+            let first = game.step(vec![Command::Step]);
+            assert_eq!(first.shots.len(), 1);
+            let shot = game.projectiles.shots()[0];
+            let side = if target[0] < 23.5 { -1. } else { 1. };
+            let muzzle = [if side < 0. { 19.5 } else { 27.5 }, 74.];
+            let delta = [target[0] - muzzle[0], target[1] - muzzle[1]];
+            assert!((shot.velocity[0] * delta[1] - shot.velocity[1] * delta[0]).abs() < 0.001);
+            assert!((shot.velocity[0].hypot(shot.velocity[1]) - 12.).abs() < 0.001);
+            assert!(!game.fire_pending && game.fire_target.is_none());
+            let frozen = game.step(vec![]);
+            assert_eq!(frozen.shots, first.shots);
+        }
+        let mut game = Game::new(160, 120, 1, true).unwrap();
+        game.step(vec![Command::Explore(42)]);
+        let floor = game.world.material_at(26, 80);
+        assert_eq!(floor, Some(WALL));
+        let hit = game.step(vec![Command::FireAt([25., 105.])]);
+        assert_eq!(hit.impacts, 1);
+        assert!(hit.shots.is_empty());
+        assert_eq!(game.world.material_at(26, 80), Some(AIR));
+        let invalid = game.step(vec![Command::FireAt([f32::NAN, 0.])]);
+        assert_eq!(invalid.image_error, Some("INVALID AIM POSITION"));
+        assert!(!game.fire_pending);
     }
 }
