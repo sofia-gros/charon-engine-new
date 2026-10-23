@@ -1,0 +1,172 @@
+{
+  "benchmark": "Workgroup-local vectors and coarse scratch for small GPU pressure systems",
+  "platform": "Linux cloud, SwiftShader Vulkan CPU software adapter; no hardware GPU",
+  "profile": "dev; charon-fluid opt-level=2",
+  "baseline_engine_revision": "dbd585c0142d0a56f284f0cacff39a086f37b1bd",
+  "driver": "plugins/charon-fluid/examples/wave-cost.rs",
+  "driver_sha256": "beac60e45e49574aaccd0d32b47e6d1ca3eb08852b306f3cba5d9baa9035b7cc",
+  "after_source_sha256": "d7bf74e11a3a4fb0600e829cbbe54428d8eb654d9dcb70d44e01f989f4c1aeed",
+  "command": "cargo run --locked -p charon-fluid --features gpu --example wave-cost",
+  "runs_per_version": 2,
+  "measurement_order": [
+    "before",
+    "after",
+    "after",
+    "before"
+  ],
+  "conditions": {
+    "grid": [
+      128,
+      100
+    ],
+    "water": 364,
+    "oil": 84,
+    "configured_cpu_workers": 4,
+    "ticks_per_run": 240,
+    "dt_s": 0.016666666666666666,
+    "software_pressure_lanes": 4,
+    "hardware_default_lanes": 128,
+    "input": "Same tick-indexed forcing and material settings from wave-cost before/after"
+  },
+  "change": "For <=1024 pressure rows, keep residual/preconditioned residual/search direction plus coarse RHS/correction in workgroup memory (<16 KiB). Invocation-owned pressure/product remain in storage. Synchronize shared workgroup data rather than global storage on each PCG stage. Larger cooperative systems keep the storage variant; distributed multigrid is unchanged.",
+  "summary": {
+    "tick_mean_ms": {
+      "before": 35.504812216666664,
+      "after": 30.002854216666666,
+      "reduction_percent": 15.496372622461784
+    },
+    "tick_p95_ms": {
+      "before": 67.4499985,
+      "after": 59.3587515,
+      "reduction_percent": 11.99591872489072
+    },
+    "pressure_host_total_ms": {
+      "before": 7672.4446345,
+      "after": 6420.953639499998,
+      "reduction_percent": 16.31150245610811
+    },
+    "pressure_kernel_total_ms": {
+      "before": 6625.257087000002,
+      "after": 5457.290214999999,
+      "reduction_percent": 17.6290045301302
+    }
+  },
+  "runs": {
+    "order": [
+      "before",
+      "after",
+      "after",
+      "before"
+    ],
+    "before": [
+      {
+        "adapter_identity": "gpu-38d8b6827bf27f4b",
+        "ticks": 240,
+        "grid": [
+          128,
+          100
+        ],
+        "workers": 4,
+        "water": 364,
+        "oil": 84,
+        "tick_mean_ms": 34.397046962500006,
+        "tick_p95_ms": 64.722497,
+        "tick_max_ms": 81.63327,
+        "pressure_host_total_ms": 7464.146336000002,
+        "pressure_kernel_total_ms": 6476.016795000003,
+        "velocity_host_total_ms": 534.8200939999998,
+        "transport_total_ms": 137.13736199999994,
+        "pressure_iterations": 24471,
+        "substeps": 530,
+        "upload_bytes": 88847244,
+        "readback_bytes": 19175664,
+        "max_divergence": 4.324431301938603e-08,
+        "velocity_kernel_total_ms": 170.72027600000007,
+        "velocity_extension_total_ms": 48.63626699999999,
+        "physical_hash": "1b3ea1e1ebbebcc5"
+      },
+      {
+        "adapter_identity": "gpu-38d8b6827bf27f4b",
+        "ticks": 240,
+        "grid": [
+          128,
+          100
+        ],
+        "workers": 4,
+        "water": 364,
+        "oil": 84,
+        "tick_mean_ms": 36.61257747083332,
+        "tick_p95_ms": 70.17750000000001,
+        "tick_max_ms": 105.198579,
+        "pressure_host_total_ms": 7880.742932999998,
+        "pressure_kernel_total_ms": 6774.497379000001,
+        "velocity_host_total_ms": 631.6347699999999,
+        "transport_total_ms": 142.56232200000005,
+        "pressure_iterations": 24471,
+        "substeps": 530,
+        "upload_bytes": 88847244,
+        "readback_bytes": 19175664,
+        "max_divergence": 4.324431301938603e-08,
+        "velocity_kernel_total_ms": 177.443787,
+        "velocity_extension_total_ms": 53.241368000000016,
+        "physical_hash": "1b3ea1e1ebbebcc5"
+      }
+    ],
+    "after": [
+      {
+        "adapter_identity": "gpu-38d8b6827bf27f4b",
+        "ticks": 240,
+        "grid": [
+          128,
+          100
+        ],
+        "workers": 4,
+        "water": 364,
+        "oil": 84,
+        "tick_mean_ms": 30.986727058333347,
+        "tick_p95_ms": 60.028696,
+        "tick_max_ms": 85.575591,
+        "pressure_host_total_ms": 6615.888953999996,
+        "pressure_kernel_total_ms": 5566.691535999996,
+        "velocity_host_total_ms": 541.8101779999998,
+        "transport_total_ms": 147.42994499999983,
+        "pressure_iterations": 24471,
+        "substeps": 530,
+        "upload_bytes": 88847244,
+        "readback_bytes": 19175664,
+        "max_divergence": 4.324431301938603e-08,
+        "velocity_kernel_total_ms": 164.34359400000008,
+        "velocity_extension_total_ms": 51.41405699999999,
+        "physical_hash": "1b3ea1e1ebbebcc5"
+      },
+      {
+        "adapter_identity": "gpu-38d8b6827bf27f4b",
+        "ticks": 240,
+        "grid": [
+          128,
+          100
+        ],
+        "workers": 4,
+        "water": 364,
+        "oil": 84,
+        "tick_mean_ms": 29.018981374999985,
+        "tick_p95_ms": 58.688807000000004,
+        "tick_max_ms": 83.31769999999999,
+        "pressure_host_total_ms": 6226.018324999998,
+        "pressure_kernel_total_ms": 5347.888894000003,
+        "velocity_host_total_ms": 492.934893,
+        "transport_total_ms": 129.86527900000002,
+        "pressure_iterations": 24471,
+        "substeps": 530,
+        "upload_bytes": 88847244,
+        "readback_bytes": 19175664,
+        "max_divergence": 4.324431301938603e-08,
+        "velocity_kernel_total_ms": 157.36149199999997,
+        "velocity_extension_total_ms": 45.966609000000005,
+        "physical_hash": "1b3ea1e1ebbebcc5"
+      }
+    ]
+  },
+  "validation": "Rolling physical hash over all 240 ticks, pressure iterations, substeps, maximum divergence and transfer bytes match across every run. Every tick checks separate phase volumes within 1e-7 cell and divergence below 1e-3. Fourteen fluid tests pass; new direct storage/cached comparisons are bitwise equal for 4/128 lanes at 1025, 1024, 997 and 31 rows and for 521 disconnected components.",
+  "scope": "Two interleaved runs per version, including first-use compute and allocation. Software-adapter timing varies; raw runs are retained. No hardware GPU FPS or stable 60 Hz claim. Rendered GIFs use wall-clock input and are separate regressions."
+}

@@ -275,9 +275,12 @@ EndSection
                 at(.5)
                 inputs.key(ord("k"))
                 at(1)
-                inputs.key(ord("="))
                 if sample == "cup":
                     inputs.key(ord("="))
+                    inputs.key(ord("="))
+                # The wave driver holds motion keys in wall time. Faster
+                # simulation can move the cup anywhere in the world, so retain
+                # a full-world view and keep the whole-cup assertion below.
                 at(2)
                 inputs.hold(ord("d"),True)
                 at(4)

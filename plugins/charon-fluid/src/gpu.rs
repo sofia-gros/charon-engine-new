@@ -42,11 +42,14 @@ pub(super) struct Velocity {
     pub v: Vec<f64>,
     pub work: Work,
 }
+const PRESSURE_CACHE_SIZE: usize = 1024;
+
 pub struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
     velocity: wgpu::ComputePipeline,
     pressure: wgpu::ComputePipeline,
+    pressure_cached: wgpu::ComputePipeline,
     tiled: tiled::TiledPressure,
     info: wgpu::AdapterInfo,
     scratch: Mutex<Scratch>,
@@ -64,6 +67,12 @@ impl GpuContext {
     #[cfg(test)]
     pub(super) fn with_pressure_lanes(lanes: u32) -> Result<Self, String> {
         pollster::block_on(Self::create(true, Some(lanes)))
+    }
+    #[cfg(test)]
+    pub(super) fn with_pressure_storage(lanes: u32) -> Result<Self, String> {
+        let mut gpu = Self::with_pressure_lanes(lanes)?;
+        gpu.pressure_cached = gpu.pressure.clone();
+        Ok(gpu)
     }
     async fn create(timing: bool, pressure_lanes: Option<u32>) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
@@ -125,6 +134,11 @@ impl GpuContext {
             include_str!("pressure.wgsl"),
             &[("LANES", lanes)],
         );
+        let pressure_cached = pipeline(
+            "workgroup-cached pressure CG",
+            include_str!("pressure.wgsl"),
+            &[("LANES", lanes), ("CACHE_SIZE", PRESSURE_CACHE_SIZE as f64)],
+        );
         let tiled = tiled::TiledPressure::new(&device, lanes);
         if let Some(e) = scope.pop().await {
             return Err(e.to_string());
@@ -148,6 +162,7 @@ impl GpuContext {
             queue,
             velocity,
             pressure,
+            pressure_cached,
             tiled,
             info,
             scratch: Mutex::new(Default::default()),
@@ -616,6 +631,8 @@ impl GpuContext {
             );
             self.queue.write_buffer(&right_buffer, 0, &right_bytes);
             let size = (n * 20) as u64;
+            // Only p and product[0] (iteration count) are result fields; the
+            // cached kernel keeps current r/z/d in workgroup memory.
             // Kernel initializes every work entry. Only actual rows are bound,
             // so a growing buffer never exposes stale capacity to arrayLength.
             let work = self.buffer(
@@ -634,7 +651,11 @@ impl GpuContext {
             );
             total_work.setup_ms += setup_started.elapsed().as_secs_f64() * 1000.;
             let (result, mut work) = self.run(
-                &self.pressure,
+                if n <= PRESSURE_CACHE_SIZE {
+                    &self.pressure_cached
+                } else {
+                    &self.pressure
+                },
                 &[
                     (&data_buffer, data.len() as u64),
                     (&work, size),

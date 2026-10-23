@@ -766,3 +766,69 @@ fn gpu_velocity_active_rectangle_matches_reference_and_clears_old_faces() {
         }
     }
 }
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_pressure_workgroup_cache_matches_storage_at_capacity_boundary() {
+    for lanes in [4, 128] {
+        let cached = gpu::GpuContext::with_pressure_lanes(lanes).unwrap();
+        let storage = gpu::GpuContext::with_pressure_storage(lanes).unwrap();
+        // Grow storage first, then cross the cache boundary and shrink again.
+        for n in [1025, 1024, 997, 31] {
+            let rows: Vec<_> = (0..n)
+                .map(|i| {
+                    let mut adj = [usize::MAX; 4];
+                    let mut a = [0.; 4];
+                    let density = |j: usize| 0.8 + (j * 17 % 7) as f64 * 0.1;
+                    if i > 0 {
+                        adj[0] = i - 1;
+                        a[0] = 2. / (density(i) + density(i - 1));
+                    }
+                    if i + 1 < n {
+                        adj[1] = i + 1;
+                        a[1] = 2. / (density(i) + density(i + 1));
+                    }
+                    (adj, a, a.iter().sum::<f64>() + 0.25)
+                })
+                .collect();
+            let expected: Vec<_> = (0..n).map(|i| (i * 19 % 53) as f64 / 53.).collect();
+            let rhs: Vec<_> = rows
+                .iter()
+                .enumerate()
+                .map(|(i, (adj, a, d))| {
+                    d * expected[i]
+                        - (0..4)
+                            .filter(|&k| adj[k] != usize::MAX)
+                            .map(|k| a[k] * expected[adj[k]])
+                            .sum::<f64>()
+                })
+                .collect();
+            let mut p = vec![0.; n];
+            let mut reference = vec![0.; n];
+            let (iterations, work) = cached.solve(&rows, &rhs, &mut p).unwrap();
+            let (count, baseline) = storage.solve(&rows, &rhs, &mut reference).unwrap();
+            assert_eq!(p, reference, "cache changed pressure lanes={lanes} n={n}");
+            assert_eq!(iterations, count);
+            assert_eq!(
+                (work.upload_bytes, work.readback_bytes, work.dispatches),
+                (
+                    baseline.upload_bytes,
+                    baseline.readback_bytes,
+                    baseline.dispatches
+                )
+            );
+            assert!(p.iter().zip(&expected).all(|(a, b)| (a - b).abs() < 1e-6));
+        }
+        // A fragmented system exceeding the coarse-grid cap still uses Jacobi
+        // inside the cached path; coarse-cache entries must not be read here.
+        let n = 521;
+        let rows = vec![([usize::MAX; 4], [0.; 4], 2.); n];
+        let rhs: Vec<_> = (0..n).map(|i| (i % 17) as f64).collect();
+        let mut p = vec![0.; n];
+        let mut reference = vec![0.; n];
+        cached.solve(&rows, &rhs, &mut p).unwrap();
+        storage.solve(&rows, &rhs, &mut reference).unwrap();
+        assert_eq!(p, reference);
+    }
+}
