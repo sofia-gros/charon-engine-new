@@ -56,6 +56,7 @@ fn encode(command: &Command) -> String {
         Command::CupScene => "cup".into(),
         Command::DamScene => "dam".into(),
         Command::AddOil => "oil".into(),
+        Command::Explore(seed) => format!("explore:{seed}"),
         Command::Terrain(SandCommand::Paint { x, y, material }) => {
             format!("paint:{x}:{y}:{material}")
         }
@@ -118,6 +119,7 @@ fn decode(text: &str) -> Result<Command, String> {
                 Command::EraseImage(point)
             }
         }
+        ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
         ["cup"] => Command::CupScene,
         ["dam"] => Command::DamScene,
         ["oil"] => Command::AddOil,
@@ -331,6 +333,37 @@ mod tests {
         assert!(replay(&path, 1).unwrap_err().contains("tick 30"));
         std::fs::write(&path, "charon-input-v1 160 120 4 1\n1|abc|jump\n").unwrap();
         assert!(replay(&path, 1).unwrap_err().contains("invalid record"));
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn generated_map_and_retry_replay_with_other_worker_counts() {
+        let path =
+            std::env::temp_dir().join(format!("charon-cave-test-{}.trace", std::process::id()));
+        let mut game = Game::new(480, 270, 4, true).unwrap();
+        game.record_to(&path).unwrap();
+        for tick in 0..100 {
+            let commands = match tick {
+                0 => vec![Command::Explore(42)],
+                1 => vec![Command::Right(true)],
+                15 => vec![Command::Right(false), Command::Dig(true)],
+                25 => vec![Command::Dig(false), Command::Fire],
+                30 => vec![Command::Terrain(SandCommand::FillRect {
+                    x: 120,
+                    y: 160,
+                    width: 8,
+                    height: 8,
+                    material: 2,
+                })],
+                40 => vec![Command::Pause],
+                41 => vec![Command::Terrain(SandCommand::Clear)],
+                42 => vec![Command::Step, Command::Pause],
+                60 => vec![Command::Explore(u64::MAX)],
+                _ => vec![],
+            };
+            game.step(commands);
+        }
+        drop(game);
+        assert_eq!(replay(&path, 1).unwrap(), 100);
         std::fs::remove_file(path).unwrap();
     }
 }

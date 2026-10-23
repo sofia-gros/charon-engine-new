@@ -10,6 +10,7 @@ pub enum Command {
     CupScene,
     DamScene,
     AddOil,
+    Explore(u64),
     PlaceImage([f32; 2]),
     EraseImage([f32; 2]),
     Left(bool),
@@ -45,6 +46,7 @@ pub struct Inspection {
     pub awake: Option<bool>,
 }
 pub struct Frame {
+    pub exploration_seed: Option<u64>,
     pub cup: Option<crate::cup::Status>,
     pub terrain: charon_sand::Frame,
     pub images: Vec<[f32; 2]>,
@@ -85,6 +87,7 @@ struct Spark {
     life: u8,
 }
 pub struct Game {
+    exploration_seed: Option<u64>,
     cup: Option<crate::cup::Cup>,
     world: SandWorld,
     images: Vec<[f32; 2]>,
@@ -143,6 +146,7 @@ impl Game {
             SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
+            exploration_seed: None,
             cup: None,
             images: vec![],
             image_error: None,
@@ -169,6 +173,33 @@ impl Game {
             jump_pending: false,
             inspection: None,
         })
+    }
+    fn restart(&mut self, seed: Option<u64>) -> Result<(), String> {
+        let mut next = Self::with_materials(
+            self.width,
+            self.height,
+            self.workers,
+            true,
+            self.world.materials().clone(),
+        )?;
+        if let Some(seed) = seed {
+            let (cells, spawn) = crate::scenes::cave(self.width, self.height, seed);
+            next.world = SandWorld::from_material_cells(
+                self.width,
+                self.height,
+                self.workers,
+                cells,
+                self.world.materials().clone(),
+            )?;
+            next.player = Some(Body::new(spawn[0], spawn[1], 7., 12.));
+            next.exploration_seed = Some(seed);
+        }
+        next.recorder = self.recorder.take();
+        next.fluid_gpu = self.fluid_gpu.clone();
+        next.paused = self.paused;
+        next.inspection = self.inspection;
+        *self = next;
+        Ok(())
     }
     pub fn use_fluid_gpu(&mut self, gpu: std::sync::Arc<charon_fluid::gpu::GpuContext>) {
         self.fluid_gpu = Some(gpu);
@@ -201,6 +232,10 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if let Some(seed) = self.exploration_seed {
+            mix(0x63617665);
+            mix(seed);
+        }
         if let Some(cup) = &self.cup {
             mix(0x637570);
             for value in cup.signature() {
@@ -371,25 +406,18 @@ impl Simulation for Game {
         for command in commands {
             match command {
                 Command::Terrain(SandCommand::Clear) if self.player.is_some() => {
-                    let recorder = self.recorder.take();
-                    let paused = self.paused;
-                    let inspection = self.inspection;
-                    let fluid_gpu = self.fluid_gpu.clone();
-                    *self = Self::with_materials(
-                        self.width,
-                        self.height,
-                        self.workers,
-                        true,
-                        self.world.materials().clone(),
-                    )
-                    .expect("validated scene dimensions");
-                    self.recorder = recorder;
-                    self.fluid_gpu = fluid_gpu;
-                    self.paused = paused;
-                    self.inspection = inspection;
+                    self.restart(self.exploration_seed)
+                        .expect("validated scene dimensions");
                     terrain.clear();
                     steps = 0;
                 }
+                Command::Explore(seed) => match self.restart(Some(seed)) {
+                    Ok(()) => {
+                        terrain.clear();
+                        steps = 0;
+                    }
+                    Err(_) => self.image_error = Some("EXPLORE NEEDS GRID 160X120 OR LARGER"),
+                },
                 command @ (Command::CupScene | Command::DamScene) => {
                     terrain.clear();
                     let create = if matches!(command, Command::CupScene) {
@@ -402,6 +430,7 @@ impl Simulation for Game {
                             if let Some(gpu) = &self.fluid_gpu {
                                 cup.use_gpu(gpu.clone());
                             }
+                            self.exploration_seed = None;
                             self.cup = Some(cup);
                             self.player = None;
                             self.images.clear();
@@ -497,6 +526,7 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            exploration_seed: self.exploration_seed,
             cup: self.cup.as_ref().map(|c| c.status(&self.world)),
             terrain: frame,
             images: self.images.clone(),
@@ -1128,6 +1158,59 @@ mod tests {
             if paused {
                 assert!(next.1 > tick);
             }
+        }
+    }
+    #[test]
+    fn generated_cave_combines_movement_digging_building_and_seeded_retry() {
+        for workers in [1, 4] {
+            let mut game = Game::new(480, 270, workers, true).unwrap();
+            let first = game.step(vec![Command::Explore(42), Command::Pause]);
+            assert_eq!(first.exploration_seed, Some(42));
+            assert_eq!(first.simulation_tick, 0);
+            let spawn = first.player.unwrap();
+            let initial = game.signature();
+            let cells = game.world.checksum();
+            game.step(vec![Command::Terrain(SandCommand::FillRect {
+                x: 80,
+                y: 160,
+                width: 8,
+                height: 8,
+                material: WALL,
+            })]);
+            assert_eq!(game.world.material_at(80, 160), Some(WALL));
+            game.step(vec![Command::Terrain(SandCommand::FillRect {
+                x: 80,
+                y: 160,
+                width: 8,
+                height: 8,
+                material: AIR,
+            })]);
+            assert_eq!(game.world.material_at(80, 160), Some(AIR));
+            let mut frame = game.step(vec![Command::Pause, Command::Right(true)]);
+            for _ in 0..16 {
+                frame = game.step(vec![]);
+            }
+            assert!(frame.player.unwrap().x() > spawn.x() + 10.);
+            game.step(vec![Command::Right(false), Command::Dig(true)]);
+            for _ in 0..20 {
+                frame = game.step(vec![]);
+            }
+            assert!(
+                frame.player.unwrap().y() > spawn.y() + 5.,
+                "dig did not open ground below actor"
+            );
+            assert!(!frame.player.unwrap().embedded);
+            let retried = game.step(vec![Command::Pause, Command::Terrain(SandCommand::Clear)]);
+            assert!(retried.paused);
+            assert_eq!(
+                game.signature(),
+                initial,
+                "retry did not restore the seed and controls"
+            );
+            assert_eq!(game.world.checksum(), cells);
+            game.step(vec![Command::Explore(43)]);
+            assert_eq!(game.exploration_seed, Some(43));
+            assert_ne!(game.world.checksum(), cells);
         }
     }
 }

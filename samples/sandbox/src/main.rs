@@ -58,6 +58,7 @@ impl Tool {
     }
 }
 struct Options {
+    explore: Option<u64>,
     fluid_gpu: bool,
     fluid_timing: bool,
     input_log: Option<PathBuf>,
@@ -75,6 +76,7 @@ struct Options {
 impl Options {
     fn parse() -> Result<Self> {
         let mut options = Self {
+            explore: None,
             fluid_gpu: true,
             fluid_timing: true,
             input_log: None,
@@ -106,6 +108,10 @@ impl Options {
                 "--input-log" => options.input_log = Some(value()?.into()),
                 "--replay" => options.replay = Some(value()?.into()),
                 "--play" => options.play = true,
+                "--explore" => {
+                    options.explore = Some(value()?.parse()?);
+                    options.play = true;
+                }
                 "--workers" => options.workers = value()?.parse()?,
                 "--grid" => {
                     let grid = value()?;
@@ -120,7 +126,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--explore SEED starts a generated cave; G creates the next seed; R retries the same seed\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--fluid-backend gpu|cpu (default gpu; CPU is reference/fallback)\n--no-fluid-timing disables optional GPU timestamp queries\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images; 5 water / 6 oil brush; L sea test; K cup test, A/D move, O add oil. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -171,7 +177,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -343,7 +349,10 @@ impl App {
             self.inspected = inspection;
         }
         let input_label = if self.rejected_edits == 0 {
-            self.tool.label().to_owned()
+            snapshot.frame.exploration_seed.map_or_else(
+                || self.tool.label().to_owned(),
+                |seed| format!("CAVE {seed} G NEW R RETRY 3 BUILD"),
+            )
         } else {
             format!("QUEUE FULL: {} EDITS NOT APPLIED", self.rejected_edits)
         };
@@ -526,6 +535,10 @@ impl App {
             if let Some(cup) = snapshot.frame.cup {
                 row.push_str(&format!("{:.6}", cup.fluid.velocity_extension_ms));
             }
+            row.push(',');
+            if let Some(seed) = snapshot.frame.exploration_seed {
+                row.push_str(&seed.to_string());
+            }
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -663,6 +676,15 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::Minus) if down => {
                         self.zoom = (self.zoom / 1.25).max(1.)
                     }
+                    PhysicalKey::Code(KeyCode::KeyG) if down => {
+                        let seed = self
+                            .runtime
+                            .latest()
+                            .and_then(|s| s.frame.exploration_seed)
+                            .unwrap_or(0)
+                            .wrapping_add(1);
+                        self.game_command(GameCommand::Explore(seed));
+                    }
                     PhysicalKey::Code(KeyCode::KeyJ) if down => {
                         self.game_command(GameCommand::Fire)
                     }
@@ -738,6 +760,9 @@ fn main() -> Result<()> {
         game.record_to(path)?;
     }
     let runtime = Runtime::start(game)?;
+    if let Some(seed) = options.explore {
+        runtime.submit(GameCommand::Explore(seed))?;
+    }
     for x in if options.play {
         vec![]
     } else {

@@ -1,0 +1,52 @@
+{
+  "source_sha256": "f4a1828693796f6bb4374920b65400d7d3fdc17f4c42b53c12f7e8bc483b25e8",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "exploration",
+  "base_revision": "1d2943cfdd3362938dd5dddcb322e3697076c9c2",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.0,
+  "gif_encoded_frames": 109,
+  "draw_submission_fps_range": [
+    3.63,
+    34.38
+  ],
+  "simulation_hz_range": [
+    0.0,
+    71.83
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
+  "captured_frames": 112,
+  "gif_duration_ms": 13990,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": null,
+  "fluid_compute_adapter": null,
+  "simulation_grid": [
+    480,
+    270
+  ],
+  "seeds": [
+    42,
+    43
+  ],
+  "replay": "replay_ticks=856 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "generated map",
+    "safe spawn",
+    "exploration movement",
+    "digging",
+    "grid placement/erasure",
+    "same-seed retry",
+    "new seed",
+    "authoritative replay with 1 worker",
+    "Escape shutdown",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
+  ]
+}

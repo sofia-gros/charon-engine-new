@@ -1,5 +1,17 @@
 # 導入と使い方
 
+## 生成マップで探索する
+
+```bash
+cargo run --locked -p charon-sandbox -- --explore 42
+```
+
+A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。3を押すと左クリックでグリッド配置、右クリックで削除。Rは同じseedで再挑戦、Gは次のseedの洞窟を生成する。Pで停止/再開、Nでコマ送り。CPUの流体代替経路を選ぶ場合は`--fluid-backend cpu`を付ける。
+
+![生成マップの探索・掘削・設置](media/exploration-linux.gif)
+
+この例は探索と地形操作を接続した段階。敵との戦闘・ゲーム終了はまだ含まない。`python3 scripts/capture-linux.py --sample exploration`でLinux実入力・表示と別workerでの再生を確認できる。[記録条件](media/exploration-linux.json)・[入力列](media/exploration-linux.trace)を同梱する。GIFの収録fpsとエンジンの実測値は別。
+
 ## 必要な環境
 
 - Rust stable、Git。
