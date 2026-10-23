@@ -179,6 +179,43 @@ impl SandWorld {
                 (source % self.width) as i32 + delta[0],
                 (source / self.width) as i32 + delta[1],
             )?;
+            // A translating boundary often releases space across the same
+            // connected liquid column. Transfer volume there before choosing a
+            // nearby free surface: otherwise the released space becomes a deep
+            // air pocket. Equal-material runs need no intermediate writes.
+            scratch.path.clear();
+            let mut cursor = seed;
+            let mut released_space = false;
+            loop {
+                budget = budget.checked_sub(1).ok_or(ObstacleError::SearchBudget)?;
+                scratch.path.push(cursor);
+                let cell = scratch.cells[cursor];
+                if cell == self.materials.air() {
+                    released_space = self.obstacles.owners.get(&cursor) == Some(&id);
+                    break;
+                }
+                if !self.is_liquid(cell) {
+                    break;
+                }
+                let Ok(next) = self.obstacle_index(
+                    (cursor % self.width) as i32 + delta[0],
+                    (cursor / self.width) as i32 + delta[1],
+                ) else {
+                    break;
+                };
+                cursor = next;
+            }
+            if released_space {
+                let mut carry = liquid;
+                for position in 0..scratch.path.len() {
+                    let index = scratch.path[position];
+                    let cell = scratch.cells[index];
+                    scratch.set(index, carry);
+                    carry = cell;
+                }
+                debug_assert_eq!(carry, self.materials.air());
+                continue;
+            }
             scratch.generation = scratch.generation.wrapping_add(1);
             if scratch.generation == 0 {
                 scratch.seen.fill(0);
@@ -330,12 +367,26 @@ mod tests {
         ]);
         let counts = |w: &SandWorld| [3, 4].map(|id| w.cells.iter().filter(|&&c| c == id).count());
         let initial = counts(&world);
+        let mut offset = 0;
         for turn in 0..4 {
             for _ in 0..8 {
-                world
-                    .move_obstacle(id, [if turn % 2 == 0 { 1 } else { -1 }, 0])
-                    .unwrap();
+                let direction = if turn % 2 == 0 { 1 } else { -1 };
+                world.move_obstacle(id, [direction, 0]).unwrap();
+                offset += direction;
+                let assert_filled = |world: &SandWorld| {
+                    for y in 37..53 {
+                        for x in 21 + offset..43 + offset {
+                            assert_eq!(
+                                world.material_at(x, y),
+                                Some(if y < 41 { 4 } else { 3 }),
+                                "moving boundary left a gap or mixed layers at ({x}, {y})"
+                            );
+                        }
+                    }
+                };
+                assert_filled(&world);
                 world.step(vec![]);
+                assert_filled(&world);
                 assert_eq!(counts(&world), initial);
                 assert_eq!([3, 4].map(|id| world.material_count(id)), initial);
                 assert_eq!(world.liquid_rows.iter().sum::<usize>(), world.liquid);

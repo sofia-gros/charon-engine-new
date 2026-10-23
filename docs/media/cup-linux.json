@@ -1,24 +1,24 @@
 {
-  "source_sha256": "bb46c0318e9d9f37aef76af7c6417d8943de61a48c1e1406cebfa0a3fcfd52af",
+  "source_sha256": "0f864b4ea6baca0348028eccb75135525ca1936d1311507d8038e84d4d86c2b3",
   "sample": "cup",
-  "base_revision": "4c5ee703f46ac4c01867de133181fae059581f59",
+  "base_revision": "b7ab867552307bd0def0827cf65b4711671da0c5",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.001,
+  "observed_capture_fps": 8.0,
   "gif_encoded_frames": 288,
   "draw_submission_fps_range": [
-    25.98,
-    43.62
+    16.84,
+    34.51
   ],
   "simulation_hz_range": [
     0.0,
-    61.26
+    60.79
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 288,
-  "gif_duration_ms": 36010,
+  "gif_duration_ms": 36040,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -37,16 +37,18 @@
       462
     ]
   },
+  "air_pocket_frames_checked": 96,
   "cup_x_range": [
-    192,
-    222
+    191,
+    221
   ],
-  "replay": "replay_ticks=2222 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=2224 checks=terrain,player,input_state workers=1",
   "checks": [
     "game-owned cup shape",
     "left/right real input",
     "separate water/oil mass conservation",
     "oil injection into air",
+    "no rendered air pockets below water during motion",
     "oil above water in rendered output",
     "pause freezes cup and liquid",
     "resting contents sleep",

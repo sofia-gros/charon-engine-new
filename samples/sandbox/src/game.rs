@@ -504,6 +504,17 @@ mod tests {
             let cup = frame.cup.unwrap();
             assert_eq!((cup.water, cup.oil), (initial.water, oil));
             assert_eq!(cup.blocked, 0);
+            // Check every published tick, including turns and oil injection.
+            // Final settling alone misses air pockets left by a moving wall.
+            for y in cup.y + cup.height / 2 - 2..cup.y + cup.height - 2 {
+                for x in cup.x + 2..cup.x + cup.width - 2 {
+                    assert_eq!(
+                        game.world.material_at(x, y),
+                        Some(crate::materials::WATER),
+                        "submerged cup cell changed at tick {tick}: ({x}, {y})"
+                    );
+                }
+            }
         }
         let frame = game.step(vec![Command::Pause, Command::Right(true)]);
         let x = frame.cup.unwrap().x;

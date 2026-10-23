@@ -552,9 +552,28 @@ EndSection
                             if r>170 and g>140 and b<100: yellow.append(y)
                     assert blue and yellow and max(yellow)<=min(blue)+math.ceil(540/vh), "rendered oil did not form an upper layer"
                     layer_bands={"oil_y":[min(yellow),max(yellow)],"water_y":[min(blue),max(blue)]}
+                # Use the intersection of all cup interiors, avoiding wall/CSV
+                # sampling offsets. Falling oil above the water is allowed; air
+                # below the first water pixel in a column is not.
+                left=math.ceil((max(xs)+2-ox)/vw*960)
+                right=math.floor((min(xs)+cw-2-ox)/vw*960)
+                checked_frames=0
+                for timestamp,path in frames:
+                    if not 3 <= timestamp-start <= 15:
+                        continue
+                    with Image.open(path) as im:
+                        rgb=im.convert("RGB")
+                        for x in range(left,right):
+                            submerged=False
+                            for y in range(top,bottom):
+                                r,g,b=rgb.getpixel((x,y))
+                                submerged |= r<80 and g>90 and b>180
+                                assert not (submerged and (r,g,b)==(16,23,36)), f"rendered air pocket at ({x},{y}), t={timestamp-start:.2f}s"
+                    checked_frames+=1
+                assert checked_frames>=50, "insufficient moving-cup frames checked"
                 replay=subprocess.run([str(ROOT / "target/debug" / package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=50)
                 shutil.copyfile(trace_path,MEDIA / f"{prefix}.trace")
-                checks={"water_cells":water,"oil_cells":oil[-1],"rendered_layers":layer_bands,"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["game-owned cup shape", "left/right real input", "separate water/oil mass conservation", "oil injection into air", "oil above water in rendered output", "pause freezes cup and liquid", "resting contents sleep", "authoritative replay with one worker", "Escape shutdown"]}
+                checks={"water_cells":water,"oil_cells":oil[-1],"rendered_layers":layer_bands,"air_pocket_frames_checked":checked_frames,"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["game-owned cup shape", "left/right real input", "separate water/oil mass conservation", "oil injection into air", "no rendered air pockets below water during motion", "oil above water in rendered output", "pause freezes cup and liquid", "resting contents sleep", "authoritative replay with one worker", "Escape shutdown"]}
             elif sample == "sea":
                 sea_rows=[r for r in rows if int(r["liquid"])>0]
                 assert sea_rows, "sea was not created"
