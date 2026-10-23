@@ -40,7 +40,7 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 画面内にDRAW FPS・SIM Hz・GPU種別・ビルド種別を表示する。DRAWは描画送信回数を実時間で割った値、SIMは物質更新回数を実時間で割った値。最初の計測区間はWARMUPとなる。タイトルにはさらにtick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
-PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。通常モードのCSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。通常モードのCSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。描画のGPU実行時間や物理的な画面提示はまだ測定していない。CFDのcompute GPU時間は下記のタイムスタンプで別に記録する。VSyncやOSのスケジューリングも描画FPSへ影響する。
 
 ## ブロックと画像の配置
 
@@ -99,6 +99,10 @@ Kでコップと水を作り、A/Dまたは左右キーで並進、Oで油を追
 性能記録の`headless_replay`は、描画を除いた4ワーカーの入力再生時間をCFDの物理tick数で割った平均上限。停止中の処理・画像生成・全状態の照合も含み、最悪tick時間やWindows性能の測定ではない。同じ入力は`target/debug/charon-sandbox --replay docs/media/fluid-dam-linux.trace --workers 4`で再生できる。強い崩壊/飛沫ではクラウドの描画込み60Hzを下回るため、本格CFDをGPU compute主体とし、CPUを検証/代替用に残す方針。上の480×270のGIFはCPU基準版。GPU経路の検証記録とは区別する。
 
 サンプルは`--fluid-backend gpu`が既定で、速度移流/粘性と圧力反復をwgpu computeで計算する。`--fluid-backend cpu`（Windows起動スクリプトでは`-FluidBackend cpu`）でCPU基準版を選べる。GPU初期化失敗時は理由と代替オプションを表示し、黙って経路を変えない。plugin単体は`gpu` featureを有効にし、共有する`GpuContext`を`Fluid::use_gpu`へ渡す。体積を所有する幾何VOF・境界係数生成・力/速度延長は現段階でCPU側に残る。
+
+CFDの`Stats.gpu`はGPU経路でのみ存在し、速度/圧力のcompute passをGPUタイムスタンプで計測する。CSVの`fluid_gpu_velocity_ms`/`fluid_gpu_pressure_ms`は全substepと再試行の合計。既存の`fluid_velocity_ms`/`fluid_pressure_ms`はCPU側の作業・転送・GPU待ちも含む経過時間なので、GPU時間と区別する。`fluid_gpu_upload_bytes`/`fluid_gpu_readback_bytes`は明示的なGPU入出力量、`fluid_gpu_dispatches`はそのtickのcompute実行回数。値は直近の物理tickについての値で、停止中はその値を保持し、休止tickでは0になる。
+
+タイムスタンプ非対応/無効時のGPU時間は`None`（CSVは空欄、HUDは`GPU TIMER N/A`）とし、CPU時間や0で代用しない。`GpuContext::with_timing(false)`、CLIの`--no-fluid-timing`、Windowsスクリプトの`-NoFluidTiming`で無効にできる。記録形式/物理状態へ影響させず、計測あり/なしで同一状態になることを検証する。タイムスタンプの読み出しは既存の物理結果の読み出しと同じ送信へまとめ、計測専用の追加待機を作らない。静止/休止時はcompute・転送も省く。描画GPU時間、実表示の到達時刻、ハードウェアGPUの性能達成とは別の測定。
 
 GPUの圧力は液体セルを圧縮した配列でJacobi前処理CGを実行し、反復中のCPU待ちを避ける。f32の解は元のf64作用素で残差を検査し、追加のGPU補正でCPU基準と同じ許容値へ収束させる。密閉した各連結領域は基準圧力を1点固定する。現在の圧力kernelは1 workgroupで協調する初期実装で、大領域でGPU全体を使う性能は保証しない。格子間転送/同期も含む実機測定を行い、圧力の分割・前処理を改善する。GPUの入力/作業/読戻しバッファは容量を拡張しながら再利用する。クラウドのSwiftShaderはGPU命令をCPUで代行するため、RTX 4060の性能指標には使わない。
 

@@ -1,25 +1,25 @@
 {
-  "source_sha256": "b0bc78ade0c5416ea586b5f1c1114e1e72d3ec5ec591fb0d895ba660a1e25dce",
+  "source_sha256": "e3e42686a0b9d18b022d16f3a268163891f3188d284d8ad2122438d3c8ee4499",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-wave",
-  "base_revision": "7c673a61dd0970b43404ea3242c4ae967ba25ff7",
+  "base_revision": "3a6c17932b250ba50f50dbaf298947e984122a11",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.993,
-  "gif_encoded_frames": 142,
+  "observed_capture_fps": 7.996,
+  "gif_encoded_frames": 146,
   "draw_submission_fps_range": [
-    23.61,
-    38.97
+    14.89,
+    41.76
   ],
   "simulation_hz_range": [
     0.0,
-    60.94
+    61.48
   ],
-  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 160,
-  "gif_duration_ms": 20030,
+  "gif_duration_ms": 19980,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -27,7 +27,7 @@
     540
   ],
   "fluid_backend": "gpu",
-  "fluid_compute_adapter": "fluid_compute=AdapterInfo { name: \"SwiftShader Device (Subzero)\", vendor: 6880, device: 49374, device_type: Cpu, device_pci_bus_id: \"\", driver: \"SwiftShader driver\", driver_info: \"\", backend: Vulkan, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None } identity=gpu-38d8b6827bf27f4b",
+  "fluid_compute_adapter": "fluid_compute=AdapterInfo { name: \"SwiftShader Device (Subzero)\", vendor: 6880, device: 49374, device_type: Cpu, device_pci_bus_id: \"\", driver: \"SwiftShader driver\", driver_info: \"\", backend: Vulkan, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None } identity=gpu-38d8b6827bf27f4b timestamps=true",
   "simulation_grid": [
     128,
     100
@@ -35,14 +35,14 @@
   "water_volume_cells": 364.0,
   "oil_volume_cells": 84.0,
   "surface_delta_range": [
-    -10.267497,
-    6.513
+    -10.921973,
+    6.730974
   ],
   "cup_x_range": [
     48,
-    56
+    55
   ],
-  "replay": "replay_ticks=1141 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1142 checks=terrain,player,input_state workers=1",
   "checks": [
     "real left/right movement and reversal",
     "inertial surface slopes in both directions",
@@ -56,11 +56,35 @@
   "scope": "Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep.",
   "solver": "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF",
   "fluid_active_simulation_hz_range": [
-    3.91,
-    19.54
+    5.55,
+    18.96
   ],
   "fluid_active_tick_work_ms_range": [
-    57.231,
-    239.457
-  ]
+    48.236,
+    251.679
+  ],
+  "fluid_gpu_measurements": {
+    "timestamp_available": true,
+    "velocity_kernel_ms_range": [
+      1.666482,
+      9.603622
+    ],
+    "pressure_kernel_ms_range": [
+      0.0,
+      225.024229
+    ],
+    "upload_bytes_per_tick_range": [
+      103344,
+      600864
+    ],
+    "readback_bytes_per_tick_range": [
+      103328,
+      491568
+    ],
+    "dispatches_per_tick_range": [
+      1,
+      12
+    ],
+    "scope": "GPU queries time compute passes, excluding transfer and CPU wait. Host stage durations include CPU work, transfer and synchronization. Latest completed CFD tick per sample; repeated tick IDs deduplicated. Software-adapter times do not measure hardware GPU performance."
+  }
 }

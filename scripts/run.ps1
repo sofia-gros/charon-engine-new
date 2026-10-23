@@ -2,6 +2,7 @@ param(
     [ValidateRange(1, 32)][int]$Workers = 4,
     [string]$Grid = '480x270',
     [ValidateSet('gpu', 'cpu')][string]$FluidBackend = 'gpu',
+    [switch]$NoFluidTiming,
     [switch]$Smoke,
     [switch]$Play,
     [switch]$RecordInputs,
@@ -19,6 +20,7 @@ try {
     $cargoArgs = @('run', '--locked', '-p', 'charon-sandbox')
     if (-not $DebugBuild) { $cargoArgs += '--release' }
     $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid, '--fluid-backend', $FluidBackend)
+    if ($NoFluidTiming) { $cargoArgs += '--no-fluid-timing' }
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }

@@ -166,6 +166,14 @@ pub fn overlays(
             [0.75, 0.9, 1., 1.],
         );
     }
+    if let Some(gpu) = frame.cup.and_then(|c| c.fluid.gpu) {
+        let label = match (gpu.velocity_ms, gpu.pressure_ms) {
+            (Some(v), Some(p)) => format!("GPU MS VELOCITY {v:.2} PRESSURE {p:.2}"),
+            _ => "GPU TIMER N/A".into(),
+        };
+        result.push(rect(2., 69., 300., 11., [0.03, 0.06, 0.1, 1.]));
+        text(&mut result, 4., 71., &label, [0.75, 0.9, 1., 1.]);
+    }
     if let Some(error) = frame.image_error {
         result.push(rect(2., 69., 270., 11., [0.1, 0.03, 0.03, 1.]));
         text(&mut result, 4., 71., error, [1., 0.4, 0.4, 1.]);

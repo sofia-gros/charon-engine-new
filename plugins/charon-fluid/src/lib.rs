@@ -38,6 +38,38 @@ pub enum Error {
     Backend,
 }
 #[derive(Clone, Copy, Debug, Default)]
+pub struct GpuStats {
+    /// Actual compute-pass duration. None means queries unavailable/disabled,
+    /// never zero as a substitute for an unsupported measurement.
+    pub velocity_ms: Option<f64>,
+    pub pressure_ms: Option<f64>,
+    /// Explicit queue uploads and readbacks, including timestamp data.
+    pub upload_bytes: u64,
+    pub readback_bytes: u64,
+    pub dispatches: u32,
+}
+#[cfg(feature = "gpu")]
+impl GpuStats {
+    fn new(gpu: &gpu::GpuContext) -> Self {
+        Self {
+            velocity_ms: gpu.empty_work().kernel_ms,
+            pressure_ms: gpu.empty_work().kernel_ms,
+            ..Self::default()
+        }
+    }
+    fn add_work(&mut self, pressure: bool, work: gpu::Work) {
+        let target = if pressure {
+            &mut self.pressure_ms
+        } else {
+            &mut self.velocity_ms
+        };
+        *target = target.zip(work.kernel_ms).map(|(a, b)| a + b);
+        self.upload_bytes += work.upload_bytes;
+        self.readback_bytes += work.readback_bytes;
+        self.dispatches += work.dispatches;
+    }
+}
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
     pub volume: [f64; 2],
     pub wet_cells: usize,
@@ -58,6 +90,7 @@ pub struct Stats {
     pub pressure_ms: f64,
     pub transport_ms: f64,
     pub velocity_ms: f64,
+    pub gpu: Option<GpuStats>,
 }
 #[derive(Clone)]
 struct State {
@@ -151,13 +184,18 @@ impl Fluid {
         }
         "CPU"
     }
-    fn advance_velocity(&mut self, dt: f64) -> Result<u32, Error> {
+    fn advance_velocity(&mut self, dt: f64, _stats: &mut Stats) -> Result<u32, Error> {
         #[cfg(feature = "gpu")]
         if let Some(gpu) = &self.gpu {
-            let (u, v) =
+            let result =
                 gpu.advect(self.config, &self.state.u, &self.state.v, self.bounds(), dt)?;
-            self.state.u = u;
-            self.state.v = v;
+            _stats
+                .gpu
+                .as_mut()
+                .expect("GPU step metrics")
+                .add_work(false, result.work);
+            self.state.u = result.u;
+            self.state.v = result.v;
             return Ok(0);
         }
         Ok(self.advect_velocity(dt))
@@ -286,6 +324,13 @@ impl Fluid {
             self.stats.pressure_ms = 0.;
             self.stats.transport_ms = 0.;
             self.stats.velocity_ms = 0.;
+            if let Some(gpu) = &mut self.stats.gpu {
+                gpu.velocity_ms = gpu.velocity_ms.map(|_| 0.);
+                gpu.pressure_ms = gpu.pressure_ms.map(|_| 0.);
+                gpu.upload_bytes = 0;
+                gpu.readback_bytes = 0;
+                gpu.dispatches = 0;
+            }
             return Ok(self.stats);
         }
         self.backup.clone_from(&self.state);
@@ -306,6 +351,10 @@ impl Fluid {
     fn advance(&mut self, dt: f64, acceleration: [f64; 2]) -> Result<Stats, Error> {
         let mut remaining = dt;
         let mut stats = Stats::default();
+        #[cfg(feature = "gpu")]
+        {
+            stats.gpu = self.gpu.as_ref().map(|gpu| GpuStats::new(gpu));
+        }
         while remaining > 1e-10 {
             if stats.substeps >= 64 {
                 return Err(Error::TimeStep);
@@ -323,11 +372,12 @@ impl Fluid {
                     self.state.clone_from(&before);
                 }
                 let clock = std::time::Instant::now();
-                stats.workers_used = stats.workers_used.max(self.advance_velocity(sub)?);
+                let workers = self.advance_velocity(sub, &mut stats)?;
+                stats.workers_used = stats.workers_used.max(workers);
                 self.forces(sub, acceleration);
                 stats.velocity_ms += clock.elapsed().as_secs_f64() * 1000.;
                 let clock = std::time::Instant::now();
-                let projection = self.project(sub, acceleration)?;
+                let projection = self.project(sub, acceleration, &mut stats)?;
                 stats.pressure_ms += clock.elapsed().as_secs_f64() * 1000.;
                 self.extrapolate_velocity();
                 let clock = std::time::Instant::now();

@@ -17,6 +17,7 @@ impl Fluid {
         &mut self,
         dt: f64,
         acceleration: [f64; 2],
+        _stats: &mut super::Stats,
     ) -> Result<(usize, f64), Error> {
         let w = self.config.width;
         let mut mapping = vec![NONE; self.state.fraction.len()];
@@ -141,7 +142,21 @@ impl Fluid {
         #[cfg(not(feature = "gpu"))]
         let gpu_solution: Option<usize> = None;
         let iterations = match gpu_solution {
-            Some(iterations) => iterations,
+            Some(result) => {
+                #[cfg(feature = "gpu")]
+                {
+                    _stats
+                        .gpu
+                        .as_mut()
+                        .expect("GPU step metrics")
+                        .add_work(true, result.1);
+                    result.0
+                }
+                #[cfg(not(feature = "gpu"))]
+                {
+                    result
+                }
+            }
             None => solve_cpu(&nodes, &rhs, &mut p)?,
         };
         for (i, node) in nodes.iter().enumerate() {

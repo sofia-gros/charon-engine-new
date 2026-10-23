@@ -47,6 +47,7 @@ fn hydrostatic_oil_layer_stays_sharp_and_sleeps_then_wakes() {
     let initial = fluid.volumes();
     for _ in 0..100 {
         let s = fluid.step(1. / 60., [0., 120.]).unwrap();
+        assert!(s.gpu.is_none(), "CPU steps must not claim GPU measurements");
         assert!(s.max_divergence < 1e-4, "{s:?}");
         conserved(&fluid, initial);
     }
@@ -248,7 +249,19 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
             })
             .collect();
         let mut p = vec![0.; n];
-        let iterations = gpu.solve(&rows, &rhs, &mut p).unwrap();
+        let (iterations, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+        assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
+        assert!(work.dispatches > 0 && work.upload_bytes > 0 && work.readback_bytes > 0);
+        assert_eq!(
+            work.upload_bytes,
+            (n * 48) as u64 * u64::from(work.dispatches)
+        );
+        let readback = if gpu.timing_available() {
+            (n as u64 * 20).next_multiple_of(8) + 16
+        } else {
+            n as u64 * 20
+        };
+        assert_eq!(work.readback_bytes, readback * u64::from(work.dispatches));
         let error = p
             .iter()
             .zip(expected)
@@ -270,7 +283,7 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
     for (i, v) in cpu.state.v.iter_mut().enumerate() {
         *v = -((i % 13) as f64) * 0.07;
     }
-    let (u, v) = gpu
+    let velocity = gpu
         .advect(
             cpu.config,
             &cpu.state.u,
@@ -280,14 +293,17 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         )
         .unwrap();
     cpu.advect_velocity(1. / 60.);
-    let error = u
+    let error = velocity
+        .u
         .iter()
-        .chain(&v)
+        .chain(&velocity.v)
         .zip(cpu.state.u.iter().chain(&cpu.state.v))
         .map(|(a, b)| (a - b).abs())
         .fold(0., f64::max);
     assert!(error < 5e-6, "velocity error={error}");
     eprintln!("all MAC faces max error={error:e}");
+    let untimed_gpu = std::sync::Arc::new(gpu::GpuContext::with_timing(false).unwrap());
+    assert!(!untimed_gpu.timing_available());
     // Closed pressure component, free surface with oil, and falling droplet.
     for scene in 0..3 {
         let mut cpu = domain(26, 30, 2);
@@ -306,7 +322,11 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         let mut accelerated = Fluid::new(cpu.config, cpu.solid.clone()).unwrap();
         accelerated.state = cpu.state.clone();
         accelerated.use_gpu(gpu.clone());
+        let mut untimed = Fluid::new(cpu.config, cpu.solid.clone()).unwrap();
+        untimed.state = cpu.state.clone();
+        untimed.use_gpu(untimed_gpu.clone());
         let initial = cpu.volumes();
+        let mut total_kernel_ms = 0.;
         for tick in 0..90 {
             let acceleration = if scene == 1 && (30..45).contains(&tick) {
                 [-180., 120.]
@@ -318,6 +338,40 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                 .step(1. / 60., acceleration)
                 .unwrap_or_else(|e| panic!("scene={scene} tick={tick} {e:?}"));
             conserved(&accelerated, initial);
+            let work = s.gpu.expect("GPU stage metrics");
+            assert_eq!(work.velocity_ms.is_some(), gpu.timing_available());
+            assert_eq!(work.pressure_ms.is_some(), gpu.timing_available());
+            for value in [work.velocity_ms, work.pressure_ms].into_iter().flatten() {
+                assert!(value.is_finite() && value >= 0.);
+                total_kernel_ms += value;
+            }
+            if s.sleeping && s.substeps == 0 {
+                assert_eq!(
+                    (work.upload_bytes, work.readback_bytes, work.dispatches),
+                    (0, 0, 0)
+                );
+                assert!(
+                    work.velocity_ms.is_none_or(|v| v == 0.)
+                        && work.pressure_ms.is_none_or(|v| v == 0.)
+                );
+            } else {
+                assert!(
+                    work.dispatches >= s.substeps as u32
+                        && work.upload_bytes > 0
+                        && work.readback_bytes > 0
+                );
+            }
+            if tick < 8 {
+                let other = untimed.step(1. / 60., acceleration).unwrap();
+                assert_eq!(
+                    accelerated.signature(),
+                    untimed.signature(),
+                    "profiling changed physics scene={scene} tick={tick}"
+                );
+                let work = other.gpu.unwrap();
+                assert!(work.velocity_ms.is_none() && work.pressure_ms.is_none());
+                assert!(work.dispatches > 0);
+            }
             assert!(s.max_divergence < 1e-3, "scene={scene} tick={tick} {s:?}");
             let phase_difference = cpu
                 .state
@@ -331,8 +385,14 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                 "scene={scene} tick={tick} difference={phase_difference}"
             );
         }
+        if gpu.timing_available() {
+            assert!(total_kernel_ms > 0.);
+        }
+        if scene == 0 {
+            assert!(accelerated.stats().sleeping);
+        }
         eprintln!(
-            "scene={scene} steps=90 conserved={:?}",
+            "scene={scene} steps=90 gpu_kernel_ms={total_kernel_ms:.3} conserved={:?}",
             accelerated.volumes()
         );
     }

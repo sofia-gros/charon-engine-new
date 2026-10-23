@@ -784,7 +784,7 @@ EndSection
                       "gif_encoded_frames": encoded_frames,
                       "draw_submission_fps_range": [min(rates), max(rates)],
                       "simulation_hz_range": [min(simulation_rates), max(simulation_rates)],
-                      "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+                      "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
                       "captured_frames": len(frames), "gif_duration_ms": sum(durations),
                       "capture_target": "game client window (desktop excluded)",
                       "source_size": "actual client size; see window_width/window_height in CSV", "gif_size": [960, 540],
@@ -803,6 +803,21 @@ EndSection
                 if active:
                     report["fluid_active_simulation_hz_range"]=[min(float(r["sim_hz"]) for r in active),max(float(r["sim_hz"]) for r in active)]
                     report["fluid_active_tick_work_ms_range"]=[min(float(r["tick_work_ms"]) for r in active),max(float(r["tick_work_ms"]) for r in active)]
+            if sample in ("cup", "fluid-wave", "fluid-dam") and args.fluid_backend == "gpu":
+                active=[r for r in rows if r["cup_x"] and r["paused"]=="false" and r["fluid_sleeping"]=="false"]
+                active=list({r["simulation_tick"]:r for r in active}.values())
+                def measured_range(key,convert=float):
+                    values=[convert(r[key]) for r in active if r.get(key)]
+                    return [min(values),max(values)] if values else None
+                report["fluid_gpu_measurements"]={
+                    "timestamp_available": any(r.get("fluid_gpu_pressure_ms") for r in active),
+                    "velocity_kernel_ms_range": measured_range("fluid_gpu_velocity_ms"),
+                    "pressure_kernel_ms_range": measured_range("fluid_gpu_pressure_ms"),
+                    "upload_bytes_per_tick_range": measured_range("fluid_gpu_upload_bytes",int),
+                    "readback_bytes_per_tick_range": measured_range("fluid_gpu_readback_bytes",int),
+                    "dispatches_per_tick_range": measured_range("fluid_gpu_dispatches",int),
+                    "scope": "GPU queries time compute passes, excluding transfer and CPU wait. Host stage durations include CPU work, transfer and synchronization. Latest completed CFD tick per sample; repeated tick IDs deduplicated. Software-adapter times do not measure hardware GPU performance."
+                }
             (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")
             (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")
             shutil.copyfile(local / "metrics.csv", MEDIA / f"{prefix}.csv")

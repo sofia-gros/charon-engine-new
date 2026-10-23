@@ -6,6 +6,30 @@ use std::{
     time::Duration,
 };
 
+struct Timer {
+    queries: wgpu::QuerySet,
+    resolved: wgpu::Buffer,
+}
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct Work {
+    pub kernel_ms: Option<f64>,
+    pub upload_bytes: u64,
+    pub readback_bytes: u64,
+    pub dispatches: u32,
+}
+impl Work {
+    fn add(&mut self, other: Self) {
+        self.kernel_ms = self.kernel_ms.zip(other.kernel_ms).map(|(a, b)| a + b);
+        self.upload_bytes += other.upload_bytes;
+        self.readback_bytes += other.readback_bytes;
+        self.dispatches += other.dispatches;
+    }
+}
+pub(super) struct Velocity {
+    pub u: Vec<f64>,
+    pub v: Vec<f64>,
+    pub work: Work,
+}
 pub struct GpuContext {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -13,12 +37,18 @@ pub struct GpuContext {
     pressure: wgpu::ComputePipeline,
     info: wgpu::AdapterInfo,
     scratch: Mutex<[Option<wgpu::Buffer>; 6]>,
+    timer: Option<Timer>,
 }
 impl GpuContext {
     pub fn new() -> Result<Self, String> {
-        pollster::block_on(Self::create())
+        Self::with_timing(true)
     }
-    async fn create() -> Result<Self, String> {
+    /// Unsupported timestamp queries leave kernel times unavailable; compute
+    /// remains usable. Turning profiling off must not change physical state.
+    pub fn with_timing(enabled: bool) -> Result<Self, String> {
+        pollster::block_on(Self::create(enabled))
+    }
+    async fn create(timing: bool) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -31,9 +61,15 @@ impl GpuContext {
             .await
             .map_err(|e| e.to_string())?;
         let info = adapter.get_info();
+        let timing_features = if timing {
+            adapter.features() & wgpu::Features::TIMESTAMP_QUERY
+        } else {
+            wgpu::Features::empty()
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("charon-fluid-compute"),
+                required_features: timing_features,
                 ..Default::default()
             })
             .await
@@ -58,7 +94,21 @@ impl GpuContext {
         if let Some(e) = scope.pop().await {
             return Err(e.to_string());
         }
+        let timer = (!timing_features.is_empty()).then(|| Timer {
+            queries: device.create_query_set(&wgpu::QuerySetDescriptor {
+                label: Some("fluid kernel timestamps"),
+                ty: wgpu::QueryType::Timestamp,
+                count: 2,
+            }),
+            resolved: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("fluid timestamp resolve"),
+                size: 16,
+                usage: wgpu::BufferUsages::QUERY_RESOLVE | wgpu::BufferUsages::COPY_SRC,
+                mapped_at_creation: false,
+            }),
+        });
         Ok(Self {
+            timer,
             device,
             queue,
             velocity,
@@ -66,6 +116,22 @@ impl GpuContext {
             info,
             scratch: Mutex::new(Default::default()),
         })
+    }
+    pub fn timing_available(&self) -> bool {
+        self.timer.is_some()
+    }
+    pub(super) fn empty_work(&self) -> Work {
+        Work {
+            kernel_ms: self.timer.as_ref().map(|_| 0.),
+            ..Work::default()
+        }
+    }
+    fn readback_size(&self, size: u64) -> u64 {
+        if self.timer.is_some() {
+            size.next_multiple_of(8) + 16
+        } else {
+            size
+        }
     }
     pub fn adapter_info(&self) -> &wgpu::AdapterInfo {
         &self.info
@@ -104,7 +170,7 @@ impl GpuContext {
         size: u64,
         readback: &wgpu::Buffer,
         groups: u32,
-    ) -> Result<Vec<u8>, Error> {
+    ) -> Result<(Vec<u8>, Work), Error> {
         let layout = pipeline.get_bind_group_layout(0);
         let entries: Vec<_> = buffers
             .iter()
@@ -125,16 +191,30 @@ impl GpuContext {
         });
         let mut encoder = self.device.create_command_encoder(&Default::default());
         {
-            let mut pass = encoder.begin_compute_pass(&Default::default());
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("fluid compute"),
+                timestamp_writes: self.timer.as_ref().map(|timer| {
+                    wgpu::ComputePassTimestampWrites {
+                        query_set: &timer.queries,
+                        beginning_of_pass_write_index: Some(0),
+                        end_of_pass_write_index: Some(1),
+                    }
+                }),
+            });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, &bind, &[]);
             pass.dispatch_workgroups(groups, 1, 1);
         }
         encoder.copy_buffer_to_buffer(output, 0, readback, 0, size);
+        let read_size = self.readback_size(size);
+        if let Some(timer) = &self.timer {
+            encoder.resolve_query_set(&timer.queries, 0..2, &timer.resolved, 0);
+            encoder.copy_buffer_to_buffer(&timer.resolved, 0, readback, read_size - 16, 16);
+        }
         let submission = self.queue.submit([encoder.finish()]);
         let (sender, receiver) = mpsc::channel();
         readback
-            .slice(..size)
+            .slice(..read_size)
             .map_async(wgpu::MapMode::Read, move |r| {
                 let _ = sender.send(r);
             });
@@ -150,11 +230,24 @@ impl GpuContext {
                 .map_err(|_| Error::Backend)?
                 .map_err(|_| Error::Backend)?;
             let bytes = readback
-                .slice(..size)
+                .slice(..read_size)
                 .get_mapped_range()
                 .map_err(|_| Error::Backend)?
                 .to_vec();
-            Ok(bytes)
+            let kernel_ms = self.timer.as_ref().and_then(|_| {
+                let times = &bytes[read_size as usize - 16..];
+                let begin = u64::from_le_bytes(times[..8].try_into().unwrap());
+                let end = u64::from_le_bytes(times[8..].try_into().unwrap());
+                end.checked_sub(begin)
+                    .map(|delta| delta as f64 * f64::from(self.queue.get_timestamp_period()) * 1e-6)
+            });
+            let work = Work {
+                kernel_ms,
+                readback_bytes: read_size,
+                dispatches: 1,
+                upload_bytes: 0,
+            };
+            Ok((bytes[..size as usize].to_vec(), work))
         })();
         // Cancel pending maps on failure as well; a later retry must not map an
         // already-pending staging buffer after a timeout or device loss.
@@ -168,9 +261,13 @@ impl GpuContext {
         v: &[f64],
         bounds: Option<[usize; 4]>,
         dt: f64,
-    ) -> Result<(Vec<f64>, Vec<f64>), Error> {
+    ) -> Result<Velocity, Error> {
         let Some(b) = bounds else {
-            return Ok((vec![0.; u.len()], vec![0.; v.len()]));
+            return Ok(Velocity {
+                u: vec![0.; u.len()],
+                v: vec![0.; v.len()],
+                work: self.empty_work(),
+            });
         };
         let w = config.width;
         let h = config.height;
@@ -221,10 +318,10 @@ impl GpuContext {
             &mut cache,
             5,
             "fluid readback",
-            size,
+            self.readback_size(size),
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
-        let result = self.run(
+        let (result, mut work) = self.run(
             &self.velocity,
             &[
                 (&params_buffer, params.len() as u64),
@@ -245,14 +342,19 @@ impl GpuContext {
         if values.iter().any(|v| !v.is_finite()) {
             return Err(Error::Backend);
         }
-        Ok((values[..u.len()].to_vec(), values[u.len()..].to_vec()))
+        work.upload_bytes = params.len() as u64 + size;
+        Ok(Velocity {
+            u: values[..u.len()].to_vec(),
+            v: values[u.len()..].to_vec(),
+            work,
+        })
     }
     pub(super) fn solve(
         &self,
         rows: &[([usize; 4], [f64; 4], f64)],
         rhs: &[f64],
         p: &mut [f64],
-    ) -> Result<usize, Error> {
+    ) -> Result<(usize, Work), Error> {
         let n = rows.len();
         let apply = |x: &[f64], r: &mut [f64]| {
             for (i, (adj, a, diag)) in rows.iter().enumerate() {
@@ -292,12 +394,13 @@ impl GpuContext {
         let tolerance = (rhs.iter().map(|v| v * v).sum::<f64>().sqrt() * 1e-8).max(1e-9);
         let mut product = vec![0.; n];
         let mut iterations = 0;
+        let mut total_work = self.empty_work();
         for _ in 0..5 {
             apply(p, &mut product);
             let residual: Vec<_> = rhs.iter().zip(&product).map(|(b, a)| b - a).collect();
             let norm = residual.iter().map(|v| v * v).sum::<f64>().sqrt();
             if norm <= tolerance {
-                return Ok(iterations);
+                return Ok((iterations, total_work));
             }
             let scale = residual.iter().map(|v| v.abs()).fold(0., f64::max);
             if !scale.is_finite() || scale == 0. {
@@ -352,10 +455,10 @@ impl GpuContext {
                 &mut cache,
                 5,
                 "fluid readback",
-                size,
+                self.readback_size(size),
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
-            let result = self.run(
+            let (result, mut work) = self.run(
                 &self.pressure,
                 &[(&data_buffer, data.len() as u64), (&work, size)],
                 &work,
@@ -363,6 +466,8 @@ impl GpuContext {
                 &readback,
                 1,
             )?;
+            work.upload_bytes = data.len() as u64;
+            total_work.add(work);
             for (i, bytes) in result.as_chunks::<20>().0.iter().enumerate() {
                 let correction =
                     f64::from(f32::from_le_bytes(bytes[0..4].try_into().unwrap())) * scale;
@@ -383,7 +488,7 @@ impl GpuContext {
             .sqrt()
             <= tolerance
         {
-            Ok(iterations)
+            Ok((iterations, total_work))
         } else {
             Err(Error::Pressure)
         }
