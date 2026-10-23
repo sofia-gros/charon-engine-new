@@ -253,10 +253,9 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
         assert!(work.dispatches > 0 && work.upload_bytes > 0 && work.readback_bytes > 0);
         assert_eq!(work.max_workgroups, 1);
-        assert_eq!(
-            work.upload_bytes,
-            (n * 48) as u64 * u64::from(work.dispatches)
-        );
+        // Pressure rows are sent each refinement; the two-level coefficients
+        // (or bounded Jacobi header) are uploaded only once per system.
+        assert!(work.upload_bytes > (n * 48) as u64 * u64::from(work.dispatches));
         let readback = if gpu.timing_available() {
             (n as u64 * 20).next_multiple_of(8) + 16
         } else {
@@ -271,6 +270,18 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         assert!(error < 1e-6, "n={n} error={error}");
         eprintln!("manufactured n={n} iterations={iterations} error={error:e}");
     }
+    // Hundreds of disconnected drops must not build an unbounded dense
+    // coarse inverse. The bounded preconditioner retains the GPU Jacobi path.
+    let n = 521;
+    let rows = vec![([usize::MAX; 4], [0.; 4], 2.); n];
+    let rhs: Vec<_> = (0..n).map(|i| (i % 17) as f64).collect();
+    let mut p = vec![0.; n];
+    let (_, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+    assert!(p.iter().zip(&rhs).all(|(p, r)| (p - r / 2.).abs() < 1e-8));
+    assert_eq!(
+        work.upload_bytes,
+        (n * 48) as u64 * u64::from(work.dispatches) + 20
+    );
     // Compare every advected face, not only the final visual surface.
     let mut cpu = domain(26, 30, 2);
     for y in 15..29 {
@@ -396,6 +407,72 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         eprintln!(
             "scene={scene} steps=90 gpu_kernel_ms={total_kernel_ms:.3} conserved={:?}",
             accelerated.volumes()
+        );
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_pressure_two_level_handles_mixed_components_with_hardware_sized_groups() {
+    // Variable coefficients and both an unreferenced closed component and an
+    // open component. Neither a 1D fixture nor SIMD-only lanes catches all
+    // errors in coarse aggregation, gauge pinning or cross-subgroup barriers.
+    let (w, h) = (23, 19);
+    let n = w * h;
+    let rows: Vec<_> = (0..n)
+        .map(|i| {
+            let (x, y) = (i % w, i / w);
+            let adj = [
+                if x > 0 && x != 11 { i - 1 } else { usize::MAX },
+                if x + 1 < w && x != 10 {
+                    i + 1
+                } else {
+                    usize::MAX
+                },
+                if y > 0 { i - w } else { usize::MAX },
+                if y + 1 < h { i + w } else { usize::MAX },
+            ];
+            let a = adj.map(|j| {
+                if j == usize::MAX {
+                    0.
+                } else {
+                    1. + ((i + j) % 7) as f64 / 7.
+                }
+            });
+            (
+                adj,
+                a,
+                a.iter().sum::<f64>() + if x == w - 1 { 0.37 } else { 0. },
+            )
+        })
+        .collect();
+    let expected: Vec<_> = (0..n).map(|i| ((i * 13 % 53) as f64) / 53.).collect();
+    let rhs: Vec<_> = rows
+        .iter()
+        .enumerate()
+        .map(|(i, (adj, a, d))| {
+            d * expected[i]
+                - (0..4)
+                    .filter(|&k| adj[k] != usize::MAX)
+                    .map(|k| a[k] * expected[adj[k]])
+                    .sum::<f64>()
+        })
+        .collect();
+    for lanes in [4, 128] {
+        let gpu = gpu::GpuContext::with_pressure_lanes(lanes).unwrap();
+        let mut p = vec![0.; n];
+        let (iterations, _) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+        let gauge = p[0] - expected[0];
+        let error = p
+            .iter()
+            .zip(&expected)
+            .enumerate()
+            .map(|(i, (p, e))| (p - e - if i % w < 11 { gauge } else { 0. }).abs())
+            .fold(0., f64::max);
+        assert!(error < 1e-6, "lanes={lanes} error={error:e}");
+        eprintln!(
+            "two-level mixed components lanes={lanes} iterations={iterations} max_error={error:e}"
         );
     }
 }

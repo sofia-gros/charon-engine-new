@@ -13,3 +13,7 @@ gpu = ["dep:wgpu", "dep:pollster"]
 rayon.workspace = true
 wgpu = { workspace = true, optional = true }
 pollster = { workspace = true, optional = true }
+
+[[example]]
+name = "wave-cost"
+required-features = ["gpu"]

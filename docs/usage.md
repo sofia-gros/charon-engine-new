@@ -104,13 +104,15 @@ CFDの`Stats.gpu`はGPU経路でのみ存在し、速度/圧力のcompute pass�
 
 タイムスタンプ非対応/無効時のGPU時間は`None`（CSVは空欄、HUDは`GPU TIMER N/A`）とし、CPU時間や0で代用しない。`GpuContext::with_timing(false)`、CLIの`--no-fluid-timing`、Windowsスクリプトの`-NoFluidTiming`で無効にできる。記録形式/物理状態へ影響させず、計測あり/なしで同一状態になることを検証する。タイムスタンプの読み出しは既存の物理結果の読み出しと同じ送信へまとめ、計測専用の追加待機を作らない。静止/休止時はcompute・転送も省く。描画GPU時間、実表示の到達時刻、ハードウェアGPUの性能達成とは別の測定。
 
-GPUの圧力は液体セルだけの連続配列でJacobi前処理CGを実行する。8,192自由度未満は1 workgroup内で協調し、それ以上は128セルずつ複数workgroupへ分散する。内積もGPUで集計し、16反復ずつまとめて実行して小さな収束状態だけを読み戻す。隣接セルの古い探索方向と新しい方向は別領域へ置き、書込中の値を他groupが読まない。分散経路の最後は圧力だけを1セル4バイトへ詰め、Krylov作業配列全体をCPUへ戻さない。
+GPUの圧力は液体セルだけの連続配列で前処理CGを実行する。8,192自由度未満は1 workgroup内で協調する。接続した近隣セルの局所逆行列とGalerkin粗格子の逆行列を加算する2段前処理で、細かな誤差と水域全体の誤差を補正する。前処理の係数は圧力投影ごとにCPUで生成し、同じ投影内のf64補正ラウンドでは再利用して、GPUの各反復で適用する。セル数に応じて局所ブロックを広げ、粗格子が256個を超える分離した水域等ではGPU内のJacobi前処理に切り替えて密行列の肥大を防ぐ。実GPUは128レーン、CPU型のソフトウェアGPUは4レーンで協調し、ソフトウェアでの過剰な同期待ちを抑える。内積の集計もまとめる。圧力の精度基準やCFL/体積保存の条件は緩めない。8,192自由度以上はJacobi前処理のまま128セルずつ複数workgroupへ分散する。内積もGPUで集計し、16反復ずつまとめて実行して小さな収束状態だけを読み戻す。隣接セルの古い探索方向と新しい方向は別領域へ置き、書込中の値を他groupが読まない。分散経路の最後は圧力だけを1セル4バイトへ詰め、Krylov作業配列全体をCPUへ戻さない。
 
 f32の解は元のf64作用素で残差を検査し、追加のGPU補正でCPU基準と同じ許容値へ収束させる。小領域の密閉成分は1点の基準圧力を固定する。大領域は元のNeumann作用素で解き、成分ごとに丸めた右辺の整合性と補正後の圧力の定数分を扱い、一点固定による条件数の悪化を避ける。面ごとの差で作用素を評価するため、可変密度でも定数圧力が余計な力を生まない。GPUの入力/作業/読戻しバッファは拡張しながら再利用し、大領域から小領域へ戻す場合も実際の要素数だけをbindする。
 
 `Stats.gpu.velocity_workgroups`/`pressure_workgroups`とCSVの同名列は、そのtickで発行した各段階の最大workgroup数。休止/実行不要なら0になる。CPUワーカー数やGPUの同時実行占有率とは区別する。CloudのSwiftShaderはGPU命令をCPUで代行するため、分散処理の時間をRTX 4060の性能値にしない。ハードウェアGPUで転送/同期を含めた計測を行い、前処理と反復/転送をさらに改善する。
 
-`VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture`で実computeを検証する。GPU検証2件で、既知解5サイズ（37/1,024/4,096/8,209/16,899自由度）、可変密度の閉/開境界の混在、全MAC速度面のCPU比較、密閉容器/水油/液滴の各90tickを確認する。さらに18,432液体セル・144 pressure workgroupの実際のMAC更新で体積/静水/発散、大領域から小領域へ戻すバッファ再利用を確認する。アダプター不在なら失敗し、成功扱いでスキップしない。Linux CIにもこの検証を追加している。
+`VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture`で実computeを検証する。GPU検証3件で、4/128レーンの可変係数・閉/開境界が分離した437自由度の既知解、521個の分離成分での粗格子制限、既知解5サイズ（37/1,024/4,096/8,209/16,899自由度）、可変密度の閉/開境界の混在、全MAC速度面のCPU比較、密閉容器/水油/液滴の各90tickを確認する。さらに18,432液体セル・144 pressure workgroupの実際のMAC更新で体積/静水/発散、大領域から小領域へ戻すバッファ再利用を確認する。アダプター不在なら失敗し、成功扱いでスキップしない。Linux CIにもこの検証を追加している。
+
+同一入力での速度比較は `cargo run --locked -p charon-fluid --features gpu --example wave-cost`。128×100格子にコップを作り、水364・油84、4 CPUワーカー、240回の固定入力で加速/停止/反転する。描画・収録なしで更新時間、圧力反復数、GPU時間、転送量をJSONへ出力し、全tickで相別の体積と発散を検査する。[変更前後の計測](benchmarks/fluid-wave-gpu.json)を参照。前処理係数により転送量は増えるため、実GPUでの再計測も必要。GIFの入力は実時間で与えるため、この固定tick計測とは別の負荷であり、GIFのHz範囲を直接の速度比には使わない。CSV末尾の`fluid_pressure_iterations`で直近tickの反復数も確認できる。
 
 ![GPU compute経路の慣性波と水・油（LinuxソフトウェアGPU）](media/fluid-wave-gpu-linux.gif)
 

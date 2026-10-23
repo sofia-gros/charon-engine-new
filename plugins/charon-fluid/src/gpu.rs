@@ -6,9 +6,10 @@ use std::{
     time::Duration,
 };
 
+mod preconditioner;
 mod tiled;
 const TILED_THRESHOLD: usize = 8192;
-type Scratch = [Option<wgpu::Buffer>; 8];
+type Scratch = [Option<wgpu::Buffer>; 9];
 
 struct Timer {
     queries: wgpu::QuerySet,
@@ -53,9 +54,13 @@ impl GpuContext {
     /// Unsupported timestamp queries leave kernel times unavailable; compute
     /// remains usable. Turning profiling off must not change physical state.
     pub fn with_timing(enabled: bool) -> Result<Self, String> {
-        pollster::block_on(Self::create(enabled))
+        pollster::block_on(Self::create(enabled, None))
     }
-    async fn create(timing: bool) -> Result<Self, String> {
+    #[cfg(test)]
+    pub(super) fn with_pressure_lanes(lanes: u32) -> Result<Self, String> {
+        pollster::block_on(Self::create(true, Some(lanes)))
+    }
+    async fn create(timing: bool, pressure_lanes: Option<u32>) -> Result<Self, String> {
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::VULKAN | wgpu::Backends::DX12,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
@@ -82,7 +87,7 @@ impl GpuContext {
             .await
             .map_err(|e| e.to_string())?;
         let scope = device.push_error_scope(wgpu::ErrorFilter::Validation);
-        let pipeline = |name, source: &'static str| {
+        let pipeline = |name, source: &'static str, constants: &[(&str, f64)]| {
             let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
                 label: Some(name),
                 source: wgpu::ShaderSource::Wgsl(source.into()),
@@ -92,12 +97,29 @@ impl GpuContext {
                 layout: None,
                 module: &module,
                 entry_point: Some("main"),
-                compilation_options: Default::default(),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants,
+                    ..Default::default()
+                },
                 cache: None,
             })
         };
-        let velocity = pipeline("MAC advection", include_str!("velocity.wgsl"));
-        let pressure = pipeline("compact pressure CG", include_str!("pressure.wgsl"));
+        let velocity = pipeline("MAC advection", include_str!("velocity.wgsl"), &[]);
+        // Software SIMD adapters pay heavily for cooperation across subgroups.
+        // Keep the same GPU solver, but avoid scheduling 128 emulated lanes.
+        // Hardware keeps a full workgroup; this is not a CPU solver fallback.
+        let lanes = f64::from(pressure_lanes.unwrap_or(
+            if info.device_type == wgpu::DeviceType::Cpu {
+                4
+            } else {
+                128
+            },
+        ));
+        let pressure = pipeline(
+            "compact pressure CG",
+            include_str!("pressure.wgsl"),
+            &[("LANES", lanes)],
+        );
         let tiled = tiled::TiledPressure::new(&device);
         if let Some(e) = scope.pop().await {
             return Err(e.to_string());
@@ -436,6 +458,7 @@ impl GpuContext {
         let mut product = vec![0.; n];
         let mut iterations = 0;
         let mut total_work = self.empty_work();
+        let mut preconditioner_data = None;
         for _ in 0..5 {
             apply(p, &mut product);
             let residual: Vec<_> = rhs.iter().zip(&product).map(|(b, a)| b - a).collect();
@@ -510,6 +533,22 @@ impl GpuContext {
                 continue;
             }
             let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
+            let first = preconditioner_data.is_none();
+            if first {
+                preconditioner_data = Some(preconditioner::build(rows, &anchors)?);
+            }
+            let preconditioner_data = preconditioner_data.as_ref().unwrap();
+            let preconditioner = self.buffer(
+                &mut cache,
+                8,
+                "two-level pressure preconditioner",
+                preconditioner_data.len() as u64,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            );
+            if first {
+                self.queue
+                    .write_buffer(&preconditioner, 0, preconditioner_data);
+            }
             let data_buffer = self.buffer(
                 &mut cache,
                 3,
@@ -537,13 +576,22 @@ impl GpuContext {
             );
             let (result, mut work) = self.run(
                 &self.pressure,
-                &[(&data_buffer, data.len() as u64), (&work, size)],
+                &[
+                    (&data_buffer, data.len() as u64),
+                    (&work, size),
+                    (&preconditioner, preconditioner_data.len() as u64),
+                ],
                 &work,
                 size,
                 &readback,
                 1,
             )?;
-            work.upload_bytes = data.len() as u64;
+            work.upload_bytes = data.len() as u64
+                + if first {
+                    preconditioner_data.len() as u64
+                } else {
+                    0
+                };
             total_work.add(work);
             for (i, bytes) in result.as_chunks::<20>().0.iter().enumerate() {
                 let correction =

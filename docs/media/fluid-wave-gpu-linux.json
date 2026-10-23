@@ -1,25 +1,25 @@
 {
-  "source_sha256": "4c94cbc08492ad2b1b4a5c00664666cdba6a8e1a81611f24669a3523602741dd",
+  "source_sha256": "9ae9a37b236445ede066f87c6fc7a187ae5c49d7d216983f64bc6e5ea0f6fe5c",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-wave",
-  "base_revision": "5de44f2dcf3f499c8d685621099e3d123e76d92d",
+  "base_revision": "a3b7ddc28343c0431a57f56cb7f582714dde9dfc",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.003,
-  "gif_encoded_frames": 143,
+  "observed_capture_fps": 8.001,
+  "gif_encoded_frames": 157,
   "draw_submission_fps_range": [
-    21.88,
-    36.71
+    18.46,
+    34.61
   ],
   "simulation_hz_range": [
     0.0,
-    60.79
+    60.99
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 160,
-  "gif_duration_ms": 20000,
+  "gif_duration_ms": 19980,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -35,16 +35,17 @@
   "water_volume_cells": 364.0,
   "oil_volume_cells": 84.0,
   "surface_delta_range": [
-    -10.076206,
-    7.526393
+    -4.474147,
+    2.486089
   ],
   "cup_x_range": [
     48,
-    56
+    74
   ],
-  "replay": "replay_ticks=1146 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1237 checks=terrain,player,input_state workers=1",
   "checks": [
     "real left/right movement and reversal",
+    "entire cup inside the camera",
     "inertial surface slopes in both directions",
     "water and oil visible",
     "separate phase conservation",
@@ -54,36 +55,40 @@
     "Escape shutdown"
   ],
   "scope": "Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep.",
-  "solver": "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF",
+  "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed Jacobi-PCG / f64 defect correction / CPU geometric VOF",
   "fluid_active_simulation_hz_range": [
-    3.98,
-    18.22
+    29.33,
+    55.0
   ],
   "fluid_active_tick_work_ms_range": [
-    41.334,
-    282.391
+    11.878,
+    58.91
   ],
   "fluid_gpu_measurements": {
     "timestamp_available": true,
     "velocity_kernel_ms_range": [
-      1.465041,
-      9.351262
+      1.173626,
+      9.72853
     ],
     "pressure_kernel_ms_range": [
       0.0,
-      246.082003
+      44.221185
+    ],
+    "pressure_iterations_per_tick_range": [
+      0,
+      101
     ],
     "upload_bytes_per_tick_range": [
       103344,
-      753456
+      374560
     ],
     "readback_bytes_per_tick_range": [
       103328,
-      615456
+      245760
     ],
     "dispatches_per_tick_range": [
       1,
-      15
+      6
     ],
     "velocity_workgroups_per_dispatch_range": [
       202,

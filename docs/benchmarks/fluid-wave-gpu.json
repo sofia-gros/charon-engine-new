@@ -1,0 +1,68 @@
+{
+  "benchmark": "fixed-tick two-phase inertial cup",
+  "command": "cargo run --locked -p charon-fluid --features gpu --example wave-cost",
+  "platform": "Linux; no physical GPU; SwiftShader Vulkan compute; no renderer or capture",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "build_profile": "dev, charon-fluid opt-level=2",
+  "baseline_engine_revision": "a3b7ddc28343c0431a57f56cb7f582714dde9dfc",
+  "baseline_driver": "Current wave-cost example added to baseline engine; same geometry, volumes and tick-indexed input as after.",
+  "driver": "plugins/charon-fluid/examples/wave-cost.rs",
+  "driver_sha256": "914ee2d547114cd7952c0f91099bbe137d52fe039953bb8a39d2216025bc3f5e",
+  "after_source_sha256": "9ae9a37b236445ede066f87c6fc7a187ae5c49d7d216983f64bc6e5ea0f6fe5c",
+  "runs_per_version": 1,
+  "scope": "Same fixed physical input, sequential runs on the same software adapter; timing includes allocation and first-use compute. Not a hardware GPU or 144 FPS / 60 Hz claim. Small numerical differences can change CFL substep counts; CFL and original f64 residual tolerances are unchanged. Wall-timed GIFs have different physical input timing and are not the speed-ratio benchmark.",
+  "validation": "Every tick checks phase volumes within 1e-7 cell and maximum post-projection divergence below 1e-3.",
+  "before": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "ticks": 240,
+    "grid": [
+      128,
+      100
+    ],
+    "workers": 4,
+    "water": 364,
+    "oil": 84,
+    "tick_mean_ms": 104.5652202583333,
+    "tick_p95_ms": 189.920478,
+    "tick_max_ms": 266.68948,
+    "pressure_host_total_ms": 23831.04368,
+    "pressure_kernel_total_ms": 23050.044044000013,
+    "velocity_host_total_ms": 991.4354699999997,
+    "transport_total_ms": 140.14388100000005,
+    "pressure_iterations": 80212,
+    "substeps": 529,
+    "upload_bytes": 79147536,
+    "readback_bytes": 64878880,
+    "max_divergence": 3.218049826614333e-08
+  },
+  "after": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "ticks": 240,
+    "grid": [
+      128,
+      100
+    ],
+    "workers": 4,
+    "water": 364,
+    "oil": 84,
+    "tick_mean_ms": 37.01830623333335,
+    "tick_p95_ms": 68.49461799999999,
+    "tick_max_ms": 89.765018,
+    "pressure_host_total_ms": 7571.144823000001,
+    "pressure_kernel_total_ms": 6611.958143,
+    "velocity_host_total_ms": 1028.046329,
+    "transport_total_ms": 146.59314800000007,
+    "pressure_iterations": 24471,
+    "substeps": 530,
+    "upload_bytes": 99020360,
+    "readback_bytes": 64989888,
+    "max_divergence": 4.324431301938603e-08
+  },
+  "ratios": {
+    "mean_tick_speedup": 2.8246894819886963,
+    "p95_tick_speedup": 2.772779578097655,
+    "pressure_kernel_speedup": 3.4861146343466825,
+    "pressure_iterations_reduction": 0.6949209594574378
+  },
+  "limits": "Two-level preconditioning currently accelerates the cooperative path below 8192 pressure unknowns. At most 256 coarse aggregates; beyond that, GPU Jacobi preconditioning is retained. Distributed pressure and CPU/GPU round trips still need improvement. Preconditioner uploads increase explicit transfer volume."
+}

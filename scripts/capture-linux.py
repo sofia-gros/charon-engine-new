@@ -276,7 +276,8 @@ EndSection
                 inputs.key(ord("k"))
                 at(1)
                 inputs.key(ord("="))
-                inputs.key(ord("="))
+                if sample == "cup":
+                    inputs.key(ord("="))
                 at(2)
                 inputs.hold(ord("d"),True)
                 at(4)
@@ -560,6 +561,7 @@ EndSection
                 assert oil and max(oil)-min(oil)<1e-6, "wave scene lost oil"
                 xs=[int(r["cup_x"]) for r in fluid_rows]
                 assert max(xs)-min(xs)>float(fluid_rows[0]["cup_width"])/5, "wave cup moved less than one fifth of its width"
+                assert all(float(r["camera_x"]) <= float(r["cup_x"]) and float(r["cup_x"])+float(r["cup_width"]) <= float(r["camera_x"])+float(r["camera_width"]) for r in fluid_rows), "wave cup left the recorded view"
                 assert any(b>a for a,b in zip(xs,xs[1:])) and any(b<a for a,b in zip(xs,xs[1:])), "wave cup did not reverse"
                 tilts=[float(r["fluid_surface_delta"]) for r in fluid_rows]
                 assert min(tilts)<-1 and max(tilts)>1, "wave surface did not respond in both directions"
@@ -572,7 +574,7 @@ EndSection
                     assert sum(r>170 and g>140 and b<100 for r,g,b in pixels)>100, "oil absent from rendered wave scene"
                 replay=subprocess.run([str(ROOT/"target/debug"/package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=90)
                 shutil.copyfile(trace_path,MEDIA/f"{prefix}.trace")
-                checks={"water_volume_cells":water,"oil_volume_cells":oil[-1],"surface_delta_range":[min(tilts),max(tilts)],"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["real left/right movement and reversal", "inertial surface slopes in both directions", "water and oil visible", "separate phase conservation", "bounded projection divergence", "pause freezes movement and liquid", "one-worker authoritative replay", "Escape shutdown"],"scope":"Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep."}
+                checks={"water_volume_cells":water,"oil_volume_cells":oil[-1],"surface_delta_range":[min(tilts),max(tilts)],"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["real left/right movement and reversal", "entire cup inside the camera", "inertial surface slopes in both directions", "water and oil visible", "separate phase conservation", "bounded projection divergence", "pause freezes movement and liquid", "one-worker authoritative replay", "Escape shutdown"],"scope":"Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep."}
             elif sample == "cup":
                 cup_rows=[r for r in rows if r["cup_x"]]
                 assert cup_rows, "cup was not created"
@@ -794,7 +796,7 @@ EndSection
                       "simulation_grid": [int(v) for v in args.grid.split("x")],
                       **checks}
             if sample in ("cup", "fluid-wave", "fluid-dam") and args.fluid_backend == "gpu":
-                report["solver"] = "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF"
+                report["solver"] = "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed Jacobi-PCG / f64 defect correction / CPU geometric VOF"
             if sample in ("cup", "fluid-wave", "fluid-dam"):
                 # Exclude scene entry and paused/sleeping rows. A one-second
                 # counter interval can still straddle an input transition.
@@ -813,6 +815,7 @@ EndSection
                     "timestamp_available": any(r.get("fluid_gpu_pressure_ms") for r in active),
                     "velocity_kernel_ms_range": measured_range("fluid_gpu_velocity_ms"),
                     "pressure_kernel_ms_range": measured_range("fluid_gpu_pressure_ms"),
+                    "pressure_iterations_per_tick_range": measured_range("fluid_pressure_iterations",int),
                     "upload_bytes_per_tick_range": measured_range("fluid_gpu_upload_bytes",int),
                     "readback_bytes_per_tick_range": measured_range("fluid_gpu_readback_bytes",int),
                     "dispatches_per_tick_range": measured_range("fluid_gpu_dispatches",int),
