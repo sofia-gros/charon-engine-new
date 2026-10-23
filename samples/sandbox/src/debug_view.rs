@@ -199,12 +199,23 @@ pub fn overlays(
         result.push(rect(2., 81., 360., 11., [0.03, 0.06, 0.1, 1.]));
         let label = match combat.phase {
             crate::combat::Phase::Ready => "ENTER TO START - Q WAND 3 BUILD".into(),
+            crate::combat::Phase::Playing if frame.stream.is_some() => format!(
+                "HP {} ACTIVE {} SLEEP {} SHOTS WAIT {} REJECT {}",
+                combat.health,
+                combat.enemies.len(),
+                combat.sleeping,
+                combat.sleeping_shots,
+                combat.rejected_shots
+            ),
             crate::combat::Phase::Playing => format!(
                 "HP {} ENEMIES {} DEFEATED {}",
                 combat.health,
                 combat.enemies.len(),
                 combat.kills
             ),
+            crate::combat::Phase::Defeated if frame.stream.is_some() => {
+                "DEFEATED - ESC SAVE TERRAIN AND EXIT".into()
+            }
             crate::combat::Phase::Defeated => "DEFEATED - R RETRY SAME MAP".into(),
         };
         text(&mut result, 4., 83., &label, [1., 0.8, 0.4, 1.]);

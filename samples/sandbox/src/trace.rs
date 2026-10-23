@@ -58,6 +58,7 @@ fn encode(command: &Command) -> String {
         Command::AddOil => "oil".into(),
         Command::Explore(seed) => format!("explore:{seed}"),
         Command::NewRun(seed) => format!("run:{seed}"),
+        Command::StartWorldGame(seed) => format!("world-game:{seed}"),
         Command::StartWorld(seed) => format!("world:{seed}"),
         Command::LoadRegion { origin, cells } => {
             let mut runs = Vec::new();
@@ -164,6 +165,7 @@ fn decode(text: &str) -> Result<Command, String> {
         }
         ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
         ["run", seed] => Command::NewRun(seed.parse().map_err(|_| bad())?),
+        ["world-game", seed] => Command::StartWorldGame(seed.parse().map_err(|_| bad())?),
         ["world", seed] => Command::StartWorld(seed.parse().map_err(|_| bad())?),
         [kind @ ("region" | "region-rle"), x, y, hex] => {
             if hex.len() > 1920 * 1080 * 2 || hex.len() % 2 != 0 {

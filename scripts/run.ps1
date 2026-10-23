@@ -7,6 +7,7 @@ param(
     [switch]$Play,
     [switch]$Game,
     [switch]$World,
+    [switch]$WorldGame,
     [string]$WorldDirectory = 'artifacts/local/worlds',
     [UInt64]$Seed = 42,
     [switch]$RecordInputs,
@@ -16,6 +17,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    if ($WorldGame -and ($World -or $Game -or $Play -or $Smoke)) { throw '-WorldGame is a separate mode; use it without -World, -Game, -Play or -Smoke.' }
     if ($World -and ($Game -or $Play -or $Smoke)) { throw '-World cannot be combined with -Game, -Play or -Smoke.' }
     if ($Game -and $Smoke) { throw '-Game opens a start screen; use it without -Smoke.' }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
@@ -30,7 +32,8 @@ try {
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
-    if ($World) { $cargoArgs += @('--world', "$Seed", '--world-dir', $WorldDirectory) }
+    if ($WorldGame) { $cargoArgs += @('--world-game', "$Seed", '--world-dir', $WorldDirectory) }
+    elseif ($World) { $cargoArgs += @('--world', "$Seed", '--world-dir', $WorldDirectory) }
     elseif ($Game) { $cargoArgs += @('--game', "$Seed") }
     elseif ($Play) { $cargoArgs += '--play' }
     if ($Software) { $cargoArgs += '--software' }

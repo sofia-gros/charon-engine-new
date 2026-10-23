@@ -328,6 +328,107 @@ mod integration_tests {
         }
     }
     #[test]
+    fn streamed_combat_keeps_wounded_enemy_across_a_real_region_roundtrip_and_replay() {
+        let root = std::env::temp_dir().join(format!("charon-world-combat-{}", std::process::id()));
+        std::fs::create_dir_all(&root).unwrap();
+        let path = root.join("inputs.trace");
+        let mut game = Game::new(640, 360, 4, true).unwrap();
+        game.record_to(&path).unwrap();
+        let mut frame = game.step(vec![Command::StartWorldGame(42)]);
+        let origin = frame.stream.unwrap().origin;
+        let mut session = Session::new(
+            root.join("chunks"),
+            42,
+            game.material_fingerprint(),
+            640,
+            360,
+        )
+        .unwrap();
+        let cells = await_region(&mut session, origin);
+        frame = game.step(vec![Command::LoadRegion {
+            origin,
+            cells: cells.into(),
+        }]);
+        assert_eq!(frame.simulation_tick, 0);
+        assert_eq!(
+            frame.combat.as_ref().unwrap().phase,
+            crate::combat::Phase::Ready
+        );
+        let enemy = frame.combat.as_ref().unwrap().enemies[0];
+        game.step(vec![
+            Command::Begin,
+            Command::Pause,
+            Command::FireAt([enemy.rect[0] + 3.5, enemy.rect[1] + 6.]),
+        ]);
+        for _ in 0..16 {
+            frame = game.step(vec![Command::Step]);
+        }
+        assert_eq!(frame.combat.as_ref().unwrap().enemies[0].health, 2);
+        frame = game.step(vec![Command::Pause, Command::Right(true)]);
+        for tick in 0..260 {
+            if frame.stream.unwrap().waiting {
+                break;
+            }
+            frame = game.step(if tick % 30 == 0 {
+                vec![Command::Jump]
+            } else {
+                vec![]
+            });
+        }
+        assert!(
+            frame.stream.unwrap().waiting,
+            "player failed to reach boundary: {:?}",
+            frame.player
+        );
+        assert_eq!(frame.combat.as_ref().unwrap().enemies[0].health, 2);
+        session
+            .capture(origin, &frame.terrain.indices.to_bytes())
+            .unwrap();
+        let next = [origin[0] + 512, origin[1]];
+        let cells = await_region(&mut session, next);
+        frame = game.step(vec![
+            Command::Pause,
+            Command::Right(false),
+            Command::LoadRegion {
+                origin: next,
+                cells: cells.into(),
+            },
+        ]);
+        assert!(frame.combat.as_ref().unwrap().enemies.is_empty());
+        assert_eq!(frame.combat.as_ref().unwrap().sleeping, 2);
+        frame = game.step(vec![Command::Pause, Command::Left(true)]);
+        for _ in 0..10 {
+            if frame.stream.unwrap().waiting {
+                break;
+            }
+            frame = game.step(vec![]);
+        }
+        assert!(frame.stream.unwrap().waiting);
+        session
+            .capture(next, &frame.terrain.indices.to_bytes())
+            .unwrap();
+        let cells = await_region(&mut session, origin);
+        frame = game.step(vec![
+            Command::Pause,
+            Command::Left(false),
+            Command::LoadRegion {
+                origin,
+                cells: cells.into(),
+            },
+        ]);
+        let combat = frame.combat.as_ref().unwrap();
+        let returned = combat.enemies.iter().find(|e| e.id == enemy.id).unwrap();
+        assert_eq!(returned.health, 2);
+        assert_eq!(returned.rect[0], enemy.rect[0]);
+        assert_eq!(combat.health, 3);
+        assert!(!frame.player.unwrap().embedded);
+        drop(game);
+        session.flush().unwrap();
+        drop(session);
+        assert!(crate::trace::replay(&path, 1).unwrap() > 180);
+        std::fs::remove_dir_all(root).unwrap();
+    }
+    #[test]
     fn game_handoff_freezes_edits_preserves_global_position_and_replays_without_io() {
         let root = std::env::temp_dir().join(format!("charon-world-game-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();

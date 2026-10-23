@@ -149,16 +149,16 @@ def source_fingerprint():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
+    parser.add_argument("--sample", choices=("world-combat", "world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
     parser.add_argument("--fluid-backend", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--grid", default="480x270", help="simulation grid; client remains 1920x1080")
     args = parser.parse_args()
     sample = args.sample
-    if sample == "world": args.grid="1920x1080"
+    if sample in ("world", "world-combat"): args.grid="1920x1080"
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}{'-gpu' if args.fluid_backend == 'gpu' else ''}-linux"
     local = LOCAL / sample
-    duration = 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
+    duration = 26 if sample == "world-combat" else 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -222,13 +222,13 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample == "exploration" else []), *(["--game", "42"] if sample == "combat" else []), *(["--world", "42", "--world-dir", str(temporary / "world")] if sample == "world" else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample == "exploration" else []), *(["--game", "42"] if sample == "combat" else []), *(["--world-game" if sample == "world-combat" else "--world", "42", "--world-dir", str(temporary / "world")] if sample in ("world", "world-combat") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
                 path = local / "metrics.csv"
                 if not path.exists(): return False
-                return any(float(row.get("draw_fps") or 0) > 0 and (sample != "world" or row.get("world_waiting") == "false") for row in csv.DictReader(path.open()))
+                return any(float(row.get("draw_fps") or 0) > 0 and (sample not in ("world", "world-combat") or row.get("world_waiting") == "false") for row in csv.DictReader(path.open()))
             wait_for(measured_frame_ready)
             inputs = Input()
             inputs.focus()
@@ -476,6 +476,44 @@ EndSection
                 at(11)
                 inputs.key(ord("c"))
                 at(11.5)
+                inputs.key(ord("p"))
+            elif sample == "world-combat":
+                def observe():
+                    return list(csv.DictReader((local / "metrics.csv").open()))[-1]
+                def aim_enemy(row):
+                    x = (float(row["enemy_x"]) - float(row["camera_x"])) / float(row["camera_width"]) * float(row["window_width"])
+                    y = (float(row["enemy_y"]) - float(row["camera_y"])) / float(row["camera_height"]) * float(row["window_height"])
+                    if 0 <= x < float(row["window_width"]) and 0 <= y < float(row["window_height"]):
+                        inputs.move(round(x), round(y))
+                        inputs.button(1, True)
+                        time.sleep(0.06)
+                        inputs.button(1, False)
+                at(0.5)
+                inputs.key(0xff0d)
+                inputs.key(ord("q"))
+                at(0.7)
+                aim_enemy(observe())  # Wound the nearby turret once, then leave it alive.
+                at(1.4)
+                inputs.hold(ord("d"), True)
+                for index in range(52):
+                    at(1.6 + index * 0.2)
+                    if index % 2 == 0:
+                        inputs.key(0x20)
+                    row = observe()
+                    if row.get("enemy_id") == "2" and row["world_waiting"] == "false":
+                        aim_enemy(row)
+                at(12)
+                inputs.hold(ord("d"), False)
+                inputs.hold(ord("a"), True)
+                for index in range(54):
+                    at(12.2 + index * 0.2)
+                    if index % 2 == 0:
+                        inputs.key(0x20)
+                    row = observe()
+                    if row.get("enemy_id") == "2" and row["world_waiting"] == "false":
+                        aim_enemy(row)
+                at(23.2)
+                inputs.hold(ord("a"), False)
                 inputs.key(ord("p"))
             elif sample == "world":
                 at(0.5)
@@ -883,6 +921,28 @@ EndSection
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "checks": ["camera follow", "zoom", "real window resize", "mouse paint/inspection in world coordinates", "interpolated player presentation", "exact pause/step/reset positions", "facing reset", "client-only capture during resize", "authoritative replay with 1 worker", "Escape shutdown"]}
+            elif sample == "world-combat":
+                live = [r for r in rows if r["world_x"] and r["world_waiting"] == "false"]
+                assert {"Ready", "Playing"}.issubset({r["run_phase"] for r in rows})
+                assert all(r["run_phase"] != "Defeated" for r in rows), "combat ended before roundtrip"
+                assert max(float(r["world_x"]) for r in live) > 768, "second region boundary not reached"
+                assert len({r["world_origin_x"] for r in live}) >= 3
+                first = [r for r in live if r["enemy_id"] == "1"]
+                assert any(r["enemy_health"] == "2" for r in first), "initial aimed hit missing"
+                parked = [i for i, r in enumerate(rows) if r["world_origin_x"] == "64" and int(r["sleeping_enemies"] or 0) >= 1]
+                assert parked, "wounded enemy did not sleep outside the region"
+                returned = [r for r in rows[max(parked)+1:] if r["world_origin_x"] == "-960" and r["enemy_id"] == "1"]
+                assert returned and all(r["enemy_health"] == "2" for r in returned), "wounded enemy reset or failed to return"
+                assert all(abs(float(r["enemy_x"]) + int(r["world_origin_x"]) + 176.5) < 0.001 for r in first), "enemy global position shifted"
+                assert max(int(r["kills"] or 0) for r in rows) == 1, "streamed chasing encounter was not defeated"
+                assert max(int(r["resident_chunks"]) for r in live) <= 32
+                assert all(r["embedded"] == "false" for r in rows)
+                assert all(int(r["rejected_enemy_shots"] or 0) == 0 for r in rows)
+                paused = [r["simulation_tick"] for r in rows if r["paused"] == "true"]
+                assert len(paused) >= 2 and len(set(paused)) == 1
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=60)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"resident_peak": max(int(r["resident_chunks"]) for r in live), "replay": replay.stdout.strip(), "checks": ["start screen", "aimed hit wounds a turret", "two region boundaries and return", "dormant enemy keeps global position and health", "chasing encounter and kill", "pause freezes combat", "bounded resident chunks", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "world":
                 live=[r for r in rows if r["world_x"]]
                 assert live, "no world coordinates"
@@ -968,7 +1028,7 @@ EndSection
                 checks["paused_simulation_tick"] = int(paused[0]["simulation_tick"])
                 checks["texture_frames_while_paused"] = len(patches)
                 checks["checks"].append("material texture animation while physics tick stays fixed")
-            if sample in ("world", "combat", "exploration", "platformer", "debugger", "projectiles", "camera", "placement"):
+            if sample in ("world-combat", "world", "combat", "exploration", "platformer", "debugger", "projectiles", "camera", "placement"):
                 assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
                 assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"
                 checks["checks"].append("PNG+JSON actor sprite rendered through shared GPU pipeline")

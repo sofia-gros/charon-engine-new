@@ -13,6 +13,7 @@ pub enum Command {
     Explore(u64),
     NewRun(u64),
     StartWorld(u64),
+    StartWorldGame(u64),
     LoadRegion {
         origin: [i64; 2],
         cells: std::sync::Arc<[u8]>,
@@ -601,6 +602,7 @@ impl Simulation for Game {
                 && !matches!(
                     command,
                     Command::StartWorld(_)
+                        | Command::StartWorldGame(_)
                         | Command::LoadRegion { .. }
                         | Command::Left(_)
                         | Command::Right(_)
@@ -621,6 +623,7 @@ impl Simulation for Game {
                     command,
                     Command::NewRun(_)
                         | Command::StartWorld(_)
+                        | Command::StartWorldGame(_)
                         | Command::LoadRegion { .. }
                         | Command::Begin
                         | Command::Explore(_)
@@ -633,7 +636,12 @@ impl Simulation for Game {
                 continue;
             }
             match command {
-                Command::StartWorld(seed) => {
+                command @ (Command::StartWorld(_) | Command::StartWorldGame(_)) => {
+                    let (seed, combat) = match command {
+                        Command::StartWorld(seed) => (seed, false),
+                        Command::StartWorldGame(seed) => (seed, true),
+                        _ => unreachable!(),
+                    };
                     let recorder = self.recorder.take();
                     let gpu = self.fluid_gpu.clone();
                     *self = Self::with_materials(
@@ -659,6 +667,13 @@ impl Simulation for Game {
                         loaded: false,
                         seed,
                     });
+                    if combat {
+                        self.combat = Some(crate::combat::Combat::streamed(
+                            self.width,
+                            self.height,
+                            self.stream.unwrap().origin,
+                        ));
+                    }
                     terrain.clear();
                     steps = 0;
                 }
@@ -695,6 +710,9 @@ impl Simulation for Game {
                                     player.translate(offset);
                                 }
                                 self.projectiles.translate(offset);
+                                if let Some(combat) = &mut self.combat {
+                                    combat.rebase(origin);
+                                }
                                 for image in &mut self.images {
                                     image[0] += offset[0];
                                     image[1] += offset[1];

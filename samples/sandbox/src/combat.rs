@@ -15,6 +15,7 @@ pub enum Behavior {
 }
 #[derive(Clone, Copy)]
 pub struct EnemyView {
+    pub id: u64,
     pub rect: [f32; 4],
     pub health: u8,
     pub behavior: Behavior,
@@ -25,14 +26,22 @@ pub struct Frame {
     pub enemies: Vec<EnemyView>,
     pub shots: Vec<[f32; 2]>,
     pub kills: u32,
+    pub sleeping: usize,
+    pub sleeping_shots: usize,
+    pub rejected_shots: u64,
 }
 struct Enemy {
+    origin: [i64; 2],
+    active: bool,
     behavior: Behavior,
     body: Body,
     health: u8,
     cooldown: u16,
 }
 pub struct Combat {
+    region: Option<([i64; 2], [usize; 2])>,
+    parked_shots: Vec<([i64; 2], Shot)>,
+    rejected_shots: u64,
     phase: Phase,
     health: u8,
     enemies: Vec<Enemy>,
@@ -52,9 +61,14 @@ fn rect(body: Body) -> [f32; 4] {
 impl Combat {
     pub fn new(width: usize, height: usize, ready: bool) -> Self {
         Self {
+            region: None,
+            parked_shots: vec![],
+            rejected_shots: 0,
             phase: if ready { Phase::Ready } else { Phase::Playing },
             health: 3,
             enemies: vec![Enemy {
+                origin: [0, 0],
+                active: true,
                 behavior: Behavior::Turret,
                 body: Body::new(
                     (width * 3 / 5) as f32,
@@ -69,6 +83,79 @@ impl Combat {
             invulnerable: 0,
             kills: 0,
         }
+    }
+    /// Two game-owned prototype encounters. Global anchors stay integers;
+    /// dormant bodies retain their bounded local coordinates and exact state.
+    pub fn streamed(width: usize, height: usize, origin: [i64; 2]) -> Self {
+        let mut combat = Self::new(width, height, true);
+        combat.enemies.clear();
+        for (x, behavior) in [(-180., Behavior::Turret), (1100., Behavior::Chase)] {
+            combat.enemies.push(Enemy {
+                origin: [0, 0],
+                active: false,
+                behavior,
+                body: Body::new(x, 0., 7., 12.),
+                health: 3,
+                cooldown: 90,
+            });
+        }
+        combat.region = Some(([0, 0], [width, height]));
+        combat.rebase(origin);
+        combat
+    }
+    fn offset(old: [i64; 2], new: [i64; 2], size: [usize; 2]) -> Option<[f32; 2]> {
+        let delta = [old[0].checked_sub(new[0])?, old[1].checked_sub(new[1])?];
+        // Far-away dormant objects are never converted to floating point.
+        if (0..2).any(|i| delta[i].unsigned_abs() > size[i] as u64 * 2) {
+            return None;
+        }
+        Some(delta.map(|v| v as f32))
+    }
+    fn inside(position: [f32; 2], extent: [f32; 2], size: [usize; 2], margin: f32) -> bool {
+        (0..2).all(|i| position[i] >= margin && position[i] + extent[i] < size[i] as f32 - margin)
+    }
+    pub fn rebase(&mut self, origin: [i64; 2]) {
+        let Some((old, size)) = self.region else {
+            return;
+        };
+        for enemy in &mut self.enemies {
+            enemy.active = false;
+            if let Some(offset) = Self::offset(enemy.origin, origin, size) {
+                let position = [enemy.body.x() + offset[0], enemy.body.y() + offset[1]];
+                if Self::inside(
+                    position,
+                    [enemy.body.width(), enemy.body.height()],
+                    size,
+                    96.,
+                ) {
+                    enemy.body.translate(offset);
+                    enemy.origin = origin;
+                    enemy.active = true;
+                }
+            }
+        }
+        self.parked_shots
+            .extend(self.shots.shots().iter().map(|s| (old, *s)));
+        self.shots = Projectiles::default();
+        self.parked_shots.retain(|&(anchor, mut shot)| {
+            if let Some(offset) = Self::offset(anchor, origin, size) {
+                let position = [shot.position[0] + offset[0], shot.position[1] + offset[1]];
+                // Keep the whole remaining straight trajectory clear of temporary
+                // window guards, instead of manufacturing a terrain collision.
+                let margin = shot.velocity[0].abs().max(shot.velocity[1].abs())
+                    * f32::from(shot.remaining_ticks)
+                    + 2.;
+                if Self::inside(position, [0., 0.], size, margin) {
+                    shot.position = position;
+                    self.shots
+                        .spawn(shot)
+                        .expect("total active and sleeping shots are bounded");
+                    return false;
+                }
+            }
+            true
+        });
+        self.region = Some((origin, size));
     }
     pub fn set_behavior(&mut self, behavior: Behavior) {
         for enemy in &mut self.enemies {
@@ -86,7 +173,7 @@ impl Combat {
     pub fn colliders(&self) -> Vec<[f32; 4]> {
         self.enemies
             .iter()
-            .filter(|e| e.health > 0)
+            .filter(|e| e.health > 0 && e.active)
             .map(|e| rect(e.body))
             .collect()
     }
@@ -96,7 +183,7 @@ impl Combat {
         if let Some(enemy) = self
             .enemies
             .iter_mut()
-            .find(|e| contains(rect(e.body), cell[0], cell[1]))
+            .find(|e| e.active && contains(rect(e.body), cell[0], cell[1]))
         {
             if enemy.health > 0 {
                 enemy.health -= 1;
@@ -120,7 +207,7 @@ impl Combat {
         }
         self.invulnerable = self.invulnerable.saturating_sub(1);
         for enemy in &mut self.enemies {
-            if enemy.health == 0 {
+            if enemy.health == 0 || !enemy.active {
                 continue;
             }
             let dx = player.x() + player.width() / 2. - enemy.body.x() - enemy.body.width() / 2.;
@@ -146,6 +233,17 @@ impl Combat {
             enemy
                 .body
                 .step(direction, obstacle && enemy.body.grounded, &actor_solid);
+            if let Some((_, size)) = self.region {
+                if !Self::inside(
+                    [enemy.body.x(), enemy.body.y()],
+                    [enemy.body.width(), enemy.body.height()],
+                    size,
+                    96.,
+                ) {
+                    enemy.active = false;
+                    continue;
+                }
+            }
             enemy.cooldown = enemy.cooldown.saturating_sub(1);
             if enemy.cooldown == 0 && !enemy.body.embedded {
                 let aim = [
@@ -168,13 +266,18 @@ impl Combat {
                 } else {
                     delta.map(|v| v / length * 5.)
                 };
-                // One enemy, one shot per 90 ticks, lifetime 180: at most 2 live.
+                // Sleeping projectiles count against the same bounded budget.
+                if self.shots.shots().len() + self.parked_shots.len() >= 1024 {
+                    self.rejected_shots += 1;
+                    enemy.cooldown = 90;
+                    continue;
+                }
                 self.shots
                     .spawn(Shot {
                         position,
                         velocity,
                         acceleration: [0., 0.],
-                        remaining_ticks: 180,
+                        remaining_ticks: if self.region.is_some() { 16 } else { 180 },
                     })
                     .expect("bounded prototype enemy fire");
                 enemy.cooldown = 90;
@@ -204,8 +307,10 @@ impl Combat {
             enemies: self
                 .enemies
                 .iter()
-                .filter(|e| e.health > 0)
-                .map(|e| EnemyView {
+                .enumerate()
+                .filter(|(_, e)| e.health > 0 && e.active)
+                .map(|(index, e)| EnemyView {
+                    id: index as u64 + 1,
                     rect: rect(e.body),
                     health: e.health,
                     behavior: e.behavior,
@@ -213,6 +318,13 @@ impl Combat {
                 .collect(),
             shots: self.shots.shots().iter().map(|s| s.position).collect(),
             kills: self.kills,
+            sleeping: self
+                .enemies
+                .iter()
+                .filter(|e| e.health > 0 && !e.active)
+                .count(),
+            sleeping_shots: self.parked_shots.len(),
+            rejected_shots: self.rejected_shots,
         }
     }
     pub fn signature(&self) -> Vec<u64> {
@@ -222,7 +334,24 @@ impl Combat {
             self.invulnerable as u64,
             self.kills as u64,
         ];
+        if let Some((origin, size)) = self.region {
+            values.extend([
+                0x776f726c646169,
+                origin[0] as u64,
+                origin[1] as u64,
+                size[0] as u64,
+                size[1] as u64,
+                self.rejected_shots,
+            ]);
+        }
         for enemy in &self.enemies {
+            if self.region.is_some() {
+                values.extend([
+                    enemy.origin[0] as u64,
+                    enemy.origin[1] as u64,
+                    u64::from(enemy.active),
+                ]);
+            }
             if enemy.behavior == Behavior::Chase {
                 values.push(0x6368617365);
             }
@@ -245,6 +374,17 @@ impl Combat {
             );
             values.push(shot.remaining_ticks as u64);
         }
+        for (origin, shot) in &self.parked_shots {
+            values.extend([0x7061726b, origin[0] as u64, origin[1] as u64]);
+            values.extend(
+                shot.position
+                    .into_iter()
+                    .chain(shot.velocity)
+                    .chain(shot.acceleration)
+                    .map(|v| u64::from(v.to_bits())),
+            );
+            values.push(u64::from(shot.remaining_ticks));
+        }
         values
     }
 }
@@ -252,6 +392,92 @@ impl Combat {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn streamed_enemies_and_shots_sleep_without_reset_or_float_world_coordinates() {
+        let origin = [-960, -540];
+        let mut combat = Combat::streamed(1920, 1080, origin);
+        assert_eq!(combat.frame().sleeping, 1);
+        assert_eq!(combat.frame().enemies[0].id, 1);
+        combat.begin();
+        let player = Body::new(960., 540., 7., 12.);
+        combat.tick(player, |_, y| y >= 552, |_, y| y >= 552);
+        assert!(combat.hit_enemy([781, 541]));
+        assert_eq!(combat.enemies[0].health, 2);
+        combat
+            .shots
+            .spawn(Shot {
+                position: [800., 546.],
+                velocity: [5., 0.],
+                acceleration: [0., 0.],
+                remaining_ticks: 16,
+            })
+            .unwrap();
+        let cooldown = combat.enemies[0].cooldown;
+        let body = combat.enemies[0].body;
+        combat.rebase([64, -540]);
+        assert_eq!(combat.frame().enemies[0].id, 2);
+        assert_eq!(combat.frame().sleeping, 1);
+        assert_eq!(combat.frame().sleeping_shots, 1);
+        for _ in 0..40 {
+            combat.tick(player, |_, y| y >= 552, |_, y| y >= 552);
+        }
+        assert_eq!(combat.enemies[0].cooldown, cooldown);
+        assert_eq!(combat.enemies[0].health, 2);
+        assert_eq!(combat.enemies[0].body.x().to_bits(), body.x().to_bits());
+        assert_eq!(
+            combat.enemies[0].body.vertical_velocity(),
+            body.vertical_velocity()
+        );
+        assert_eq!(combat.parked_shots[0].1.remaining_ticks, 16);
+        let far = [1_i64 << 54, -(1_i64 << 54)];
+        combat.rebase(far);
+        assert!(combat.frame().enemies.is_empty());
+        assert_eq!(combat.enemies[0].origin, origin);
+        assert_eq!(combat.enemies[0].body.x().to_bits(), body.x().to_bits());
+        combat.rebase(origin);
+        let first = combat
+            .frame()
+            .enemies
+            .iter()
+            .find(|e| e.id == 1)
+            .copied()
+            .unwrap();
+        assert_eq!(first.health, 2);
+        assert_eq!(first.rect[0] as i64 + origin[0], -180);
+        assert_eq!(combat.shots.shots()[0].remaining_ticks, 16);
+        assert_eq!(combat.shots.shots()[0].position, [800., 546.]);
+        combat.hit_enemy([781, 541]);
+        combat.hit_enemy([781, 541]);
+        assert_eq!(combat.frame().kills, 1);
+        combat.rebase(far);
+        combat.rebase(origin);
+        assert!(
+            !combat.frame().enemies.iter().any(|e| e.id == 1),
+            "killed enemy respawned on return"
+        );
+        assert_eq!(combat.frame().kills, 1);
+    }
+    #[test]
+    fn sleeping_shots_share_the_bounded_fire_budget_and_report_rejection() {
+        let mut combat = Combat::streamed(1920, 1080, [-960, -540]);
+        combat.begin();
+        let shot = Shot {
+            position: [10., 10.],
+            velocity: [5., 0.],
+            acceleration: [0., 0.],
+            remaining_ticks: 16,
+        };
+        combat.parked_shots.resize(1024, ([5000, 0], shot));
+        combat.enemies[0].cooldown = 1;
+        combat.tick(
+            Body::new(960., 540., 7., 12.),
+            |_, y| y >= 552,
+            |_, y| y >= 552,
+        );
+        assert_eq!(combat.frame().rejected_shots, 1);
+        assert_eq!(combat.parked_shots.len(), 1024);
+        assert!(combat.shots.shots().is_empty());
+    }
     #[test]
     fn hunters_follow_both_directions_jump_small_obstacles_and_respect_tall_walls() {
         for player_x in [20., 130.] {
