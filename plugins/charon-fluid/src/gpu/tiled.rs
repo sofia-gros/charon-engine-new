@@ -1,6 +1,7 @@
 //! Distributed PCG with GPU reductions and ping-pong directions. Batches avoid
 //! one CPU round trip per Krylov iteration. Small domains keep the cooperative
 //! kernel; only converged pressures cross back, not the Krylov work arrays.
+use super::multigrid::{Hierarchy, COARSE_SWEEPS};
 use super::{Error, GpuContext, Work};
 const INITIALIZE: usize = 0;
 const START: usize = 1;
@@ -13,15 +14,22 @@ const BATCH: u32 = 16;
 pub(super) struct TiledPressure {
     layout: wgpu::BindGroupLayout,
     pipelines: [wgpu::ComputePipeline; 7],
+    multigrid: [wgpu::ComputePipeline; 7],
 }
 impl TiledPressure {
-    pub(super) fn new(device: &wgpu::Device) -> Self {
-        let entries: Vec<_> = (0..4)
+    pub(super) fn new(device: &wgpu::Device, lanes: f64) -> Self {
+        let entries: Vec<_> = (0..9)
             .map(|i| wgpu::BindGroupLayoutEntry {
                 binding: i,
                 visibility: wgpu::ShaderStages::COMPUTE,
                 ty: wgpu::BindingType::Buffer {
-                    ty: wgpu::BufferBindingType::Storage { read_only: i == 0 },
+                    ty: if i == 7 {
+                        wgpu::BufferBindingType::Uniform
+                    } else {
+                        wgpu::BufferBindingType::Storage {
+                            read_only: matches!(i, 0 | 4 | 5 | 8),
+                        }
+                    },
                     has_dynamic_offset: false,
                     min_binding_size: None,
                 },
@@ -41,6 +49,19 @@ impl TiledPressure {
             label: Some("tiled pressure"),
             source: wgpu::ShaderSource::Wgsl(include_str!("../pressure-tiled.wgsl").into()),
         });
+        let pipeline = |shader: &wgpu::ShaderModule, entry: &str| {
+            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: shader,
+                entry_point: Some(entry),
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    constants: &[("LANES", lanes)],
+                    ..Default::default()
+                },
+                cache: None,
+            })
+        };
         let pipelines = [
             "initialize",
             "start",
@@ -50,19 +71,33 @@ impl TiledPressure {
             "beta",
             "collect",
         ]
-        .map(|entry| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&pipeline_layout),
-                module: &shader,
-                entry_point: Some(entry),
-                compilation_options: Default::default(),
-                cache: None,
-            })
+        .map(|entry| pipeline(&shader, entry));
+        let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("aggregation multigrid"),
+            source: wgpu::ShaderSource::Wgsl(include_str!("../multigrid.wgsl").into()),
         });
-        Self { layout, pipelines }
+        let multigrid = [
+            "rhs",
+            "smooth_first",
+            "smooth_second",
+            "restrict_residual",
+            "coarse_solve",
+            "prolong",
+            "finish",
+        ]
+        .map(|entry| pipeline(&shader, entry));
+        Self {
+            layout,
+            pipelines,
+            multigrid,
+        }
     }
-    fn bind(&self, device: &wgpu::Device, buffers: &[(&wgpu::Buffer, u64); 4]) -> wgpu::BindGroup {
+    fn bind(
+        &self,
+        device: &wgpu::Device,
+        buffers: &[(&wgpu::Buffer, u64); 9],
+        level: usize,
+    ) -> wgpu::BindGroup {
         let entries: Vec<_> = buffers
             .iter()
             .enumerate()
@@ -70,7 +105,7 @@ impl TiledPressure {
                 binding: i as u32,
                 resource: wgpu::BindingResource::Buffer(wgpu::BufferBinding {
                     buffer,
-                    offset: 0,
+                    offset: if i == 7 { level as u64 * 256 } else { 0 },
                     size: std::num::NonZeroU64::new(*size),
                 }),
             })
@@ -81,24 +116,61 @@ impl TiledPressure {
             entries: &entries,
         })
     }
+    fn cycle(
+        &self,
+        pass: &mut wgpu::ComputePass<'_>,
+        binds: &[wgpu::BindGroup],
+        hierarchy: &Hierarchy,
+    ) {
+        let dispatch = |pass: &mut wgpu::ComputePass<'_>, stage: usize, level: usize| {
+            pass.set_bind_group(0, &binds[level], &[]);
+            pass.set_pipeline(&self.multigrid[stage]);
+            pass.dispatch_workgroups((hierarchy.counts[level] as u32).div_ceil(128), 1, 1);
+        };
+        let smooth = |pass: &mut wgpu::ComputePass<'_>, level| {
+            dispatch(pass, 1, level);
+            dispatch(pass, 2, level);
+        };
+        dispatch(pass, 0, 0);
+        let last = hierarchy.counts.len() - 1;
+        for level in 0..last {
+            smooth(pass, level);
+            dispatch(pass, 3, level + 1);
+        }
+        if hierarchy.direct {
+            dispatch(pass, 4, last);
+        } else {
+            for _ in 0..COARSE_SWEEPS / 2 {
+                smooth(pass, last);
+            }
+        }
+        for level in (0..last).rev() {
+            dispatch(pass, 5, level);
+            smooth(pass, level);
+        }
+        dispatch(pass, 6, 0);
+    }
 }
 impl GpuContext {
     pub(super) fn solve_tiled(
         &self,
         data: &[u8],
-        n: usize,
+        right: &[u8],
+        hierarchy: &Hierarchy,
+        first: bool,
+        cache: &mut super::Scratch,
     ) -> Result<(Vec<f64>, usize, Work), Error> {
+        let n = right.len() / 4;
         let groups = (n as u32).div_ceil(128);
-        let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
         let rows = self.buffer(
-            &mut cache,
+            cache,
             3,
             "pressure rows",
             data.len() as u64,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         let work = self.buffer(
-            &mut cache,
+            cache,
             4,
             "distributed Krylov work",
             (n * 24) as u64,
@@ -109,14 +181,14 @@ impl GpuContext {
         let partial_bytes = u64::from(groups) * 16;
         let packed_bytes = n.next_multiple_of(4) as u64 * 4;
         let partials = self.buffer(
-            &mut cache,
+            cache,
             6,
             "pressure reductions/packed output",
             partial_bytes.max(packed_bytes),
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let state = self.buffer(
-            &mut cache,
+            cache,
             7,
             "pressure control",
             32,
@@ -125,45 +197,115 @@ impl GpuContext {
                 | wgpu::BufferUsages::COPY_DST,
         );
         let readback = self.buffer(
-            &mut cache,
+            cache,
             5,
             "fluid readback",
             self.readback_size((n as u64 * 4).max(32)),
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
-        self.queue.write_buffer(&rows, 0, data);
+        let nodes = self.buffer(
+            cache,
+            9,
+            "multigrid nodes",
+            hierarchy.nodes.len() as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        let coefficients = self.buffer(
+            cache,
+            10,
+            "multigrid coefficients",
+            hierarchy.data.len() as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        let value_bytes = hierarchy.counts.iter().sum::<usize>() as u64 * 16;
+        let values = self.buffer(
+            cache,
+            11,
+            "multigrid vectors",
+            value_bytes,
+            wgpu::BufferUsages::STORAGE,
+        );
+        let params = self.buffer(
+            cache,
+            12,
+            "multigrid levels",
+            hierarchy.params.len() as u64,
+            wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+        );
+        if first {
+            self.queue.write_buffer(&nodes, 0, &hierarchy.nodes);
+            self.queue.write_buffer(&coefficients, 0, &hierarchy.data);
+            self.queue.write_buffer(&params, 0, &hierarchy.params);
+        }
+        if first {
+            self.queue.write_buffer(&rows, 0, data);
+        }
+        let right_buffer = self.buffer(
+            cache,
+            13,
+            "pressure right hand side",
+            right.len() as u64,
+            wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+        );
+        self.queue.write_buffer(&right_buffer, 0, right);
         self.queue.write_buffer(&state, 0, &[0; 32]);
         let bindings = [
             (&rows, data.len() as u64),
             (&work, (n * 24) as u64),
             (&partials, partial_bytes),
             (&state, 32),
+            (&nodes, hierarchy.nodes.len() as u64),
+            (&coefficients, hierarchy.data.len() as u64),
+            (&values, value_bytes),
+            (&params, 32),
+            (&right_buffer, right.len() as u64),
         ];
-        let bind = self.tiled.bind(&self.device, &bindings);
+        let binds: Vec<_> = (0..hierarchy.counts.len())
+            .map(|level| self.tiled.bind(&self.device, &bindings, level))
+            .collect();
         let mut total = self.empty_work();
-        total.upload_bytes = data.len() as u64 + 32;
+        total.upload_bytes = right.len() as u64 + 32;
+        if first {
+            total.upload_bytes += data.len() as u64;
+        }
+        if first {
+            total.upload_bytes +=
+                (hierarchy.nodes.len() + hierarchy.data.len() + hierarchy.params.len()) as u64;
+        }
         let mut iterations = 0;
         for batch in 0..800 / BATCH {
             let (result, work) = self.dispatch_read(
                 &state,
                 32,
                 &readback,
-                (4 * BATCH + if batch == 0 { 2 } else { 0 }, groups),
+                (
+                    (4 + hierarchy.dispatches()) * BATCH
+                        + if batch == 0 {
+                            2 + hierarchy.dispatches()
+                        } else {
+                            0
+                        },
+                    groups,
+                ),
                 |pass| {
-                    pass.set_bind_group(0, &bind, &[]);
+                    pass.set_bind_group(0, &binds[0], &[]);
                     if batch == 0 {
                         pass.set_pipeline(&self.tiled.pipelines[INITIALIZE]);
                         pass.dispatch_workgroups(groups, 1, 1);
+                        self.tiled.cycle(pass, &binds, hierarchy);
+                        pass.set_bind_group(0, &binds[0], &[]);
                         pass.set_pipeline(&self.tiled.pipelines[START]);
                         pass.dispatch_workgroups(1, 1, 1);
                     }
                     for _ in 0..BATCH {
-                        for (pipeline, count) in
-                            [(PRODUCT, groups), (ALPHA, 1), (UPDATE, groups), (BETA, 1)]
-                        {
+                        for (pipeline, count) in [(PRODUCT, groups), (ALPHA, 1), (UPDATE, groups)] {
                             pass.set_pipeline(&self.tiled.pipelines[pipeline]);
                             pass.dispatch_workgroups(count, 1, 1);
                         }
+                        self.tiled.cycle(pass, &binds, hierarchy);
+                        pass.set_bind_group(0, &binds[0], &[]);
+                        pass.set_pipeline(&self.tiled.pipelines[BETA]);
+                        pass.dispatch_workgroups(1, 1, 1);
                     }
                 },
             )?;
@@ -184,7 +326,13 @@ impl GpuContext {
                 bindings[1],
                 (&partials, packed_bytes),
                 bindings[3],
+                bindings[4],
+                bindings[5],
+                bindings[6],
+                bindings[7],
+                bindings[8],
             ],
+            0,
         );
         let (result, work) = self.dispatch_read(
             &partials,

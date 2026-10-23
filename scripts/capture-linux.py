@@ -796,7 +796,7 @@ EndSection
                       "simulation_grid": [int(v) for v in args.grid.split("x")],
                       **checks}
             if sample in ("cup", "fluid-wave", "fluid-dam") and args.fluid_backend == "gpu":
-                report["solver"] = "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed Jacobi-PCG / f64 defect correction / CPU geometric VOF"
+                report["solver"] = "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed aggregation multigrid-PCG / f64 defect correction / CPU geometric VOF"
             if sample in ("cup", "fluid-wave", "fluid-dam"):
                 # Exclude scene entry and paused/sleeping rows. A one-second
                 # counter interval can still straddle an input transition.

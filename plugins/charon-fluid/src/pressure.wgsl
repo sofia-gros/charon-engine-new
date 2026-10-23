@@ -7,6 +7,7 @@ struct Preconditioner { blocks:u32, block_size:u32, coarse_offset:u32, rhs_offse
 @group(0) @binding(0) var<storage,read> rows:array<Row>;
 @group(0) @binding(1) var<storage,read_write> work:array<Work>;
 @group(0) @binding(2) var<storage,read_write> pc:Preconditioner;
+@group(0) @binding(3) var<storage,read> right:array<f32>;
 var<workgroup> sums:array<vec2f,128>;
 var<workgroup> rz:f32;
 var<workgroup> threshold:f32;
@@ -53,7 +54,7 @@ fn precondition(lane:u32) {
 @compute @workgroup_size(LANES)
 fn main(@builtin(local_invocation_index) lane:u32) {
  let n=arrayLength(&rows);
- for(var i=lane;i<n;i+=LANES) {work[i]=Work(0.,rows[i].rhs,0.,0.,0.);}
+ for(var i=lane;i<n;i+=LANES) {work[i]=Work(0.,right[i],0.,0.,0.);}
  storageBarrier(); precondition(lane);
  var local=vec2f(0.);
  for(var i=lane;i<n;i+=LANES) {

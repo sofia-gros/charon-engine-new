@@ -253,9 +253,8 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
         assert!(work.dispatches > 0 && work.upload_bytes > 0 && work.readback_bytes > 0);
         assert_eq!(work.max_workgroups, 1);
-        // Pressure rows are sent each refinement; the two-level coefficients
-        // (or bounded Jacobi header) are uploaded only once per system.
-        assert!(work.upload_bytes > (n * 48) as u64 * u64::from(work.dispatches));
+        // Operator/preconditioner are sent once; only RHS changes per refinement.
+        assert!(work.upload_bytes > (n * 48) as u64 + (n * 4) as u64 * u64::from(work.dispatches));
         let readback = if gpu.timing_available() {
             (n as u64 * 20).next_multiple_of(8) + 16
         } else {
@@ -280,7 +279,7 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
     assert!(p.iter().zip(&rhs).all(|(p, r)| (p - r / 2.).abs() < 1e-8));
     assert_eq!(
         work.upload_bytes,
-        (n * 48) as u64 * u64::from(work.dispatches) + 20
+        (n * 48) as u64 + (n * 4) as u64 * u64::from(work.dispatches) + 20
     );
     // Compare every advected face, not only the final visual surface.
     let mut cpu = domain(26, 30, 2);
@@ -480,8 +479,67 @@ fn gpu_pressure_two_level_handles_mixed_components_with_hardware_sized_groups() 
 #[cfg(feature = "gpu")]
 #[test]
 #[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_shared_context_does_not_mix_concurrent_pressure_systems() {
+    let gpu = std::sync::Arc::new(gpu::GpuContext::new().unwrap());
+    let start = std::sync::Barrier::new(2);
+    std::thread::scope(|scope| {
+        for n in [37, 8209] {
+            let gpu = &gpu;
+            let start = &start;
+            scope.spawn(move || {
+                start.wait();
+                for repetition in 0..3 {
+                    let diagonal = 2.1 + repetition as f64 * 0.07;
+                    let rows: Vec<_> = (0..n)
+                        .map(|i| {
+                            (
+                                [
+                                    if i > 0 { i - 1 } else { usize::MAX },
+                                    if i + 1 < n { i + 1 } else { usize::MAX },
+                                    usize::MAX,
+                                    usize::MAX,
+                                ],
+                                [1., 1., 0., 0.],
+                                diagonal,
+                            )
+                        })
+                        .collect();
+                    let expected: Vec<_> = (0..n).map(|i| (i * 17 % 53) as f64 / 53.).collect();
+                    let rhs: Vec<_> = rows
+                        .iter()
+                        .enumerate()
+                        .map(|(i, (adj, a, d))| {
+                            d * expected[i]
+                                - (0..4)
+                                    .filter(|&k| adj[k] != usize::MAX)
+                                    .map(|k| a[k] * expected[adj[k]])
+                                    .sum::<f64>()
+                        })
+                        .collect();
+                    let mut p = vec![0.; n];
+                    gpu.solve(&rows, &rhs, &mut p).unwrap();
+                    let error = p
+                        .iter()
+                        .zip(&expected)
+                        .map(|(p, e)| (p - e).abs())
+                        .fold(0., f64::max);
+                    assert!(
+                        error < 1e-6,
+                        "n={n} repetition={repetition} error={error:e}"
+                    );
+                }
+            });
+        }
+    });
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
 fn gpu_compute_distributed_pressure_matches_known_solution_and_conserves_volume() {
     let gpu = std::sync::Arc::new(gpu::GpuContext::new().unwrap());
+    let hardware_sized = gpu::GpuContext::with_pressure_lanes(128).unwrap();
+    let untimed = gpu::GpuContext::with_timing(false).unwrap();
     for (w, h, sealed_left) in [(8209, 1, false), (131, 129, true)] {
         let n = w * h;
         let mut rows = Vec::with_capacity(n);
@@ -534,23 +592,46 @@ fn gpu_compute_distributed_pressure_matches_known_solution_and_conserves_volume(
                         .sum::<f64>()
             })
             .collect();
-        let mut p = vec![0.; n];
-        let (iterations, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
-        let error = p
-            .iter()
-            .zip(expected)
-            .map(|(a, b)| (a - b).abs())
-            .fold(0., f64::max);
-        assert!(error < 5e-5, "n={n} error={error:e}");
-        assert_eq!(work.max_workgroups, (n as u32).div_ceil(128));
-        assert!(
-            work.dispatches > iterations as u32
-                && work.upload_bytes >= n as u64 * 48
-                && work.readback_bytes >= n as u64 * 4
-        );
-        assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
-        eprintln!("distributed n={n} mixed_boundaries={sealed_left} iterations={iterations} max_error={error:e} work={work:?}");
+        for (lanes, gpu) in [(4, gpu.as_ref()), (128, &hardware_sized)] {
+            let mut p = vec![0.; n];
+            let (iterations, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+            let error = p
+                .iter()
+                .zip(&expected)
+                .map(|(a, b)| (a - b).abs())
+                .fold(0., f64::max);
+            assert!(error < 5e-5, "n={n} error={error:e}");
+            assert_eq!(work.max_workgroups, (n as u32).div_ceil(128));
+            assert!(
+                work.dispatches > iterations as u32
+                    && work.upload_bytes >= n as u64 * 48
+                    && work.readback_bytes >= n as u64 * 4
+            );
+            assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
+            eprintln!("distributed lanes={lanes} n={n} mixed_boundaries={sealed_left} iterations={iterations} max_error={error:e} work={work:?}");
+            if !sealed_left && lanes == 4 {
+                let mut other = vec![0.; n];
+                let (_, metrics) = untimed.solve(&rows, &rhs, &mut other).unwrap();
+                assert_eq!(
+                    p, other,
+                    "multigrid profiling changed the physical correction"
+                );
+                assert!(metrics.kernel_ms.is_none());
+            }
+        }
     }
+    // A pathological number of separate components must use bounded coarse
+    // smoothing, not allocate a 9,001 squared dense inverse.
+    let n = 9001;
+    let rows = vec![([usize::MAX; 4], [0.; 4], 2.); n];
+    let rhs: Vec<_> = (0..n).map(|i| (i % 13) as f64).collect();
+    let mut p = vec![0.; n];
+    let (_, metrics) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+    assert!(p.iter().zip(&rhs).all(|(p, r)| (p - r / 2.).abs() < 1e-6));
+    assert!(
+        metrics.upload_bytes < 4_000_000,
+        "unbounded coarse data: {metrics:?}"
+    );
     // A real MAC projection, not only a generated matrix. All 18,432 occupied
     // cells must participate; the closed tank requires a pressure gauge.
     let mut fluid = domain(130, 146, 4);

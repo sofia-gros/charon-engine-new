@@ -4,7 +4,7 @@
 use crate::Error;
 type Row = ([usize; 4], [f64; 4], f64);
 
-fn inverse(mut a: Vec<f64>, n: usize) -> Result<Vec<f64>, Error> {
+pub(super) fn inverse(mut a: Vec<f64>, n: usize) -> Result<Vec<f64>, Error> {
     // Cholesky in f64, including the gauge-pinned closed components.
     for i in 0..n {
         for j in 0..=i {

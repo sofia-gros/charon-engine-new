@@ -6,10 +6,11 @@ use std::{
     time::Duration,
 };
 
+mod multigrid;
 mod preconditioner;
 mod tiled;
 const TILED_THRESHOLD: usize = 8192;
-type Scratch = [Option<wgpu::Buffer>; 9];
+type Scratch = [Option<wgpu::Buffer>; 14];
 
 struct Timer {
     queries: wgpu::QuerySet,
@@ -120,7 +121,7 @@ impl GpuContext {
             include_str!("pressure.wgsl"),
             &[("LANES", lanes)],
         );
-        let tiled = tiled::TiledPressure::new(&device);
+        let tiled = tiled::TiledPressure::new(&device, lanes);
         if let Some(e) = scope.pop().await {
             return Err(e.to_string());
         }
@@ -407,6 +408,9 @@ impl GpuContext {
         rhs: &[f64],
         p: &mut [f64],
     ) -> Result<(usize, Work), Error> {
+        // Keep cached coefficients exclusively owned through every f64
+        // refinement round when multiple fluids share this GPU context.
+        let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
         let n = rows.len();
         let apply = |x: &[f64], r: &mut [f64]| {
             for (i, (adj, a, diag)) in rows.iter().enumerate() {
@@ -459,6 +463,8 @@ impl GpuContext {
         let mut iterations = 0;
         let mut total_work = self.empty_work();
         let mut preconditioner_data = None;
+        let mut hierarchy = None;
+        let mut packed_rows = None;
         for _ in 0..5 {
             apply(p, &mut product);
             let residual: Vec<_> = rhs.iter().zip(&product).map(|(b, a)| b - a).collect();
@@ -489,36 +495,58 @@ impl GpuContext {
                     }
                 }
             }
-            let mut data = Vec::with_capacity(n * 48);
-            for (i, (adj, a, diag)) in rows.iter().enumerate() {
-                for &j in adj {
-                    let j = if pin && anchors[i] || j == usize::MAX || pin && anchors[j] {
-                        u32::MAX
-                    } else {
-                        j as u32
-                    };
-                    data.extend_from_slice(&j.to_le_bytes());
-                }
-                for &x in a {
-                    data.extend_from_slice(
-                        &(if pin && anchors[i] { 0. } else { x as f32 }).to_le_bytes(),
-                    );
-                }
-                for x in [
-                    if pin && anchors[i] { 1. } else { *diag as f32 },
-                    if pin && anchors[i] { 0. } else { right[i] },
-                    if pin {
-                        0.
-                    } else {
-                        (*diag - a.iter().sum::<f64>()) as f32
-                    },
-                    0.,
-                ] {
-                    data.extend_from_slice(&x.to_le_bytes());
+            if pin {
+                for (i, &anchor) in anchors.iter().enumerate() {
+                    if anchor {
+                        right[i] = 0.;
+                    }
                 }
             }
+            let right_bytes: Vec<u8> = right.iter().flat_map(|v| v.to_le_bytes()).collect();
+            let first = packed_rows.is_none();
+            if first {
+                let mut data = Vec::with_capacity(n * 48);
+                for (i, (adj, a, diag)) in rows.iter().enumerate() {
+                    for &j in adj {
+                        let j = if pin && anchors[i] || j == usize::MAX || pin && anchors[j] {
+                            u32::MAX
+                        } else {
+                            j as u32
+                        };
+                        data.extend_from_slice(&j.to_le_bytes());
+                    }
+                    for &x in a {
+                        data.extend_from_slice(
+                            &(if pin && anchors[i] { 0. } else { x as f32 }).to_le_bytes(),
+                        );
+                    }
+                    for x in [
+                        if pin && anchors[i] { 1. } else { *diag as f32 },
+                        0.,
+                        if pin {
+                            0.
+                        } else {
+                            (*diag - a.iter().sum::<f64>()) as f32
+                        },
+                        0.,
+                    ] {
+                        data.extend_from_slice(&x.to_le_bytes());
+                    }
+                }
+                packed_rows = Some(data);
+            }
+            let data = packed_rows.as_ref().unwrap();
             if n >= TILED_THRESHOLD {
-                let (correction, count, work) = self.solve_tiled(&data, n)?;
+                if first {
+                    hierarchy = Some(multigrid::Hierarchy::build(rows)?);
+                }
+                let (correction, count, work) = self.solve_tiled(
+                    data,
+                    &right_bytes,
+                    hierarchy.as_ref().unwrap(),
+                    first,
+                    &mut cache,
+                )?;
                 for (i, value) in p.iter_mut().enumerate() {
                     let anchor = closed_anchor[i];
                     let gauge = if anchor == usize::MAX {
@@ -532,7 +560,6 @@ impl GpuContext {
                 total_work.add(work);
                 continue;
             }
-            let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
             let first = preconditioner_data.is_none();
             if first {
                 preconditioner_data = Some(preconditioner::build(rows, &anchors)?);
@@ -556,7 +583,17 @@ impl GpuContext {
                 data.len() as u64,
                 wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             );
-            self.queue.write_buffer(&data_buffer, 0, &data);
+            if first {
+                self.queue.write_buffer(&data_buffer, 0, data);
+            }
+            let right_buffer = self.buffer(
+                &mut cache,
+                13,
+                "pressure right hand side",
+                right_bytes.len() as u64,
+                wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+            );
+            self.queue.write_buffer(&right_buffer, 0, &right_bytes);
             let size = (n * 20) as u64;
             // Kernel initializes every work entry. Only actual rows are bound,
             // so a growing buffer never exposes stale capacity to arrayLength.
@@ -580,15 +617,16 @@ impl GpuContext {
                     (&data_buffer, data.len() as u64),
                     (&work, size),
                     (&preconditioner, preconditioner_data.len() as u64),
+                    (&right_buffer, right_bytes.len() as u64),
                 ],
                 &work,
                 size,
                 &readback,
                 1,
             )?;
-            work.upload_bytes = data.len() as u64
+            work.upload_bytes = right_bytes.len() as u64
                 + if first {
-                    preconditioner_data.len() as u64
+                    (data.len() + preconditioner_data.len()) as u64
                 } else {
                     0
                 };

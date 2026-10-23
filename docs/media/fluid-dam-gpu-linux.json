@@ -1,25 +1,25 @@
 {
-  "source_sha256": "9ae9a37b236445ede066f87c6fc7a187ae5c49d7d216983f64bc6e5ea0f6fe5c",
+  "source_sha256": "0b1246cf186ae4801579e422937f1e4be4af97bad42202413e1bff4932fd1b94",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-dam",
-  "base_revision": "a3b7ddc28343c0431a57f56cb7f582714dde9dfc",
+  "base_revision": "c4651fc8fa39b369048a2d4d3b9eb23d91e8abbe",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.994,
-  "gif_encoded_frames": 112,
+  "observed_capture_fps": 7.995,
+  "gif_encoded_frames": 111,
   "draw_submission_fps_range": [
-    21.95,
-    38.91
+    19.61,
+    36.77
   ],
   "simulation_hz_range": [
     0.0,
-    87.81
+    80.08
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 112,
-  "gif_duration_ms": 14020,
+  "gif_duration_ms": 14030,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -32,7 +32,7 @@
     128,
     100
   ],
-  "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed Jacobi-PCG / f64 defect correction / CPU geometric VOF",
+  "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed aggregation multigrid-PCG / f64 defect correction / CPU geometric VOF",
   "fluid_settings": {
     "viscosity_cell2_s": 0.5,
     "pressure_cutoff": 0.01,
@@ -53,38 +53,38 @@
     "Escape shutdown"
   ],
   "fluid_active_simulation_hz_range": [
-    34.05,
-    76.82
+    35.03,
+    73.59
   ],
   "fluid_active_tick_work_ms_range": [
-    9.359,
-    47.623
+    9.09,
+    54.609
   ],
   "fluid_gpu_measurements": {
     "timestamp_available": true,
     "velocity_kernel_ms_range": [
-      1.213496,
-      10.86423
+      1.36988,
+      13.131117
     ],
     "pressure_kernel_ms_range": [
-      4.713733,
-      23.576971
+      4.681847,
+      26.545069
     ],
     "pressure_iterations_per_tick_range": [
-      39,
-      159
+      42,
+      201
     ],
     "upload_bytes_per_tick_range": [
-      140188,
-      570740
+      130748,
+      665244
     ],
     "readback_bytes_per_tick_range": [
-      112800,
-      452976
+      112720,
+      567376
     ],
     "dispatches_per_tick_range": [
       3,
-      12
+      15
     ],
     "velocity_workgroups_per_dispatch_range": [
       202,

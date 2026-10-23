@@ -1,21 +1,21 @@
 {
-  "source_sha256": "9ae9a37b236445ede066f87c6fc7a187ae5c49d7d216983f64bc6e5ea0f6fe5c",
+  "source_sha256": "0b1246cf186ae4801579e422937f1e4be4af97bad42202413e1bff4932fd1b94",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-wave",
-  "base_revision": "a3b7ddc28343c0431a57f56cb7f582714dde9dfc",
+  "base_revision": "c4651fc8fa39b369048a2d4d3b9eb23d91e8abbe",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.001,
-  "gif_encoded_frames": 157,
+  "observed_capture_fps": 8.005,
+  "gif_encoded_frames": 159,
   "draw_submission_fps_range": [
-    18.46,
-    34.61
+    17.0,
+    37.73
   ],
   "simulation_hz_range": [
     0.0,
-    60.99
+    60.87
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 160,
@@ -33,16 +33,16 @@
     100
   ],
   "water_volume_cells": 364.0,
-  "oil_volume_cells": 84.0,
+  "oil_volume_cells": 83.981838915,
   "surface_delta_range": [
-    -4.474147,
-    2.486089
+    -3.823934,
+    3.419025
   ],
   "cup_x_range": [
     48,
-    74
+    75
   ],
-  "replay": "replay_ticks=1237 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1238 checks=terrain,player,input_state workers=1",
   "checks": [
     "real left/right movement and reversal",
     "entire cup inside the camera",
@@ -55,40 +55,40 @@
     "Escape shutdown"
   ],
   "scope": "Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep.",
-  "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed Jacobi-PCG / f64 defect correction / CPU geometric VOF",
+  "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed aggregation multigrid-PCG / f64 defect correction / CPU geometric VOF",
   "fluid_active_simulation_hz_range": [
-    29.33,
-    55.0
+    32.93,
+    57.48
   ],
   "fluid_active_tick_work_ms_range": [
-    11.878,
-    58.91
+    16.529,
+    64.576
   ],
   "fluid_gpu_measurements": {
     "timestamp_available": true,
     "velocity_kernel_ms_range": [
-      1.173626,
-      9.72853
+      1.000869,
+      11.13653
     ],
     "pressure_kernel_ms_range": [
       0.0,
-      44.221185
+      48.538355
     ],
     "pressure_iterations_per_tick_range": [
       0,
-      101
+      145
     ],
     "upload_bytes_per_tick_range": [
       103344,
-      374560
+      503680
     ],
     "readback_bytes_per_tick_range": [
       103328,
-      245760
+      368096
     ],
     "dispatches_per_tick_range": [
       1,
-      6
+      9
     ],
     "velocity_workgroups_per_dispatch_range": [
       202,
