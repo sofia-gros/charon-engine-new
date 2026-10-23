@@ -126,9 +126,20 @@ pub fn overlays(
     }
     result.push(rect(2., 45., 270., 11., [0.03, 0.06, 0.1, 1.]));
     text(&mut result, 4., 47., tool_label, [0.7, 1., 0.8, 1.]);
+    result.push(rect(2., 57., 270., 11., [0.03, 0.06, 0.1, 1.]));
+    text(
+        &mut result,
+        4.,
+        59.,
+        &format!(
+            "SAND {} LIQUID {} ACTIVE {}",
+            frame.terrain.sand, frame.terrain.liquid, frame.terrain.active_tiles
+        ),
+        [0.75, 0.9, 1., 1.],
+    );
     if let Some(error) = frame.image_error {
-        result.push(rect(2., 57., 270., 11., [0.1, 0.03, 0.03, 1.]));
-        text(&mut result, 4., 59., error, [1., 0.4, 0.4, 1.]);
+        result.push(rect(2., 69., 270., 11., [0.1, 0.03, 0.03, 1.]));
+        text(&mut result, 4., 71., error, [1., 0.4, 0.4, 1.]);
     }
     result
 }

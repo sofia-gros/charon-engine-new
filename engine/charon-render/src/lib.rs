@@ -350,10 +350,6 @@ impl Gpu {
         if rectangles == self.last_overlays {
             return 0;
         }
-        assert!(
-            rectangles.len() <= 1024,
-            "initial overlay batch limit is 1024 rectangles"
-        );
         let mut bytes = Vec::with_capacity(rectangles.len() * 6 * 24);
         for rect in rectangles {
             assert!([rect.x, rect.y, rect.width, rect.height]
@@ -374,6 +370,14 @@ impl Gpu {
                     bytes.extend_from_slice(&value.to_ne_bytes());
                 }
             }
+        }
+        if bytes.len() as u64 > self.overlay_buffer.size() {
+            self.overlay_buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("overlay-vertices"),
+                size: bytes.len().next_power_of_two() as u64,
+                usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
         }
         if !bytes.is_empty() {
             self.queue.write_buffer(&self.overlay_buffer, 0, &bytes);
@@ -440,13 +444,17 @@ impl Gpu {
     pub fn smoke_overlay(&mut self, image: &TiledImage) -> Result<()> {
         self.upload_tiled(image);
         let (x, y, width, height) = (2, 2, 3, 4);
-        self.set_overlays(&[OverlayRect {
-            x: x as f32,
-            y: y as f32,
-            width: width as f32,
-            height: height as f32,
-            color: [1., 0., 0., 1.],
-        }]);
+        // Exercise growth past the former 1024-rectangle diagnostic limit.
+        self.set_overlays(&vec![
+            OverlayRect {
+                x: x as f32,
+                y: y as f32,
+                width: width as f32,
+                height: height as f32,
+                color: [1., 0., 0., 1.],
+            };
+            1536
+        ]);
         let mut rgba = image.to_rgba();
         for py in y..y + height {
             for px in x..x + width {

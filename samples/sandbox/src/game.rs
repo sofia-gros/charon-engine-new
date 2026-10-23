@@ -91,6 +91,15 @@ pub struct Game {
 }
 impl Game {
     pub fn new(width: usize, height: usize, workers: usize, play: bool) -> Result<Self, String> {
+        Self::with_materials(width, height, workers, play, palette())
+    }
+    pub fn with_materials(
+        width: usize,
+        height: usize,
+        workers: usize,
+        play: bool,
+        materials: charon_sand::Materials,
+    ) -> Result<Self, String> {
         if play && (!(160..=1920).contains(&width) || !(120..=1080).contains(&height)) {
             return Err("play mode needs a grid of 160..1920 by 120..1080".into());
         }
@@ -108,9 +117,9 @@ impl Game {
             for y in floor..floor + 4 {
                 cells[y * width + width / 8..y * width + width * 7 / 8].fill(WALL);
             }
-            SandWorld::from_material_cells(width, height, workers, cells, palette())?
+            SandWorld::from_material_cells(width, height, workers, cells, materials)?
         } else {
-            SandWorld::with_materials(width, height, workers, palette())?
+            SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
             images: vec![],
@@ -315,8 +324,14 @@ impl Simulation for Game {
                     let recorder = self.recorder.take();
                     let paused = self.paused;
                     let inspection = self.inspection;
-                    *self = Self::new(self.width, self.height, self.workers, true)
-                        .expect("validated scene dimensions");
+                    *self = Self::with_materials(
+                        self.width,
+                        self.height,
+                        self.workers,
+                        true,
+                        self.world.materials().clone(),
+                    )
+                    .expect("validated scene dimensions");
                     self.recorder = recorder;
                     self.paused = paused;
                     self.inspection = inspection;
@@ -421,6 +436,41 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sea_acceptance_sand_displaces_water_over_bank_without_deleting_material() {
+        use crate::materials::WATER;
+        let mut game = Game::new(160, 120, 4, false).unwrap();
+        let initial = game.step(
+            crate::scenes::sea(160, 120)
+                .into_iter()
+                .map(Command::Terrain)
+                .collect(),
+        );
+        let water = initial.terrain.liquid;
+        let initial_sand = initial.terrain.sand;
+        game.step(vec![Command::Terrain(SandCommand::FillRect {
+            x: 12,
+            y: 8,
+            width: 48,
+            height: 30,
+            material: SAND,
+        })]);
+        for _ in 0..900 {
+            let frame = game.step(vec![]);
+            assert_eq!(
+                (frame.terrain.liquid, frame.terrain.sand),
+                (water, initial_sand + 1440)
+            );
+        }
+        let overflow = (0..119)
+            .flat_map(|y| (82..159).map(move |x| (x, y)))
+            .filter(|&(x, y)| game.world.material_at(x, y) == Some(WATER))
+            .count();
+        assert!(
+            overflow > 0,
+            "water did not spill onto right-hand sand bank"
+        );
+    }
     #[test]
     fn free_images_keep_subcell_coordinates_without_changing_terrain_and_reset_cleanly() {
         let mut game = Game::new(96, 96, 1, false).unwrap();

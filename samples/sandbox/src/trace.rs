@@ -28,7 +28,7 @@ impl Recorder {
             BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
         writeln!(
             writer,
-            "charon-input-v2 {width} {height} {workers} {} {materials:016x}",
+            "charon-input-v3 {width} {height} {workers} {} {materials:016x}",
             u8::from(play)
         )?;
         writer.flush()?;
@@ -127,6 +127,9 @@ fn decode(text: &str) -> Result<Command, String> {
     })
 }
 pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
+    replay_game(path, workers).map(|(_, ticks)| ticks)
+}
+fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
     let mut lines = BufReader::new(File::open(path).map_err(|e| e.to_string())?).lines();
     let header = lines
         .next()
@@ -135,15 +138,29 @@ pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
     let fields: Vec<_> = header.split_whitespace().collect();
     let legacy = fields.first() == Some(&"charon-input-v1");
     if !(legacy && fields.len() == 5
-        || fields.first() == Some(&"charon-input-v2") && fields.len() == 6)
+        || matches!(
+            fields.first(),
+            Some(&"charon-input-v2" | &"charon-input-v3")
+        ) && fields.len() == 6)
         || !["0", "1"].contains(&fields[4])
     {
         return Err("unsupported input header".into());
     }
     let width = fields[1].parse().map_err(|_| "invalid width")?;
     let height = fields[2].parse().map_err(|_| "invalid height")?;
-    let mut game = Game::new(width, height, workers, fields[4] == "1")?;
-    if !legacy && u64::from_str_radix(fields[5], 16).ok() != Some(game.material_fingerprint()) {
+    let old = legacy || fields[0] == "charon-input-v2";
+    let materials = if old {
+        crate::materials::legacy_palette()
+    } else {
+        crate::materials::palette()
+    };
+    let expected_materials = if old {
+        materials.legacy_fingerprint()
+    } else {
+        materials.fingerprint()
+    };
+    let mut game = Game::with_materials(width, height, workers, fields[4] == "1", materials)?;
+    if !legacy && u64::from_str_radix(fields[5], 16).ok() != Some(expected_materials) {
         return Err(
             "material definitions differ from input trace; use the matching game version".into(),
         );
@@ -184,11 +201,38 @@ pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
     if ticks == 0 {
         return Err("input trace contains no ticks".into());
     }
-    Ok(ticks)
+    Ok((game, ticks))
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn recorded_sea_reaches_rest_without_losing_water() {
+        let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/media/sea-linux.trace");
+        let (mut game, _) = replay_game(&path, 1).unwrap();
+        let water = game.step(vec![]).terrain.liquid;
+        for _ in 0..2400 {
+            let frame = game.step(vec![]);
+            assert_eq!(frame.terrain.liquid, water);
+            if frame.terrain.active_tiles == 0 {
+                let signature = game.signature();
+                for _ in 0..5 {
+                    let idle = game.step(vec![]);
+                    assert_eq!(
+                        (
+                            idle.terrain.active_tiles,
+                            idle.terrain.visited_cells,
+                            idle.terrain.converted_cells
+                        ),
+                        (0, 0, 0)
+                    );
+                    assert_eq!(game.signature(), signature);
+                }
+                return;
+            }
+        }
+        panic!("recorded sea never settled");
+    }
     #[test]
     fn recorded_inputs_replay_across_workers_and_detect_corruption() {
         let path =

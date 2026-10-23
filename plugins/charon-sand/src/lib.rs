@@ -39,6 +39,8 @@ pub struct Frame {
     pub converted_cells: usize,
     /// Total powder cells, including custom powders (legacy field name).
     pub sand: usize,
+    /// Total liquid cells; material identity and collision remain game-defined.
+    pub liquid: usize,
     pub active_tiles: usize,
     pub visited_cells: usize,
     pub workers_configured: usize,
@@ -51,8 +53,11 @@ pub struct SandWorld {
     width: usize,
     height: usize,
     cells: Vec<u8>,
+    claimed: Vec<u64>,
     materials: Arc<Materials>,
     sand: usize,
+    liquid: usize,
+    liquid_rows: Vec<usize>,
     image: TiledImage,
     indices: IndexedImage,
     dirty: Vec<bool>,
@@ -103,6 +108,10 @@ impl SandWorld {
             return Err("material grid must match dimensions and contain valid materials and protected walls".into());
         }
         world.sand = cells.iter().filter(|&&cell| world.is_powder(cell)).count();
+        world.liquid = cells.iter().filter(|&&cell| world.is_liquid(cell)).count();
+        for (index, &id) in cells.iter().enumerate() {
+            world.liquid_rows[index / width] += usize::from(world.is_liquid(id));
+        }
         world.cells = cells;
         Ok(world)
     }
@@ -138,6 +147,12 @@ impl SandWorld {
             .is_some_and(|m| m.motion == Motion::Powder)
     }
 
+    fn is_liquid(&self, id: u8) -> bool {
+        self.materials
+            .get(id)
+            .is_some_and(|m| m.motion == Motion::Liquid)
+    }
+
     pub fn with_materials(
         width: usize,
         height: usize,
@@ -159,8 +174,11 @@ impl SandWorld {
             width,
             height,
             cells: vec![materials.air(); width * height],
+            claimed: vec![0; width * height],
+            liquid_rows: vec![0; height],
             materials: Arc::new(materials),
             sand: 0,
+            liquid: 0,
             image: TiledImage::new(width, height, TILE),
             indices: IndexedImage::new(width, height, TILE),
             dirty: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
@@ -176,6 +194,8 @@ impl SandWorld {
     fn reset(&mut self) {
         self.cells.fill(self.materials.air());
         self.sand = 0;
+        self.liquid = 0;
+        self.liquid_rows.fill(0);
         self.dirty.fill(true);
         for y in 0..self.height {
             self.cells[y * self.width] = self.materials.boundary();
@@ -189,8 +209,22 @@ impl SandWorld {
         let (x, y) = (index % self.width, index / self.width);
         let columns = self.width.div_ceil(TILE);
         self.dirty[y / TILE * columns + x / TILE] = true;
+        // A changed cell can open a route for a distant liquid on the same or
+        // neighboring row. Wake the horizontal strip only when it contains fluid;
+        // deeper rows and unrelated powder-only areas retain local sleeping.
+        let fluid_nearby = self.liquid_rows[y.saturating_sub(1)..=(y + 1).min(self.height - 1)]
+            .iter()
+            .any(|&n| n > 0);
+        let (left, right) = if fluid_nearby {
+            (0, columns - 1)
+        } else {
+            (
+                x.saturating_sub(1) / TILE,
+                (x + 1).min(self.width - 1) / TILE,
+            )
+        };
         for ty in y.saturating_sub(1) / TILE..=((y + 1).min(self.height - 1) / TILE) {
-            for tx in x.saturating_sub(1) / TILE..=((x + 1).min(self.width - 1) / TILE) {
+            for tx in left..=right {
                 self.awake[ty * columns + tx] = true;
             }
         }
@@ -231,6 +265,10 @@ impl SandWorld {
                 if self.cells[index] != material {
                     self.sand -= usize::from(self.is_powder(self.cells[index]));
                     self.sand += usize::from(self.is_powder(material));
+                    self.liquid -= usize::from(self.is_liquid(self.cells[index]));
+                    self.liquid += usize::from(self.is_liquid(material));
+                    self.liquid_rows[py] -= usize::from(self.is_liquid(self.cells[index]));
+                    self.liquid_rows[py] += usize::from(self.is_liquid(material));
                     self.cells[index] = material;
                     self.wake(index);
                 }
@@ -238,12 +276,106 @@ impl SandWorld {
         }
     }
 
+    fn can_fall_into(&self, source: u8, target: u8) -> bool {
+        target == self.materials.air()
+            || self.materials.get(target).is_some_and(|other| {
+                other.motion == Motion::Liquid
+                    && self.materials.get(source).unwrap().density > other.density
+            })
+    }
+    fn liquid_destination(
+        &self,
+        source: usize,
+        tick: u64,
+        routes: Option<&[[Option<usize>; 2]]>,
+    ) -> Option<usize> {
+        let air = self.materials.air();
+        let below = source + self.width;
+        if self.can_fall_into(self.cells[source], self.cells[below]) {
+            return Some(below);
+        }
+        let x = source % self.width;
+        let directions = if priority(source, tick) & 1 == 0 {
+            [-1, 1]
+        } else {
+            [1, -1]
+        };
+        // Routes are shared by every source on an active row. Each row is
+        // scanned twice, rather than searching the entire row for every grain.
+        if let Some(routes) = routes {
+            for direction in directions {
+                if let Some(destination) = routes[x][usize::from(direction > 0)] {
+                    return Some(destination);
+                }
+            }
+        }
+        // A filled cell above supplies a local head. Move sideways only into
+        // a lower column (empty cell above the target); a flat surface cannot
+        // random-walk forever. This local head does not model pressure in closed pipes.
+        if source >= self.width
+            && matches!(
+                self.materials
+                    .get(self.cells[source - self.width])
+                    .unwrap()
+                    .motion,
+                Motion::Liquid | Motion::Powder
+            )
+        {
+            for direction in directions {
+                let target = (source as isize + direction) as usize;
+                if self.cells[target] == air && self.cells[target - self.width] == air {
+                    return Some(target);
+                }
+            }
+        }
+        None
+    }
+
+    fn flow_routes(&self) -> Vec<Option<Vec<[Option<usize>; 2]>>> {
+        let columns = self.width.div_ceil(TILE);
+        (0..self.height - 1)
+            .map(|y| {
+                if self.liquid_rows[y] == 0
+                    || (!self.full_scan
+                        && !self.awake[y / TILE * columns..(y / TILE + 1) * columns]
+                            .iter()
+                            .any(|&v| v))
+                {
+                    return None;
+                }
+                let row = &self.cells[y * self.width..(y + 1) * self.width];
+                if !row.contains(&self.materials.air()) {
+                    return None;
+                }
+                let mut routes = vec![[None; 2]; self.width];
+                for (direction, reverse) in [false, true].into_iter().enumerate() {
+                    let mut drop = None;
+                    for i in 0..self.width {
+                        let x = if !reverse { i } else { self.width - 1 - i };
+                        routes[x][direction] = drop;
+                        if row[x] != self.materials.air() {
+                            drop = None;
+                        } else if self.cells[(y + 1) * self.width + x] == self.materials.air() {
+                            drop = Some((y + 1) * self.width + x);
+                        }
+                    }
+                }
+                Some(routes)
+            })
+            .collect()
+    }
+
     fn advance(&mut self) -> (usize, usize, u32) {
+        if !self.full_scan && !self.awake.iter().any(|&v| v) {
+            self.tick += 1;
+            return (0, 0, 0);
+        }
         let columns = self.width.div_ceil(TILE);
         let cells = &self.cells;
         let tick = self.tick;
         let width = self.width;
         let height = self.height;
+        let routes = self.flow_routes();
         let batches: Vec<_> = self.pool.install(|| {
             self.awake
                 .par_iter()
@@ -255,24 +387,46 @@ impl SandWorld {
                     let mut moves = Vec::new();
                     let mut visited = 0;
                     let (tx, ty) = ((tile % columns) * TILE, (tile / columns) * TILE);
-                    for y in ty..(ty + TILE).min(height - 1) {
+                    for (y, row_routes) in routes
+                        .iter()
+                        .enumerate()
+                        .take((ty + TILE).min(height - 1))
+                        .skip(ty)
+                    {
                         for x in tx.max(1)..(tx + TILE).min(width - 1) {
                             visited += 1;
                             let source = y * width + x;
-                            if !self.is_powder(cells[source]) {
-                                continue;
-                            }
-                            let below = source + width;
-                            let diagonals = if priority(source, tick) & 1 == 0 {
-                                [below - 1, below + 1]
-                            } else {
-                                [below + 1, below - 1]
-                            };
-                            if let Some(destination) = [below, diagonals[0], diagonals[1]]
-                                .into_iter()
-                                .find(|&index| cells[index] == self.materials.air())
+                            let destination = match self
+                                .materials
+                                .get(cells[source])
+                                .expect("validated cell")
+                                .motion
                             {
-                                moves.push((source, destination));
+                                Motion::Powder => {
+                                    let below = source + width;
+                                    let diagonals = if priority(source, tick) & 1 == 0 {
+                                        [below - 1, below + 1]
+                                    } else {
+                                        [below + 1, below - 1]
+                                    };
+                                    [below, diagonals[0], diagonals[1]]
+                                        .into_iter()
+                                        .find(|&index| {
+                                            self.can_fall_into(cells[source], cells[index])
+                                        })
+                                }
+                                Motion::Liquid => {
+                                    self.liquid_destination(source, tick, row_routes.as_deref())
+                                }
+                                _ => None,
+                            };
+                            if let Some(destination) = destination {
+                                moves.push((
+                                    source,
+                                    destination,
+                                    cells[source],
+                                    cells[destination],
+                                ));
                             }
                         }
                     }
@@ -288,16 +442,31 @@ impl SandWorld {
             .fold(0, |mask, batch| mask | batch.2)
             .count_ones();
         let mut proposals: Vec<_> = batches.into_iter().flat_map(|batch| batch.0).collect();
-        proposals.sort_unstable_by_key(|&(source, destination)| {
+        proposals.sort_unstable_by_key(|&(source, destination, _, _)| {
             (priority(source, tick), source, destination)
         });
         self.awake.fill(false);
-        // A source is powder and a destination was air in the read snapshot, so
-        // source/destination sets cannot overlap; only destination conflicts remain.
-        for (source, destination) in proposals {
-            if self.cells[destination] == self.materials.air() {
-                self.cells[destination] = self.cells[source];
-                self.cells[source] = self.materials.air();
+        // Density swaps can share source/destination sets. Claim both endpoints
+        // at deterministic commit, so a cell participates in at most one move
+        // and neither matter identity nor volume is duplicated/lost.
+        let stamp = self.tick + 1;
+        for (source, destination, expected_source, expected_target) in proposals {
+            if self.claimed[source] != stamp
+                && self.claimed[destination] != stamp
+                && self.cells[source] == expected_source
+                && self.cells[destination] == expected_target
+            {
+                if source / self.width != destination / self.width {
+                    let source_liquid = usize::from(self.is_liquid(expected_source));
+                    let target_liquid = usize::from(self.is_liquid(expected_target));
+                    self.liquid_rows[source / self.width] =
+                        self.liquid_rows[source / self.width] - source_liquid + target_liquid;
+                    self.liquid_rows[destination / self.width] =
+                        self.liquid_rows[destination / self.width] - target_liquid + source_liquid;
+                }
+                self.cells.swap(source, destination);
+                self.claimed[source] = stamp;
+                self.claimed[destination] = stamp;
                 self.wake(source);
                 self.wake(destination);
             }
@@ -363,6 +532,7 @@ impl SandWorld {
             materials: Arc::clone(&self.materials),
             converted_cells,
             sand: self.sand,
+            liquid: self.liquid,
             active_tiles,
             visited_cells,
             workers_configured: self.pool.current_num_threads(),
@@ -405,6 +575,326 @@ mod tests {
         assert_eq!(
             frame.sand,
             world.cells.iter().filter(|&&cell| cell == SAND).count()
+        );
+    }
+
+    fn liquid_materials() -> Materials {
+        let base = Materials::default();
+        let mut entries: Vec<_> = (0..3).map(|id| base.get(id).unwrap().clone()).collect();
+        for key in ["water", "other-liquid"] {
+            entries.push(Material {
+                key: key.into(),
+                color: [25, 135, 235, 255],
+                motion: Motion::Liquid,
+                density: 1000,
+                blocks_actors: false,
+                blocks_projectiles: false,
+            });
+        }
+        Materials::new(entries, AIR, WALL).unwrap()
+    }
+    #[test]
+    fn liquids_sleep_without_jitter_and_wake_across_search_and_tile_boundaries() {
+        for workers in [1, 2, 4] {
+            let mut world = SandWorld::with_materials(65, 66, workers, liquid_materials()).unwrap();
+            world.edit(vec![
+                Command::FillRect {
+                    x: 1,
+                    y: 31,
+                    width: 63,
+                    height: 1,
+                    material: WALL,
+                },
+                Command::FillRect {
+                    x: 10,
+                    y: 30,
+                    width: 1,
+                    height: 1,
+                    material: 3,
+                },
+            ]);
+            world.step(vec![]);
+            let checksum = world.checksum();
+            for _ in 0..5 {
+                let frame = world.step(vec![]);
+                assert_eq!(world.checksum(), checksum, "resting liquid jittered");
+                assert_eq!(
+                    (
+                        frame.active_tiles,
+                        frame.visited_cells,
+                        frame.converted_cells,
+                        frame.liquid
+                    ),
+                    (0, 0, 0, 1)
+                );
+            }
+            // The only particle is 22 columns from a newly opened hole in
+            // another tile. A one-cell wake halo would leave it asleep forever.
+            let frame = world.step(vec![Command::FillRect {
+                x: 32,
+                y: 31,
+                width: 1,
+                height: 1,
+                material: AIR,
+            }]);
+            assert_eq!(world.material_at(32, 31), Some(3));
+            assert_eq!(world.material_at(10, 30), Some(AIR));
+            assert_eq!(frame.liquid, 1);
+        }
+    }
+    #[test]
+    fn mixed_liquids_conserve_each_material_and_match_full_scan_after_basin_break() {
+        for workers in [1, 2, 4] {
+            let mut world = SandWorld::with_materials(65, 66, workers, liquid_materials()).unwrap();
+            world.edit(vec![
+                Command::FillRect {
+                    x: 1,
+                    y: 32,
+                    width: 63,
+                    height: 2,
+                    material: WALL,
+                },
+                Command::FillRect {
+                    x: 1,
+                    y: 24,
+                    width: 30,
+                    height: 8,
+                    material: 3,
+                },
+                Command::FillRect {
+                    x: 31,
+                    y: 24,
+                    width: 33,
+                    height: 8,
+                    material: 4,
+                },
+            ]);
+            let mut reference =
+                SandWorld::from_material_cells(65, 66, 1, world.cells.clone(), liquid_materials())
+                    .unwrap();
+            reference.full_scan = true;
+            let original = [3, 4].map(|id| world.cells.iter().filter(|&&c| c == id).count());
+            for tick in 0..1000 {
+                let commands = if tick == 5 {
+                    vec![Command::FillRect {
+                        x: 30,
+                        y: 32,
+                        width: 5,
+                        height: 2,
+                        material: AIR,
+                    }]
+                } else {
+                    vec![]
+                };
+                let frame = world.step(commands.clone());
+                reference.step(commands);
+                assert_eq!(
+                    world.cells, reference.cells,
+                    "workers={workers} tick={tick}"
+                );
+                assert_eq!(
+                    [3, 4].map(|id| world.cells.iter().filter(|&&c| c == id).count()),
+                    original
+                );
+                assert_eq!(frame.liquid, original.iter().sum());
+                assert_image_matches_cells_custom(&world, &frame);
+                if tick > 5 && frame.active_tiles == 0 {
+                    break;
+                }
+            }
+            assert!(
+                world.cells[34 * 65..65 * 65]
+                    .iter()
+                    .any(|&id| id == 3 || id == 4),
+                "basin break did not release water"
+            );
+            let idle = world.step(vec![]);
+            assert_eq!(
+                (idle.active_tiles, idle.visited_cells, idle.converted_cells),
+                (0, 0, 0)
+            );
+        }
+    }
+    #[test]
+    fn wide_water_surface_levels_to_one_cell_and_then_sleeps() {
+        let mut world = SandWorld::with_materials(130, 66, 4, liquid_materials()).unwrap();
+        world.edit(vec![Command::FillRect {
+            x: 12,
+            y: 3,
+            width: 8,
+            height: 30,
+            material: 3,
+        }]);
+        for _ in 0..350 {
+            world.step(vec![]);
+        }
+        let heights: Vec<_> = (1..129)
+            .map(|x| {
+                (0..65)
+                    .filter(|&y| world.material_at(x, y) == Some(3))
+                    .count()
+            })
+            .collect();
+        assert!(
+            heights.iter().max().unwrap() - heights.iter().min().unwrap() <= 1,
+            "resting surface retained an artificial mound"
+        );
+        let checksum = world.checksum();
+        for _ in 0..5 {
+            let frame = world.step(vec![]);
+            assert_eq!(
+                (
+                    frame.active_tiles,
+                    frame.visited_cells,
+                    frame.converted_cells
+                ),
+                (0, 0, 0)
+            );
+            assert_eq!(world.checksum(), checksum);
+        }
+    }
+
+    #[test]
+    fn dense_powder_displaces_liquid_and_lighter_liquid_rises_without_mass_loss() {
+        let mut materials = liquid_materials();
+        // Give the second liquid a lighter game-defined density.
+        let mut entries: Vec<_> = (0..5)
+            .map(|id| materials.get(id).unwrap().clone())
+            .collect();
+        entries[4].density = 800;
+        materials = Materials::new(entries, AIR, WALL).unwrap();
+        let mut world = SandWorld::with_materials(33, 34, 4, materials.clone()).unwrap();
+        world.edit(vec![
+            Command::FillRect {
+                x: 1,
+                y: 12,
+                width: 31,
+                height: 21,
+                material: 3,
+            },
+            Command::FillRect {
+                x: 5,
+                y: 2,
+                width: 10,
+                height: 6,
+                material: SAND,
+            },
+            Command::FillRect {
+                x: 20,
+                y: 28,
+                width: 5,
+                height: 5,
+                material: 4,
+            },
+        ]);
+        let mut reference =
+            SandWorld::from_material_cells(33, 34, 1, world.cells.clone(), materials).unwrap();
+        reference.full_scan = true;
+        let counts =
+            |w: &SandWorld| [SAND, 3, 4].map(|id| w.cells.iter().filter(|&&c| c == id).count());
+        let initial = counts(&world);
+        for tick in 0..450 {
+            let frame = world.step(vec![]);
+            reference.step(vec![]);
+            assert_eq!(world.cells, reference.cells, "density tick={tick}");
+            assert_eq!(counts(&world), initial);
+            assert_eq!(
+                (frame.sand, frame.liquid),
+                (initial[0], initial[1] + initial[2])
+            );
+        }
+        assert!(
+            world.cells[32 * 33..33 * 33].contains(&SAND),
+            "sand did not sink"
+        );
+        let mean_row = |id| {
+            let rows: Vec<_> = world
+                .cells
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &c)| (c == id).then_some(i / 33))
+                .collect();
+            rows.iter().sum::<usize>() as f32 / rows.len() as f32
+        };
+        assert!(mean_row(4) < mean_row(3), "oil did not rise above water");
+    }
+
+    #[test]
+    fn falling_water_spreads_without_crossing_walls_or_diagonal_closed_corners() {
+        let mut world = SandWorld::with_materials(65, 66, 4, liquid_materials()).unwrap();
+        world.edit(vec![
+            Command::FillRect {
+                x: 32,
+                y: 0,
+                width: 1,
+                height: 65,
+                material: WALL,
+            },
+            Command::FillRect {
+                x: 14,
+                y: 8,
+                width: 3,
+                height: 15,
+                material: 3,
+            },
+        ]);
+        let original = world.liquid;
+        for _ in 0..180 {
+            world.step(vec![]);
+        }
+        assert_eq!(world.liquid, original);
+        let positions: Vec<_> = world
+            .cells
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &c)| (c == 3).then_some(i % 65))
+            .collect();
+        assert!(
+            positions.iter().max().unwrap() - positions.iter().min().unwrap() > 3,
+            "water did not spread"
+        );
+        assert!(
+            positions.iter().all(|&x| x < 32),
+            "water crossed a sealed wall"
+        );
+        let mut corner = SandWorld::with_materials(8, 8, 1, liquid_materials()).unwrap();
+        corner.edit(vec![
+            Command::FillRect {
+                x: 2,
+                y: 2,
+                width: 1,
+                height: 1,
+                material: 3,
+            },
+            Command::FillRect {
+                x: 1,
+                y: 2,
+                width: 1,
+                height: 1,
+                material: WALL,
+            },
+            Command::FillRect {
+                x: 3,
+                y: 2,
+                width: 1,
+                height: 1,
+                material: WALL,
+            },
+            Command::FillRect {
+                x: 2,
+                y: 3,
+                width: 1,
+                height: 1,
+                material: WALL,
+            },
+        ]);
+        for _ in 0..10 {
+            corner.step(vec![]);
+        }
+        assert_eq!(
+            corner.material_at(2, 2),
+            Some(3),
+            "water leaked through a closed diagonal"
         );
     }
 
@@ -451,6 +941,7 @@ mod tests {
                     key: "barrier".into(),
                     color: [1, 2, 3, 255],
                     motion: Motion::Static,
+                    density: u16::MAX,
                     blocks_actors: true,
                     blocks_projectiles: true,
                 },
@@ -458,6 +949,7 @@ mod tests {
                     key: "vacuum".into(),
                     color: [0, 0, 0, 255],
                     motion: Motion::Empty,
+                    density: 0,
                     blocks_actors: false,
                     blocks_projectiles: false,
                 },
@@ -465,6 +957,7 @@ mod tests {
                     key: "red".into(),
                     color: [255, 0, 0, 255],
                     motion: Motion::Powder,
+                    density: 1600,
                     blocks_actors: false,
                     blocks_projectiles: true,
                 },
@@ -472,6 +965,7 @@ mod tests {
                     key: "blue".into(),
                     color: [0, 0, 255, 255],
                     motion: Motion::Powder,
+                    density: 1600,
                     blocks_actors: true,
                     blocks_projectiles: false,
                 },

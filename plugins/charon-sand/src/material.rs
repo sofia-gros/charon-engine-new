@@ -6,6 +6,7 @@ pub enum Motion {
     Empty,
     Static,
     Powder,
+    Liquid,
 }
 
 #[derive(Clone, Debug)]
@@ -13,6 +14,8 @@ pub struct Material {
     pub key: String,
     pub color: [u8; 4],
     pub motion: Motion,
+    /// Relative density; moving matter can sink through a lighter liquid.
+    pub density: u16,
     pub blocks_actors: bool,
     pub blocks_projectiles: bool,
 }
@@ -81,6 +84,17 @@ impl Materials {
     /// Includes ID ordering and all behavior/appearance properties. It is not a
     /// cryptographic hash or a promise of long-term save-format compatibility.
     pub fn fingerprint(&self) -> u64 {
+        let mut hash = self.legacy_fingerprint();
+        for entry in &self.entries {
+            for byte in entry.density.to_le_bytes() {
+                hash = (hash ^ u64::from(byte)).wrapping_mul(0x100000001b3);
+            }
+        }
+        hash
+    }
+    /// Original behavior fingerprint for v1/v2 development traces. Density was
+    /// not part of those formats; readers must select the known legacy palette.
+    pub fn legacy_fingerprint(&self) -> u64 {
         let mut hash = 0xcbf29ce484222325_u64;
         for byte in [self.air, self.boundary]
             .into_iter()
@@ -90,6 +104,7 @@ impl Materials {
                         Motion::Empty => 0,
                         Motion::Static => 1,
                         Motion::Powder => 2,
+                        Motion::Liquid => 3,
                     },
                     u8::from(m.blocks_actors),
                     u8::from(m.blocks_projectiles),
@@ -112,6 +127,7 @@ impl Default for Materials {
                     key: "air".into(),
                     color: [16, 23, 36, 255],
                     motion: Motion::Empty,
+                    density: 0,
                     blocks_actors: false,
                     blocks_projectiles: false,
                 },
@@ -119,6 +135,7 @@ impl Default for Materials {
                     key: "sand".into(),
                     color: [232, 181, 72, 255],
                     motion: Motion::Powder,
+                    density: 1600,
                     blocks_actors: true,
                     blocks_projectiles: true,
                 },
@@ -126,6 +143,7 @@ impl Default for Materials {
                     key: "wall".into(),
                     color: [82, 100, 121, 255],
                     motion: Motion::Static,
+                    density: u16::MAX,
                     blocks_actors: true,
                     blocks_projectiles: true,
                 },

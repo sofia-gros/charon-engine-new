@@ -139,12 +139,12 @@ def check_debugger_rows(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
     local = LOCAL / sample
-    duration = 23 if sample == "dialogue" else 14
+    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else 14)
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -257,6 +257,24 @@ EndSection
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
                 inputs.key(ord("r"))
+            elif sample == "sea":
+                at(.5)
+                inputs.key(ord("l"))
+                at(2)
+                inputs.key(ord("1"))
+                # Rain many grains above the sea, away from the water surface.
+                # Painting air adds sand without replacing any existing water.
+                inputs.move(180,100)
+                inputs.button(1,True)
+                for cycle in range(8):
+                    at(2+cycle*.8)
+                    inputs.move(180+(cycle%2)*500,100)
+                at(8.5)
+                inputs.button(1,False)
+                at(16)
+                inputs.key(ord("p"))
+                at(17)
+                inputs.key(ord("p"))
             elif sample == "dialogue":
                 at(1)
                 inputs.move(1470,918)
@@ -455,7 +473,7 @@ EndSection
                 inputs.key(ord("n"))
                 at(11)
                 inputs.key(ord("p"))
-            capture_thread.join(timeout=10)
+            capture_thread.join(timeout=max(10, start + duration - time.monotonic() + 6))
             if capture_thread.is_alive() or capture_errors:
                 raise RuntimeError(f"screen capture failed: {capture_errors}")
             assert len(frames) >= 20, "insufficient captured frames"
@@ -475,6 +493,24 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "custom_material": "demo.ash", "peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
                           "checks": ["mouse painting", "game-defined ash selection/inspection", "authoritative replay with 1 worker", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
+            elif sample == "sea":
+                sea_rows=[r for r in rows if int(r["liquid"])>0]
+                assert sea_rows, "sea was not created"
+                water=int(sea_rows[0]["liquid"])
+                assert all(int(r["liquid"])==water for r in sea_rows), "painting or flow lost/created water"
+                assert max(int(r["sand"]) for r in sea_rows)-int(sea_rows[0]["sand"])>1500, "not enough sand fell into sea"
+                assert any(r["paused"]=="true" for r in sea_rows), "pause input was not applied"
+                replay=subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"],env=env,text=True,capture_output=True,check=True,timeout=40)
+                shutil.copyfile(trace_path,MEDIA / f"{prefix}.trace")
+                def water_on_right(path):
+                    with Image.open(path) as im:
+                        rgb=im.convert("RGB")
+                        return sum(b>180 and r<80 and g>90 for y in range(200,530) for x in range(510,950) for r,g,b in [rgb.getpixel((x,y))])
+                before=water_on_right(frames[8][1])
+                after=max(water_on_right(p) for _,p in frames[-24:])
+                assert after>before+50, f"water not visible over the sand bank: before={before} after={after}"
+                assert all(r["active_tiles"]=="0" and r["visited_cells"]=="0" and r["converted_cells"]=="0" and r["upload_bytes"]=="0" for r in sea_rows[-3:]), "sea did not sleep after settling"
+                checks={"water_cells":water,"water_pixels_right_before":before,"water_pixels_right_after":after,"replay":replay.stdout.strip(),"checks":["left sea and right sand scene", "real mouse sand rain", "water mass conserved throughout", "water visible beyond bank", "settled sea sleeps with zero cell conversion/upload", "pause/resume", "authoritative replay with one worker", "Escape shutdown"]}
             elif sample == "dialogue":
                 pages = [page for page, _ in itertools.groupby(row["page"] for row in rows)]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill", "Intro", "Hill"], pages

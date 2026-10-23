@@ -16,6 +16,14 @@ Charon Engineは、サンドボックスや横スクロールアクション、�
 
 [Sandboxの操作方法](docs/usage.md#sandbox)
 
+### Fluids
+
+海へ砂を落とすと水が押しのけられ、岸へあふれる様子を試せます。
+
+![海への砂投入と水のあふれ](docs/media/sea-linux.gif)
+
+[流体テストの操作方法](docs/usage.md#流体テスト)
+
 ### Platformer
 
 砂や壁を足場にして移動・ジャンプ。足元を掘ると支えがなくなり、キャラクターが落下します。
