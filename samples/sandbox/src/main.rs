@@ -1,3 +1,4 @@
+mod actor_view;
 mod debug_view;
 mod game;
 mod materials;
@@ -88,6 +89,7 @@ impl Options {
 struct App {
     options: Options,
     runtime: Runtime<Game>,
+    actor: Option<actor_view::ActorVisual>,
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
@@ -117,10 +119,16 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes")?;
         }
         let now = Instant::now();
+        let actor = if options.play {
+            Some(actor_view::ActorVisual::new()?)
+        } else {
+            None
+        };
         Ok(Self {
+            actor,
             options,
             runtime,
             view: None,
@@ -198,8 +206,12 @@ impl App {
             self.performance,
             view.software_adapter,
         );
+        let sprites = self
+            .actor
+            .as_mut()
+            .map_or_else(Vec::new, |actor| actor.sprites(&snapshot.frame));
         let Some(render) =
-            view.present_tiled_with_overlays(&snapshot.frame.terrain.image, &overlays)?
+            view.present_tiled_with_sprites(&snapshot.frame.terrain.image, &sprites, &overlays)?
         else {
             return Ok(());
         };
@@ -268,6 +280,7 @@ impl App {
                 snapshot.frame.sparks.len(),
                 snapshot.frame.impacts
             ));
+            row.push_str(&format!(",{}", render.sprite_upload_bytes));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -292,7 +305,12 @@ impl ApplicationHandler for App {
                 self.options.height as u32,
                 self.options.software,
             ) {
-                Ok(view) => self.view = Some(view),
+                Ok(view) => {
+                    if let Some(actor) = &mut self.actor {
+                        actor.upload(&view);
+                    }
+                    self.view = Some(view);
+                }
                 Err(error) => {
                     self.error = Some(error.to_string());
                     event_loop.exit();

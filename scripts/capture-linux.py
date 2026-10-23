@@ -385,6 +385,10 @@ EndSection
             for _, path in frames:
                 with Image.open(path) as image:
                     images.append(image.convert("RGB"))
+            if sample in ("platformer", "debugger", "projectiles"):
+                assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
+                assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"
+                checks["checks"].append("PNG+JSON actor sprite rendered through shared GPU pipeline")
             durations = [max(10, round((b[0] - a[0]) * 100) * 10) for a, b in zip(frames, frames[1:])]
             durations.append(130)
             images[0].save(MEDIA / f"{prefix}.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
@@ -392,7 +396,7 @@ EndSection
                 encoded_frames = gif.n_frames
             source_hash = hashlib.sha256()
             for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
-                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml"):
+                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml", ".png", ".jpg", ".json"):
                     source_hash.update(str(path.relative_to(ROOT)).encode())
                     source_hash.update(path.read_bytes())
             report = {"source_sha256": source_hash.hexdigest(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),

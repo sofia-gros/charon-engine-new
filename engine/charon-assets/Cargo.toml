@@ -1,0 +1,10 @@
+[package]
+name = "charon-assets"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+serde_json = { version = "1", features = ["preserve_order"] }

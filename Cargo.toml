@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine/charon-image", "engine/charon-runtime", "engine/charon-render", "plugins/charon-sand", "plugins/charon-dialogue", "plugins/charon-platformer", "plugins/charon-projectiles", "samples/sandbox", "samples/dialogue"]
+members = ["engine/charon-assets", "engine/charon-image", "engine/charon-runtime", "engine/charon-render", "plugins/charon-sand", "plugins/charon-dialogue", "plugins/charon-platformer", "plugins/charon-projectiles", "samples/sandbox", "samples/dialogue"]
 default-members = ["engine/charon-runtime", "plugins/charon-sand", "plugins/charon-dialogue", "plugins/charon-platformer"]
 resolver = "2"
 
@@ -10,6 +10,7 @@ license = "MIT"
 publish = false
 
 [workspace.dependencies]
+charon-assets = { path = "engine/charon-assets" }
 charon-projectiles = { path = "plugins/charon-projectiles" }
 charon-platformer = { path = "plugins/charon-platformer" }
 charon-image = { path = "engine/charon-image" }

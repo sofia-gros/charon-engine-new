@@ -38,6 +38,7 @@ pub fn verify_updates(gpu: &mut Gpu, width: usize, height: usize) -> Result<()> 
         "idle reset image was uploaded"
     );
     gpu.smoke_overlay(&reset_idle.image)?;
+    gpu.smoke_sprites(&reset_idle.image)?;
     println!("partial_upload_checks=idle,skipped_snapshots,edge_tiles,clear");
     Ok(())
 }

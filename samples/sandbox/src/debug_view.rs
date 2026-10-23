@@ -19,7 +19,7 @@ pub fn overlays(
     software: bool,
 ) -> Vec<OverlayRect> {
     let mut result = Vec::new();
-    if let Some(body) = frame.player {
+    if let Some(body) = frame.player.filter(|body| body.embedded) {
         result.push(rect(
             body.x(),
             body.y(),

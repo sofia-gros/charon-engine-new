@@ -58,7 +58,7 @@ Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セ�
 
 ![Platformerの移動・ジャンプ・地形破壊](media/platformer-linux.gif)
 
-物質は砂plugin、移動は砂に依存しないplatformer plugin、両者をつなぐ判定方針はサンプル側が所有する。キャラクターは地形と別の矩形としてGPU描画し、地形画像へ焼き込まない。`upload_bytes` は地形、`overlay_upload_bytes` は矩形頂点の転送量。操作モードのCSVは約0.1秒ごとに位置・着地・埋まり・砂の判定設定も記録する。
+物質は砂plugin、移動は砂に依存しないplatformer plugin、両者をつなぐ判定方針はサンプル側が所有する。キャラクターはPNG+JSONシートの待機/歩行アニメーションとしてGPU描画し、地形画像へ焼き込まない。物理の矩形とは独立し、埋まり時は赤いデバッグ矩形を表示する。`upload_bytes` は地形、`overlay_upload_bytes` はデバッグ矩形等、`sprite_upload_bytes` は画像スプライト頂点の転送量。画像本体は初回にアップロードして共有する。操作モードのCSVは約0.1秒ごとに位置・着地・埋まり・砂の判定設定も記録する。
 
 まず軸に沿った矩形とセルの衝突を扱う。薄い床の通り抜けを防ぎ、支えが消えると落下する。回転・坂・セルを押しのける双方向の物理は未実装。新しい地形に埋まった場合は16セル以内の空きへ移し、空きがなければ赤く表示して移動を停止する。周囲の消去かRで戻せる。`python3 scripts/capture-linux.py --sample platformer` で操作検証と録画を再実行できる。
 
@@ -72,6 +72,14 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 記録は物質更新と同じスレッドでtickごとに保存する。再生はウィンドウ/GPUを起動せず、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
 
 入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。新規記録は素材定義の識別情報を含むv2で、定義の異なる版は再生前に拒否する。既存v1は従来の3素材だけを対象に再生できる。物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
+
+## 画像とアニメーション
+
+`charon-assets`の`Texture::load`で単一PNG/JPGを読み、`Atlas::single`で1フレームとして使える。`Atlas::load(image_path, json_path)`はPNG/JPG+JSONのスプライトシートを読む。Aseprite/TexturePacker形式の`frames`オブジェクト/配列に対応し、フレーム名・切り抜き矩形・ミリ秒単位のdurationを扱う。現在は回転/トリミングを無効にして書き出す必要があり、対応外の指定・画像外の矩形は読込時にエラーになる。画像は各辺4096ピクセル以下・圧縮ファイル32 MiB以下、JSONは8 MiB以下が初期上限。
+
+`Clip::new(atlas, &["walk0", "walk1"], true)`のようにゲーム側で待機/歩行/走行/攻撃などを組み立てる。複数クリップで同じ画像を共有し、`frame_at(Duration)`で表示フレームを得る。末尾で止まるクリップも作れる。時刻は呼出側から渡すため、物理時計と見た目の時計を分離できる。読込は開始前に行い、フレームごとにファイルを開かない。
+
+[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。素材への画像/アニメーション適用、回転/トリミング取込、補間・カメラ・汎用UIは今後の工程。
 
 ## 弾と破壊
 

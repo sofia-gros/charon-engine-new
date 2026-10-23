@@ -1,0 +1,48 @@
+{
+  "frames": {
+    "idle": {
+      "frame": {
+        "x": 0,
+        "y": 0,
+        "w": 8,
+        "h": 14
+      },
+      "duration": 120,
+      "rotated": false,
+      "trimmed": false
+    },
+    "walk0": {
+      "frame": {
+        "x": 8,
+        "y": 0,
+        "w": 8,
+        "h": 14
+      },
+      "duration": 120,
+      "rotated": false,
+      "trimmed": false
+    },
+    "walk1": {
+      "frame": {
+        "x": 16,
+        "y": 0,
+        "w": 8,
+        "h": 14
+      },
+      "duration": 120,
+      "rotated": false,
+      "trimmed": false
+    },
+    "attack": {
+      "frame": {
+        "x": 24,
+        "y": 0,
+        "w": 8,
+        "h": 14
+      },
+      "duration": 120,
+      "rotated": false,
+      "trimmed": false
+    }
+  }
+}

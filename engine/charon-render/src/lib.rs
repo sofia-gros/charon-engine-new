@@ -1,6 +1,8 @@
 mod debug_text;
+mod sprites;
 pub use charon_image::TiledImage;
 pub use debug_text::{append_debug_text, append_performance_overlay, DebugPerformance};
+pub use sprites::{Sprite, SpriteTexture};
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
 /// Borrowed RGBA8 image, independent of any simulation plugin.
@@ -63,6 +65,7 @@ pub struct Gpu {
     pub device: wgpu::Device,
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
+    sprites: sprites::SpriteLayer,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     uploaded_tiles: Option<TiledImage>,
@@ -180,7 +183,9 @@ impl Gpu {
                 ),
             }],
         });
+        let sprites = sprites::SpriteLayer::new(&device, format);
         Ok(Self {
+            sprites,
             device,
             queue,
             pipeline,
@@ -192,6 +197,11 @@ impl Gpu {
             overlay_vertices: 0,
             last_overlays: Vec::new(),
         })
+    }
+
+    pub fn upload_sprite_texture(&self, texture: &charon_assets::Texture) -> SpriteTexture {
+        self.sprites
+            .upload_texture(&self.device, &self.queue, texture)
     }
 
     pub fn upload(&mut self, frame: &ImageView<'_>) {
@@ -321,6 +331,7 @@ impl Gpu {
         pass.set_pipeline(&self.pipeline);
         pass.set_bind_group(0, &self.bind, &[]);
         pass.draw(0..3, 0..1);
+        self.sprites.draw(&mut pass);
         if self.overlay_vertices > 0 {
             pass.set_pipeline(&self.overlay_pipeline);
             pass.set_vertex_buffer(0, self.overlay_buffer.slice(..));
@@ -370,6 +381,57 @@ impl Gpu {
         });
         self.set_overlays(&[]);
         result
+    }
+
+    /// Verify source rectangles, horizontal flipping and transparent pixels using
+    /// the same sprite pipeline as the window, without exporting image files.
+    pub fn smoke_sprites(&mut self, image: &TiledImage) -> Result<()> {
+        let pixels = vec![255, 0, 0, 255, 0, 0, 0, 0, 0, 0, 255, 255, 255, 255, 0, 255];
+        let cpu = charon_assets::Texture::from_rgba(2, 2, pixels)?;
+        let texture = self.upload_sprite_texture(&cpu);
+        self.upload_tiled(image);
+        self.set_overlays(&[]);
+        for source in [[0, 0, 2, 2], [1, 0, 1, 2]] {
+            for flip_x in [false, true] {
+                self.sprites.set(
+                    &self.queue,
+                    &[Sprite {
+                        texture: &texture,
+                        source,
+                        destination: [2., 2., 4., 4.],
+                        flip_x,
+                    }],
+                    image.width() as u32,
+                    image.height() as u32,
+                )?;
+                let mut rgba = image.to_rgba();
+                for y in 0..4 {
+                    for x in 0..4 {
+                        let sx = if flip_x { 3 - x } else { x };
+                        let pixel = ((y * source[3] as usize / 4 + source[1] as usize) * 2
+                            + sx * source[2] as usize / 4
+                            + source[0] as usize)
+                            * 4;
+                        if cpu.rgba()[pixel + 3] == 255 {
+                            let dest = ((y + 2) * image.width() + x + 2) * 4;
+                            rgba[dest..dest + 4].copy_from_slice(&cpu.rgba()[pixel..pixel + 4]);
+                        }
+                    }
+                }
+                self.verify(&ImageView {
+                    width: image.width(),
+                    height: image.height(),
+                    rgba: &rgba,
+                })?;
+            }
+        }
+        self.sprites.set(
+            &self.queue,
+            &[],
+            image.width() as u32,
+            image.height() as u32,
+        )?;
+        Ok(())
     }
 
     fn verify(&self, frame: &ImageView<'_>) -> Result<()> {
@@ -507,29 +569,41 @@ impl WindowRenderer {
     }
     /// Times CPU calls only. Upload bytes are zero when reusing the previous image.
     pub fn present(&mut self, image: Option<ImageView<'_>>) -> Result<Option<RenderStats>> {
-        self.present_image(image.map(Upload::Full), &[])
+        self.present_image(image.map(Upload::Full), &[], &[])
     }
     pub fn present_with_overlays(
         &mut self,
         image: Option<ImageView<'_>>,
         overlays: &[OverlayRect],
     ) -> Result<Option<RenderStats>> {
-        self.present_image(image.map(Upload::Full), overlays)
+        self.present_image(image.map(Upload::Full), overlays, &[])
     }
     pub fn present_tiled(&mut self, image: &TiledImage) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)), &[])
+        self.present_image(Some(Upload::Tiled(image)), &[], &[])
     }
     pub fn present_tiled_with_overlays(
         &mut self,
         image: &TiledImage,
         overlays: &[OverlayRect],
     ) -> Result<Option<RenderStats>> {
-        self.present_image(Some(Upload::Tiled(image)), overlays)
+        self.present_image(Some(Upload::Tiled(image)), overlays, &[])
+    }
+    pub fn upload_sprite_texture(&self, texture: &charon_assets::Texture) -> SpriteTexture {
+        self.gpu.upload_sprite_texture(texture)
+    }
+    pub fn present_tiled_with_sprites(
+        &mut self,
+        image: &TiledImage,
+        sprites: &[Sprite<'_>],
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(Some(Upload::Tiled(image)), overlays, sprites)
     }
     fn present_image(
         &mut self,
         image: Option<Upload<'_>>,
         overlays: &[OverlayRect],
+        sprites: &[Sprite<'_>],
     ) -> Result<Option<RenderStats>> {
         let size = self.window.inner_size();
         if size.width == 0 || size.height == 0 {
@@ -566,6 +640,12 @@ impl WindowRenderer {
             None => 0,
         };
         let overlay_upload_bytes = self.gpu.set_overlays(overlays);
+        let sprite_upload_bytes = self.gpu.sprites.set(
+            &self.gpu.queue,
+            sprites,
+            self.gpu.texture.width(),
+            self.gpu.texture.height(),
+        )?;
         let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let encode_start = std::time::Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());
@@ -583,6 +663,7 @@ impl WindowRenderer {
             upload_enqueue_ms,
             upload_bytes,
             overlay_upload_bytes,
+            sprite_upload_bytes,
             acquire_ms,
             encode_present_ms: encode_start.elapsed().as_secs_f64() * 1000.0,
         }))
@@ -593,6 +674,7 @@ pub struct RenderStats {
     pub upload_enqueue_ms: f64,
     pub upload_bytes: usize,
     pub overlay_upload_bytes: usize,
+    pub sprite_upload_bytes: usize,
     pub acquire_ms: f64,
     pub encode_present_ms: f64,
 }

@@ -1,7 +1,7 @@
 {
-  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
+  "source_sha256": "2adc5a84353fb55abf8165ae20d20cc923338c442915ae347464bb6381ed6e4c",
   "sample": "platformer",
-  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "base_revision": "7ce5e815534a2e4a139b0025b69839ba93fd8fd8",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
@@ -9,16 +9,16 @@
   "observed_capture_fps": 8.0,
   "gif_encoded_frames": 112,
   "draw_submission_fps_range": [
-    4.63,
-    44.56
+    4.37,
+    47.77
   ],
   "simulation_hz_range": [
     0.0,
-    80.05
+    77.92
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 112,
-  "gif_duration_ms": 14020,
+  "gif_duration_ms": 14000,
   "source_size": [
     1920,
     1080
@@ -43,6 +43,7 @@
     "support destruction",
     "reset",
     "Escape shutdown",
-    "authoritative input replay with 1 worker"
+    "authoritative input replay with 1 worker",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
   ]
 }
