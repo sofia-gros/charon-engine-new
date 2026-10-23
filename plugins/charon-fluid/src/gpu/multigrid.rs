@@ -253,8 +253,10 @@ impl Hierarchy {
         })
     }
     pub fn dispatches(&self) -> u32 {
-        // Two Jacobi sweeps + restriction down, prolongation + two sweeps up,
-        // a bounded coarse solve, fine RHS initialization and final dot products.
-        (6 * (self.counts.len() - 1) + if self.direct { 1 } else { COARSE_SWEEPS } + 2) as u32
+        // Zero-start first sweep is fused into RHS/restriction. Prolongation
+        // includes the first post-sweep; the final fine sweep includes PCG dots.
+        let last = self.counts.len() - 1;
+        (4 * last + if self.direct { 1 } else { COARSE_SWEEPS - 1 } + 2
+            - usize::from(last > 0 || !self.direct)) as u32
     }
 }

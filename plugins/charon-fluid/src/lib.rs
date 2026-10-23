@@ -47,6 +47,12 @@ pub struct GpuStats {
     pub upload_bytes: u64,
     pub readback_bytes: u64,
     pub dispatches: u32,
+    /// CPU pressure preparation and f64 residual checks outside GPU solve calls.
+    /// Includes small-path upload enqueueing; excludes GPU execution/waiting.
+    /// This is a subset of Stats::pressure_ms, not its entire CPU portion.
+    pub pressure_setup_ms: f64,
+    /// Completed compute/readback submissions (CPU/GPU synchronization count).
+    pub readbacks: u32,
     /// Largest dispatch in this tick, not simultaneous hardware occupancy.
     pub velocity_workgroups: u32,
     pub pressure_workgroups: u32,
@@ -67,6 +73,10 @@ impl GpuStats {
             &mut self.velocity_ms
         };
         *target = target.zip(work.kernel_ms).map(|(a, b)| a + b);
+        if pressure {
+            self.pressure_setup_ms += work.setup_ms;
+        }
+        self.readbacks += work.readbacks;
         self.upload_bytes += work.upload_bytes;
         self.readback_bytes += work.readback_bytes;
         self.dispatches += work.dispatches;
@@ -97,6 +107,8 @@ pub struct Stats {
     pub workers_used: u32,
     pub sleeping: bool,
     pub pressure_ms: f64,
+    /// CPU construction of liquid pressure nodes, coefficients and RHS.
+    pub pressure_assembly_ms: f64,
     pub transport_ms: f64,
     pub velocity_ms: f64,
     pub gpu: Option<GpuStats>,
@@ -331,6 +343,7 @@ impl Fluid {
             self.stats.max_fraction_change = 0.;
             self.stats.volume_change = 0.;
             self.stats.pressure_ms = 0.;
+            self.stats.pressure_assembly_ms = 0.;
             self.stats.transport_ms = 0.;
             self.stats.velocity_ms = 0.;
             if let Some(gpu) = &mut self.stats.gpu {
@@ -339,6 +352,8 @@ impl Fluid {
                 gpu.upload_bytes = 0;
                 gpu.readback_bytes = 0;
                 gpu.dispatches = 0;
+                gpu.readbacks = 0;
+                gpu.pressure_setup_ms = 0.;
                 gpu.velocity_workgroups = 0;
                 gpu.pressure_workgroups = 0;
             }

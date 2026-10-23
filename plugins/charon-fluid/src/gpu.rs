@@ -3,7 +3,7 @@
 use crate::{Config, Error};
 use std::{
     sync::{mpsc, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 mod multigrid;
@@ -23,10 +23,14 @@ pub(super) struct Work {
     pub readback_bytes: u64,
     pub dispatches: u32,
     pub max_workgroups: u32,
+    pub setup_ms: f64,
+    pub readbacks: u32,
 }
 impl Work {
     fn add(&mut self, other: Self) {
         self.kernel_ms = self.kernel_ms.zip(other.kernel_ms).map(|(a, b)| a + b);
+        self.setup_ms += other.setup_ms;
+        self.readbacks += other.readbacks;
         self.upload_bytes += other.upload_bytes;
         self.readback_bytes += other.readback_bytes;
         self.dispatches += other.dispatches;
@@ -299,6 +303,8 @@ impl GpuContext {
                 dispatches,
                 max_workgroups,
                 upload_bytes: 0,
+                setup_ms: 0.,
+                readbacks: 1,
             };
             Ok((bytes[..size as usize].to_vec(), work))
         })();
@@ -411,6 +417,7 @@ impl GpuContext {
         // Keep cached coefficients exclusively owned through every f64
         // refinement round when multiple fluids share this GPU context.
         let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
+        let mut setup_started = Instant::now();
         let n = rows.len();
         let apply = |x: &[f64], r: &mut [f64]| {
             for (i, (adj, a, diag)) in rows.iter().enumerate() {
@@ -470,6 +477,7 @@ impl GpuContext {
             let residual: Vec<_> = rhs.iter().zip(&product).map(|(b, a)| b - a).collect();
             let norm = residual.iter().map(|v| v * v).sum::<f64>().sqrt();
             if norm <= tolerance {
+                total_work.setup_ms += setup_started.elapsed().as_secs_f64() * 1000.;
                 return Ok((iterations, total_work));
             }
             let scale = residual.iter().map(|v| v.abs()).fold(0., f64::max);
@@ -540,6 +548,7 @@ impl GpuContext {
                 if first {
                     hierarchy = Some(multigrid::Hierarchy::build(rows)?);
                 }
+                total_work.setup_ms += setup_started.elapsed().as_secs_f64() * 1000.;
                 let (correction, count, work) = self.solve_tiled(
                     data,
                     &right_bytes,
@@ -547,6 +556,7 @@ impl GpuContext {
                     first,
                     &mut cache,
                 )?;
+                setup_started = Instant::now();
                 for (i, value) in p.iter_mut().enumerate() {
                     let anchor = closed_anchor[i];
                     let gauge = if anchor == usize::MAX {
@@ -611,6 +621,7 @@ impl GpuContext {
                 self.readback_size(size),
                 wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             );
+            total_work.setup_ms += setup_started.elapsed().as_secs_f64() * 1000.;
             let (result, mut work) = self.run(
                 &self.pressure,
                 &[
@@ -624,6 +635,7 @@ impl GpuContext {
                 &readback,
                 1,
             )?;
+            setup_started = Instant::now();
             work.upload_bytes = right_bytes.len() as u64
                 + if first {
                     (data.len() + preconditioner_data.len()) as u64
@@ -651,6 +663,7 @@ impl GpuContext {
             .sqrt()
             <= tolerance
         {
+            total_work.setup_ms += setup_started.elapsed().as_secs_f64() * 1000.;
             Ok((iterations, total_work))
         } else {
             Err(Error::Pressure)

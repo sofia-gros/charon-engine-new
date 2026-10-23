@@ -57,7 +57,7 @@ fn main() {
         let kernel = g
             .pressure_ms
             .map_or_else(|| "null".to_owned(), |v| v.to_string());
-        println!("{{\"tick\":{tick},\"tick_ms\":{elapsed},\"pressure_host_ms\":{},\"pressure_kernel_ms\":{kernel},\"pressure_iterations\":{},\"substeps\":{},\"wet_cells\":{},\"max_divergence\":{},\"max_speed\":{},\"upload_bytes\":{},\"readback_bytes\":{},\"dispatches\":{},\"pressure_workgroups\":{}}}{}",s.pressure_ms,s.pressure_iterations,s.substeps,s.wet_cells,s.max_divergence,s.max_speed,g.upload_bytes,g.readback_bytes,g.dispatches,g.pressure_workgroups,if tick==2 {""} else {","});
+        println!("{{\"tick\":{tick},\"tick_ms\":{elapsed},\"pressure_host_ms\":{},\"pressure_kernel_ms\":{kernel},\"pressure_assembly_ms\":{},\"pressure_setup_ms\":{},\"readbacks\":{},\"pressure_iterations\":{},\"substeps\":{},\"wet_cells\":{},\"max_divergence\":{},\"max_speed\":{},\"upload_bytes\":{},\"readback_bytes\":{},\"dispatches\":{},\"pressure_workgroups\":{}}}{}",s.pressure_ms,s.pressure_assembly_ms,g.pressure_setup_ms,g.readbacks,s.pressure_iterations,s.substeps,s.wet_cells,s.max_divergence,s.max_speed,g.upload_bytes,g.readback_bytes,g.dispatches,g.pressure_workgroups,if tick==2 {""} else {","});
     }
     println!("]}}");
 }

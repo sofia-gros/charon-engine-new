@@ -33,7 +33,8 @@ fn applied(i:u32,second:bool) -> f32 {
 fn rhs(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
  if control.done!=0u {return;}
  for(var j=id.x;j<params.count;j+=groups.x*LANES) {
-  values[params.offset+j]=Value(work[j].r,0.,0.,0.);
+  let i=params.offset+j; let r=work[j].r;
+  values[i]=Value(r,0.,(2./3.)*r/nodes[i].diagonal,0.);
  }
 }
 @compute @workgroup_size(LANES)
@@ -60,7 +61,7 @@ fn restrict_residual(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgr
   for(var k=0u;k<node.child_count;k+=1u) {
    let child=data[node.child_first+k]; b+=values[child].rhs-applied(child,false);
   }
-  values[i]=Value(b,0.,0.,0.);
+  values[i]=Value(b,0.,(2./3.)*b/nodes[i].diagonal,0.);
  }
 }
 @compute @workgroup_size(LANES)
@@ -74,11 +75,19 @@ fn coarse_solve(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups)
   values[params.offset+j].x0=x;
  }
 }
+// Evaluate prolongation on demand from immutable fine/coarse x0 fields.
+// Only x1 is written, so neighbouring groups never read an in-flight value.
+fn prolonged(i:u32) -> f32 {return values[i].x0+values[nodes[i].parent].x0;}
 @compute @workgroup_size(LANES)
-fn prolong(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
+fn prolong_smooth(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) groups:vec3u) {
  if control.done!=0u {return;}
  for(var j=id.x;j<params.count;j+=groups.x*LANES) {
-  let i=params.offset+j; values[i].x0+=values[nodes[i].parent].x0;
+  let i=params.offset+j; let node=nodes[i]; let x=prolonged(i); var ax=node.boundary*x;
+  for(var k=0u;k<node.count;k+=1u) {
+   let other=data[node.first+2u*k]; let weight=bitcast<f32>(data[node.first+2u*k+1u]);
+   ax+=weight*(x-prolonged(other));
+  }
+  values[i].x1=x+(2./3.)*(values[i].rhs-ax)/node.diagonal;
  }
 }
 @compute @workgroup_size(LANES)
@@ -87,7 +96,14 @@ fn finish(@builtin(global_invocation_id) id:vec3u,@builtin(num_workgroups) group
  workgroupBarrier(); if workgroupUniformLoad(&status)!=0u {return;}
  var local=vec2f(0.);
  for(var i=id.x;i<params.count;i+=groups.x*LANES) {
-  let r=work[i].r; let z=values[i].x0; work[i].z=z;
+  let r=work[i].r;
+  // The finest final Jacobi sweep can directly produce PCG z and dot products.
+  // A one-level direct hierarchy has no pending sweep.
+  var z=values[i].x0;
+  if params.coarse_count!=0u || params.direct==0u {
+   z=values[i].x1+(2./3.)*(values[i].rhs-applied(i,true))/nodes[i].diagonal;
+  }
+  work[i].z=z;
   local+=vec2f(r*r,r*z);
  }
  sums[lane]=local; workgroupBarrier();

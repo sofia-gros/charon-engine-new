@@ -1,0 +1,206 @@
+{
+  "benchmark": "GPU multigrid pass fusion on moving free surface",
+  "platform": "Linux cloud, SwiftShader Vulkan software adapter on CPU; no hardware GPU",
+  "adapter_identity": "gpu-38d8b6827bf27f4b",
+  "profile": "dev; charon-fluid opt-level=2",
+  "baseline_engine_revision": "dff787d42a232072161af9b40f95a21d2c526634",
+  "baseline_instrumentation": "Same pressure-cost driver with added assembly/setup/readback counters; unchanged solver and physical input",
+  "driver": "plugins/charon-fluid/examples/pressure-cost.rs",
+  "driver_sha256": "33ccc3be84f13d92315fc5115e83b5237c2c4ce581f75ca0d88acfd4d633747a",
+  "after_source_sha256": "839f993ca78698647cc5d5644cd35f917d59a3a54a5c62b9ae0d3bb6f99bcf3b",
+  "command": "cargo run --locked -p charon-fluid --features gpu --example pressure-cost -- --surface",
+  "runs_per_version": 1,
+  "conditions": {
+    "grid": [
+      130,
+      146
+    ],
+    "phase_volume": [
+      8320,
+      768
+    ],
+    "dt_s": 0.016666666666666666,
+    "ticks": 3,
+    "configured_cpu_workers": 4,
+    "sleep": "disabled",
+    "acceleration": [
+      [
+        40,
+        120
+      ],
+      [
+        -40,
+        120
+      ],
+      [
+        0,
+        120
+      ]
+    ],
+    "gpu_lanes": 4,
+    "hardware_default_lanes": 128
+  },
+  "change": "Fuse zero-start first Jacobi sweep with RHS/restriction, prolongation with first post-sweep, final finest sweep with PCG dot products. Same two pre/post smoothing sweeps and original residual/CFL criteria.",
+  "metrics": {
+    "pressure_assembly_ms": "CPU liquid nodes, pressure coefficients, forces and RHS construction",
+    "pressure_setup_ms": "CPU backend preparation and f64 residual checks outside GPU solve calls; not total host overhead",
+    "readbacks": "Completed compute/readback submissions, including velocity, convergence control and final pressure"
+  },
+  "means": {
+    "tick_ms": {
+      "before": 321.6597066666667,
+      "after": 294.86574,
+      "reduction_percent": 8.329910806774766
+    },
+    "pressure_kernel_ms": {
+      "before": 288.47683466666666,
+      "after": 262.97115066666663,
+      "reduction_percent": 8.84150161640248
+    },
+    "dispatches": {
+      "before": 2049,
+      "after": 1475,
+      "reduction_percent": 28.01366520253782
+    }
+  },
+  "before": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "scene": "surface",
+    "grid": [
+      130,
+      146
+    ],
+    "workers": 4,
+    "initial_volume": [
+      8320,
+      768
+    ],
+    "ticks": [
+      {
+        "tick": 0,
+        "tick_ms": 306.030524,
+        "pressure_host_ms": 299.78067200000004,
+        "pressure_kernel_ms": 276.85074299999997,
+        "pressure_assembly_ms": 0.48115,
+        "pressure_setup_ms": 2.5180590000000005,
+        "readbacks": 8,
+        "pressure_iterations": 72,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 2.2123916032512625e-09,
+        "max_speed": 2.1998098309604215,
+        "upload_bytes": 1389080,
+        "readback_bytes": 225936,
+        "dispatches": 2049,
+        "pressure_workgroups": 71
+      },
+      {
+        "tick": 1,
+        "tick_ms": 319.595533,
+        "pressure_host_ms": 313.82939700000003,
+        "pressure_kernel_ms": 292.11628299999995,
+        "pressure_assembly_ms": 0.49589199999999994,
+        "pressure_setup_ms": 2.49268,
+        "readbacks": 8,
+        "pressure_iterations": 71,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 9.36497213110954e-10,
+        "max_speed": 0.24119684509383393,
+        "upload_bytes": 1389420,
+        "readback_bytes": 226080,
+        "dispatches": 2049,
+        "pressure_workgroups": 72
+      },
+      {
+        "tick": 2,
+        "tick_ms": 339.353063,
+        "pressure_host_ms": 318.765792,
+        "pressure_kernel_ms": 296.463478,
+        "pressure_assembly_ms": 0.419087,
+        "pressure_setup_ms": 2.5161239999999996,
+        "readbacks": 8,
+        "pressure_iterations": 73,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 5.007518050388626e-10,
+        "max_speed": 0.24651365660853594,
+        "upload_bytes": 1389788,
+        "readback_bytes": 226080,
+        "dispatches": 2049,
+        "pressure_workgroups": 72
+      }
+    ]
+  },
+  "after": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "scene": "surface",
+    "grid": [
+      130,
+      146
+    ],
+    "workers": 4,
+    "initial_volume": [
+      8320,
+      768
+    ],
+    "ticks": [
+      {
+        "tick": 0,
+        "tick_ms": 284.003739,
+        "pressure_host_ms": 277.836593,
+        "pressure_kernel_ms": 239.37116299999997,
+        "pressure_assembly_ms": 0.478257,
+        "pressure_setup_ms": 2.6222419999999995,
+        "readbacks": 8,
+        "pressure_iterations": 72,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 2.2123916032512625e-09,
+        "max_speed": 2.1998098309604215,
+        "upload_bytes": 1389080,
+        "readback_bytes": 225936,
+        "dispatches": 1475,
+        "pressure_workgroups": 71
+      },
+      {
+        "tick": 1,
+        "tick_ms": 289.819361,
+        "pressure_host_ms": 284.02617499999997,
+        "pressure_kernel_ms": 263.735688,
+        "pressure_assembly_ms": 0.46092099999999997,
+        "pressure_setup_ms": 2.556883,
+        "readbacks": 8,
+        "pressure_iterations": 71,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 9.36497213110954e-10,
+        "max_speed": 0.24119684509383393,
+        "upload_bytes": 1389420,
+        "readback_bytes": 226080,
+        "dispatches": 1475,
+        "pressure_workgroups": 72
+      },
+      {
+        "tick": 2,
+        "tick_ms": 310.77412,
+        "pressure_host_ms": 304.79905299999996,
+        "pressure_kernel_ms": 285.806601,
+        "pressure_assembly_ms": 0.5090929999999999,
+        "pressure_setup_ms": 2.494599,
+        "readbacks": 8,
+        "pressure_iterations": 73,
+        "substeps": 1,
+        "wet_cells": 9152,
+        "max_divergence": 5.007518050388626e-10,
+        "max_speed": 0.24651365660853594,
+        "upload_bytes": 1389788,
+        "readback_bytes": 226080,
+        "dispatches": 1475,
+        "pressure_workgroups": 72
+      }
+    ]
+  },
+  "validation": "Per-tick phase volumes within 1e-7 cell and divergence below 1e-3. Per-tick iterations, divergence, maximum speed, bytes and readbacks match before/after exactly. Known-solution, 4/128-lane, closed/open boundary, disconnected, profiling and concurrent-context regressions passed.",
+  "scope": "Single sequential run per version; includes first-use work, subject to software-adapter timing variation. Headless large-domain workload; small-domain GIFs are separate visual regressions. Does not establish hardware performance, rendered FPS or stable 60 Hz."
+}

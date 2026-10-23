@@ -1,25 +1,25 @@
 {
-  "source_sha256": "0b1246cf186ae4801579e422937f1e4be4af97bad42202413e1bff4932fd1b94",
+  "source_sha256": "839f993ca78698647cc5d5644cd35f917d59a3a54a5c62b9ae0d3bb6f99bcf3b",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-dam",
-  "base_revision": "c4651fc8fa39b369048a2d4d3b9eb23d91e8abbe",
+  "base_revision": "dff787d42a232072161af9b40f95a21d2c526634",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.995,
+  "observed_capture_fps": 8.011,
   "gif_encoded_frames": 111,
   "draw_submission_fps_range": [
-    19.61,
-    36.77
+    22.99,
+    38.26
   ],
   "simulation_hz_range": [
     0.0,
-    80.08
+    86.91
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 112,
-  "gif_duration_ms": 14030,
+  "gif_duration_ms": 13970,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -41,7 +41,7 @@
   },
   "water_volume_cells": 216.0,
   "water_pixels_beyond_baffle": 5950,
-  "replay": "replay_ticks=905 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=902 checks=terrain,player,input_state workers=1",
   "checks": [
     "collapse of a water column",
     "concave domain with an internal baffle",
@@ -53,34 +53,46 @@
     "Escape shutdown"
   ],
   "fluid_active_simulation_hz_range": [
-    35.03,
-    73.59
+    34.78,
+    73.73
   ],
   "fluid_active_tick_work_ms_range": [
-    9.09,
-    54.609
+    7.753,
+    66.583
   ],
   "fluid_gpu_measurements": {
     "timestamp_available": true,
     "velocity_kernel_ms_range": [
-      1.36988,
-      13.131117
+      1.058464,
+      14.131882
     ],
     "pressure_kernel_ms_range": [
-      4.681847,
-      26.545069
+      4.418197,
+      34.277793
     ],
     "pressure_iterations_per_tick_range": [
-      42,
-      201
+      40,
+      208
+    ],
+    "pressure_assembly_ms_range": [
+      0.030165,
+      0.237015
+    ],
+    "pressure_setup_ms_range": [
+      0.22013,
+      1.565173
+    ],
+    "readbacks_per_tick_range": [
+      3,
+      15
     ],
     "upload_bytes_per_tick_range": [
-      130748,
-      665244
+      130656,
+      667272
     ],
     "readback_bytes_per_tick_range": [
-      112720,
-      567376
+      112768,
+      567968
     ],
     "dispatches_per_tick_range": [
       3,

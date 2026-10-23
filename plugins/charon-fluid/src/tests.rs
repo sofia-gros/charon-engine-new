@@ -362,6 +362,9 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                     (0, 0, 0)
                 );
                 assert_eq!((work.velocity_workgroups, work.pressure_workgroups), (0, 0));
+                assert_eq!(work.readbacks, 0);
+                assert_eq!(work.pressure_setup_ms, 0.);
+                assert_eq!(s.pressure_assembly_ms, 0.);
                 assert!(
                     work.velocity_ms.is_none_or(|v| v == 0.)
                         && work.pressure_ms.is_none_or(|v| v == 0.)
@@ -371,7 +374,10 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                     work.dispatches >= s.substeps as u32
                         && work.upload_bytes > 0
                         && work.readback_bytes > 0
+                        && work.readbacks > 0
                 );
+                assert!(work.pressure_setup_ms.is_finite() && work.pressure_setup_ms >= 0.);
+                assert!(s.pressure_assembly_ms.is_finite() && s.pressure_assembly_ms >= 0.);
             }
             if tick < 8 {
                 let other = untimed.step(1. / 60., acceleration).unwrap();

@@ -82,7 +82,7 @@ impl TiledPressure {
             "smooth_second",
             "restrict_residual",
             "coarse_solve",
-            "prolong",
+            "prolong_smooth",
             "finish",
         ]
         .map(|entry| pipeline(&shader, entry));
@@ -127,26 +127,31 @@ impl TiledPressure {
             pass.set_pipeline(&self.multigrid[stage]);
             pass.dispatch_workgroups((hierarchy.counts[level] as u32).div_ceil(128), 1, 1);
         };
-        let smooth = |pass: &mut wgpu::ComputePass<'_>, level| {
-            dispatch(pass, 1, level);
-            dispatch(pass, 2, level);
-        };
         dispatch(pass, 0, 0);
         let last = hierarchy.counts.len() - 1;
         for level in 0..last {
-            smooth(pass, level);
+            // RHS/restriction already computed the zero-start first sweep.
+            dispatch(pass, 2, level);
             dispatch(pass, 3, level + 1);
         }
         if hierarchy.direct {
             dispatch(pass, 4, last);
         } else {
-            for _ in 0..COARSE_SWEEPS / 2 {
-                smooth(pass, last);
+            // First sweep came with RHS/restriction. A one-level hierarchy
+            // defers its final sweep to the PCG dot-product pass.
+            dispatch(pass, 2, last);
+            for sweep in (2..COARSE_SWEEPS).step_by(2) {
+                dispatch(pass, 1, last);
+                if last > 0 || sweep + 2 < COARSE_SWEEPS {
+                    dispatch(pass, 2, last);
+                }
             }
         }
         for level in (0..last).rev() {
             dispatch(pass, 5, level);
-            smooth(pass, level);
+            if level > 0 {
+                dispatch(pass, 2, level);
+            }
         }
         dispatch(pass, 6, 0);
     }

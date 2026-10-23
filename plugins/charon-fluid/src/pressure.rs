@@ -19,6 +19,7 @@ impl Fluid {
         acceleration: [f64; 2],
         _stats: &mut super::Stats,
     ) -> Result<(usize, f64), Error> {
+        let assembled = std::time::Instant::now();
         let w = self.config.width;
         let mut mapping = vec![NONE; self.state.fraction.len()];
         let mut nodes = Vec::new();
@@ -127,6 +128,7 @@ impl Fluid {
             .iter()
             .map(|node| self.state.pressure[node.world])
             .collect();
+        _stats.pressure_assembly_ms += assembled.elapsed().as_secs_f64() * 1000.;
         #[cfg(feature = "gpu")]
         let gpu_solution = self
             .gpu
