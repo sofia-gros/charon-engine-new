@@ -211,3 +211,129 @@ fn separated_droplet_falls_and_invalid_edits_do_not_destroy_liquid() {
     assert!(fluid.step(0.1, [1e9, 1e9]).is_err());
     assert_eq!(fluid.signature(), before, "failed tick did not roll back");
 }
+
+/// Explicit compute contract test; run with a Vulkan/DX12 adapter, including
+/// software adapters in Cloud. Never silently skips missing devices.
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
+    let gpu = std::sync::Arc::new(gpu::GpuContext::new().unwrap());
+    eprintln!("compute adapter: {:?}", gpu.adapter_info());
+    for n in [37, 1024, 4096] {
+        let rows: Vec<_> = (0..n)
+            .map(|i| {
+                (
+                    [
+                        if i > 0 { i - 1 } else { usize::MAX },
+                        if i + 1 < n { i + 1 } else { usize::MAX },
+                        usize::MAX,
+                        usize::MAX,
+                    ],
+                    [1., 1., 0., 0.],
+                    2.1,
+                )
+            })
+            .collect();
+        let expected: Vec<_> = (0..n).map(|i| ((i * 17 % 53) as f64) / 53.).collect();
+        let rhs: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (adj, a, d))| {
+                d * expected[i]
+                    - (0..4)
+                        .filter(|&k| adj[k] != usize::MAX)
+                        .map(|k| a[k] * expected[adj[k]])
+                        .sum::<f64>()
+            })
+            .collect();
+        let mut p = vec![0.; n];
+        let iterations = gpu.solve(&rows, &rhs, &mut p).unwrap();
+        let error = p
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0., f64::max);
+        assert!(error < 1e-6, "n={n} error={error}");
+        eprintln!("manufactured n={n} iterations={iterations} error={error:e}");
+    }
+    // Compare every advected face, not only the final visual surface.
+    let mut cpu = domain(26, 30, 2);
+    for y in 15..29 {
+        for x in 1..25 {
+            cpu.add(x, y, 0, 1.).unwrap();
+        }
+    }
+    for (i, u) in cpu.state.u.iter_mut().enumerate() {
+        *u = (i % 17) as f64 * 0.1;
+    }
+    for (i, v) in cpu.state.v.iter_mut().enumerate() {
+        *v = -((i % 13) as f64) * 0.07;
+    }
+    let (u, v) = gpu
+        .advect(
+            cpu.config,
+            &cpu.state.u,
+            &cpu.state.v,
+            cpu.bounds(),
+            1. / 60.,
+        )
+        .unwrap();
+    cpu.advect_velocity(1. / 60.);
+    let error = u
+        .iter()
+        .chain(&v)
+        .zip(cpu.state.u.iter().chain(&cpu.state.v))
+        .map(|(a, b)| (a - b).abs())
+        .fold(0., f64::max);
+    assert!(error < 5e-6, "velocity error={error}");
+    eprintln!("all MAC faces max error={error:e}");
+    // Closed pressure component, free surface with oil, and falling droplet.
+    for scene in 0..3 {
+        let mut cpu = domain(26, 30, 2);
+        for y in 1..29 {
+            for x in 1..25 {
+                let (fill, phase) = match scene {
+                    0 => (true, 0),
+                    1 => (y >= 12, usize::from(y < 16)),
+                    _ => (y < 7 && (9..14).contains(&x), 0),
+                };
+                if fill {
+                    cpu.add(x, y, phase, 1.).unwrap();
+                }
+            }
+        }
+        let mut accelerated = Fluid::new(cpu.config, cpu.solid.clone()).unwrap();
+        accelerated.state = cpu.state.clone();
+        accelerated.use_gpu(gpu.clone());
+        let initial = cpu.volumes();
+        for tick in 0..90 {
+            let acceleration = if scene == 1 && (30..45).contains(&tick) {
+                [-180., 120.]
+            } else {
+                [0., 120.]
+            };
+            cpu.step(1. / 60., acceleration).unwrap();
+            let s = accelerated
+                .step(1. / 60., acceleration)
+                .unwrap_or_else(|e| panic!("scene={scene} tick={tick} {e:?}"));
+            conserved(&accelerated, initial);
+            assert!(s.max_divergence < 1e-3, "scene={scene} tick={tick} {s:?}");
+            let phase_difference = cpu
+                .state
+                .fraction
+                .iter()
+                .zip(&accelerated.state.fraction)
+                .map(|(a, b)| (a[0] - b[0]).abs() + (a[1] - b[1]).abs())
+                .sum::<f64>();
+            assert!(
+                phase_difference < initial.iter().sum::<f64>() * 0.03,
+                "scene={scene} tick={tick} difference={phase_difference}"
+            );
+        }
+        eprintln!(
+            "scene={scene} steps=90 conserved={:?}",
+            accelerated.volumes()
+        );
+    }
+}

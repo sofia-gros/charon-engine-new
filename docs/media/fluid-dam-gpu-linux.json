@@ -1,0 +1,63 @@
+{
+  "source_sha256": "b0bc78ade0c5416ea586b5f1c1114e1e72d3ec5ec591fb0d895ba660a1e25dce",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "fluid-dam",
+  "base_revision": "7c673a61dd0970b43404ea3242c4ae967ba25ff7",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.0,
+  "gif_encoded_frames": 97,
+  "draw_submission_fps_range": [
+    21.84,
+    37.18
+  ],
+  "simulation_hz_range": [
+    0.0,
+    61.29
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "captured_frames": 112,
+  "gif_duration_ms": 14010,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": "gpu",
+  "fluid_compute_adapter": "fluid_compute=AdapterInfo { name: \"SwiftShader Device (Subzero)\", vendor: 6880, device: 49374, device_type: Cpu, device_pci_bus_id: \"\", driver: \"SwiftShader driver\", driver_info: \"\", backend: Vulkan, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None } identity=gpu-38d8b6827bf27f4b",
+  "simulation_grid": [
+    128,
+    100
+  ],
+  "solver": "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF",
+  "fluid_settings": {
+    "viscosity_cell2_s": 0.5,
+    "pressure_cutoff": 0.01,
+    "drag_s_inverse": 0.8,
+    "sleep_tolerance": 0.005
+  },
+  "water_volume_cells": 216.0,
+  "water_pixels_beyond_baffle": 5950,
+  "replay": "replay_ticks=618 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "collapse of a water column",
+    "concave domain with an internal baffle",
+    "separate conserved phase volume",
+    "bounded divergence after projection",
+    "pause and resume",
+    "real rendered water beyond the baffle",
+    "one-worker authoritative replay",
+    "Escape shutdown"
+  ],
+  "fluid_active_simulation_hz_range": [
+    5.63,
+    15.76
+  ],
+  "fluid_active_tick_work_ms_range": [
+    36.14,
+    198.912
+  ]
+}

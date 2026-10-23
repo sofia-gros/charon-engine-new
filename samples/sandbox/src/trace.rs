@@ -13,24 +13,33 @@ pub struct Recorder {
     tick: u64,
 }
 impl Recorder {
-    pub fn new(
+    pub fn with_backend(
         path: &Path,
         width: usize,
         height: usize,
         workers: usize,
         play: bool,
         materials: u64,
+        backend: &str,
     ) -> std::io::Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
         }
         let mut writer =
             BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
-        writeln!(
-            writer,
-            "charon-input-v4 {width} {height} {workers} {} {materials:016x}",
-            u8::from(play)
-        )?;
+        if backend == "cpu" {
+            writeln!(
+                writer,
+                "charon-input-v4 {width} {height} {workers} {} {materials:016x}",
+                u8::from(play)
+            )?;
+        } else {
+            writeln!(
+                writer,
+                "charon-input-v5 {width} {height} {workers} {} {materials:016x} {backend}",
+                u8::from(play)
+            )?;
+        }
         writer.flush()?;
         Ok(Self { writer, tick: 0 })
     }
@@ -144,6 +153,7 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
     let fields: Vec<_> = header.split_whitespace().collect();
     let legacy = fields.first() == Some(&"charon-input-v1");
     if !(legacy && fields.len() == 5
+        || fields.first() == Some(&"charon-input-v5") && fields.len() == 7
         || matches!(
             fields.first(),
             Some(&"charon-input-v2" | &"charon-input-v3" | &"charon-input-v4")
@@ -171,7 +181,17 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
             "material definitions differ from input trace; use the matching game version".into(),
         );
     }
-    let cfd_trace = fields[0] == "charon-input-v4";
+    if fields[0] == "charon-input-v5" {
+        let gpu = std::sync::Arc::new(charon_fluid::gpu::GpuContext::new()?);
+        if fields[6] != gpu.identity() {
+            return Err(
+                "GPU trace backend/driver differs; exact replay requires the recorded adapter"
+                    .into(),
+            );
+        }
+        game.use_fluid_gpu(gpu);
+    }
+    let cfd_trace = matches!(fields[0], "charon-input-v4" | "charon-input-v5");
     let mut ticks = 0;
     for line in lines {
         let line = line.map_err(|e| e.to_string())?;

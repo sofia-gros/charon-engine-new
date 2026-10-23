@@ -122,95 +122,28 @@ impl Fluid {
             .iter()
             .map(|node| -divergence(node.world) / dt)
             .collect();
-        let mut factor = vec![0_f64; n];
-        for (i, node) in nodes.iter().enumerate() {
-            let mut d = node.diagonal;
-            for side in [0, 2] {
-                let j = node.adjacent[side];
-                if j != NONE {
-                    d -= (node.weights[side] / factor[j]).powi(2);
-                    let cross = if side == 0 { 3 } else { 1 };
-                    if nodes[j].adjacent[cross] != NONE {
-                        d -=
-                            0.97 * node.weights[side] * nodes[j].weights[cross] / factor[j].powi(2);
-                    }
-                }
-            }
-            if d < 0.25 * node.diagonal {
-                d = node.diagonal;
-            }
-            factor[i] = d.sqrt();
-        }
-        let apply = |x: &[f64], result: &mut [f64]| {
-            for (i, node) in nodes.iter().enumerate() {
-                let sum = node
-                    .adjacent
-                    .iter()
-                    .zip(&node.weights)
-                    .map(|(&j, &a)| if j == NONE { 0. } else { a * x[j] })
-                    .sum::<f64>();
-                result[i] = node.diagonal * x[i] - sum;
-            }
-        };
-        let precondition = |r: &[f64], z: &mut [f64]| {
-            for (i, node) in nodes.iter().enumerate() {
-                let mut sum = 0.;
-                for side in [0, 2] {
-                    let j = node.adjacent[side];
-                    if j != NONE {
-                        sum += node.weights[side] / factor[j] * z[j];
-                    }
-                }
-                z[i] = (r[i] + sum) / factor[i];
-            }
-            for (i, node) in nodes.iter().enumerate().rev() {
-                let mut sum = 0.;
-                for side in [1, 3] {
-                    let j = node.adjacent[side];
-                    if j != NONE {
-                        sum += node.weights[side] / factor[i] * z[j];
-                    }
-                }
-                z[i] = (z[i] + sum) / factor[i];
-            }
-        };
-        let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
         let mut p: Vec<_> = nodes
             .iter()
             .map(|node| self.state.pressure[node.world])
             .collect();
-        let mut product = vec![0.; n];
-        apply(&p, &mut product);
-        let mut r: Vec<_> = rhs.iter().zip(&product).map(|(b, ap)| b - ap).collect();
-        let mut z = vec![0.; n];
-        precondition(&r, &mut z);
-        let mut direction = z.clone();
-        let mut rz = dot(&r, &z);
-        let tolerance = (dot(&rhs, &rhs).sqrt() * 1e-8).max(1e-9);
-        let mut iterations = 0;
-        while dot(&r, &r).sqrt() > tolerance {
-            if iterations >= 600 {
-                return Err(Error::Pressure);
-            }
-            apply(&direction, &mut product);
-            let denominator = dot(&direction, &product);
-            if !denominator.is_finite() || denominator <= 0. {
-                return Err(Error::Pressure);
-            }
-            let alpha = rz / denominator;
-            for i in 0..n {
-                p[i] += alpha * direction[i];
-                r[i] -= alpha * product[i];
-            }
-            precondition(&r, &mut z);
-            let next = dot(&r, &z);
-            let beta = next / rz;
-            for i in 0..n {
-                direction[i] = z[i] + beta * direction[i];
-            }
-            rz = next;
-            iterations += 1;
-        }
+        #[cfg(feature = "gpu")]
+        let gpu_solution = self
+            .gpu
+            .as_ref()
+            .map(|gpu| {
+                let rows: Vec<_> = nodes
+                    .iter()
+                    .map(|node| (node.adjacent, node.weights, node.diagonal))
+                    .collect();
+                gpu.solve(&rows, &rhs, &mut p)
+            })
+            .transpose()?;
+        #[cfg(not(feature = "gpu"))]
+        let gpu_solution: Option<usize> = None;
+        let iterations = match gpu_solution {
+            Some(iterations) => iterations,
+            None => solve_cpu(&nodes, &rhs, &mut p)?,
+        };
         for (i, node) in nodes.iter().enumerate() {
             let world = node.world;
             let x = world % w;
@@ -249,4 +182,93 @@ impl Fluid {
             .fold(0., f64::max);
         Ok((iterations, maximum))
     }
+}
+
+fn solve_cpu(nodes: &[Node], rhs: &[f64], p: &mut [f64]) -> Result<usize, Error> {
+    let n = nodes.len();
+    let mut factor = vec![0_f64; n];
+    for (i, node) in nodes.iter().enumerate() {
+        let mut d = node.diagonal;
+        for side in [0, 2] {
+            let j = node.adjacent[side];
+            if j != NONE {
+                d -= (node.weights[side] / factor[j]).powi(2);
+                let cross = if side == 0 { 3 } else { 1 };
+                if nodes[j].adjacent[cross] != NONE {
+                    d -= 0.97 * node.weights[side] * nodes[j].weights[cross] / factor[j].powi(2);
+                }
+            }
+        }
+        if d < 0.25 * node.diagonal {
+            d = node.diagonal;
+        }
+        factor[i] = d.sqrt();
+    }
+    let apply = |x: &[f64], result: &mut [f64]| {
+        for (i, node) in nodes.iter().enumerate() {
+            let sum = node
+                .adjacent
+                .iter()
+                .zip(&node.weights)
+                .map(|(&j, &a)| if j == NONE { 0. } else { a * x[j] })
+                .sum::<f64>();
+            result[i] = node.diagonal * x[i] - sum;
+        }
+    };
+    let precondition = |r: &[f64], z: &mut [f64]| {
+        for (i, node) in nodes.iter().enumerate() {
+            let mut sum = 0.;
+            for side in [0, 2] {
+                let j = node.adjacent[side];
+                if j != NONE {
+                    sum += node.weights[side] / factor[j] * z[j];
+                }
+            }
+            z[i] = (r[i] + sum) / factor[i];
+        }
+        for (i, node) in nodes.iter().enumerate().rev() {
+            let mut sum = 0.;
+            for side in [1, 3] {
+                let j = node.adjacent[side];
+                if j != NONE {
+                    sum += node.weights[side] / factor[i] * z[j];
+                }
+            }
+            z[i] = (z[i] + sum) / factor[i];
+        }
+    };
+    let dot = |a: &[f64], b: &[f64]| a.iter().zip(b).map(|(a, b)| a * b).sum::<f64>();
+    let mut product = vec![0.; n];
+    apply(p, &mut product);
+    let mut r: Vec<_> = rhs.iter().zip(&product).map(|(b, ap)| b - ap).collect();
+    let mut z = vec![0.; n];
+    precondition(&r, &mut z);
+    let mut direction = z.clone();
+    let mut rz = dot(&r, &z);
+    let tolerance = (dot(rhs, rhs).sqrt() * 1e-8).max(1e-9);
+    let mut iterations = 0;
+    while dot(&r, &r).sqrt() > tolerance {
+        if iterations >= 600 {
+            return Err(Error::Pressure);
+        }
+        apply(&direction, &mut product);
+        let denominator = dot(&direction, &product);
+        if !denominator.is_finite() || denominator <= 0. {
+            return Err(Error::Pressure);
+        }
+        let alpha = rz / denominator;
+        for i in 0..n {
+            p[i] += alpha * direction[i];
+            r[i] -= alpha * product[i];
+        }
+        precondition(&r, &mut z);
+        let next = dot(&r, &z);
+        let beta = next / rz;
+        for i in 0..n {
+            direction[i] = z[i] + beta * direction[i];
+        }
+        rz = next;
+        iterations += 1;
+    }
+    Ok(iterations)
 }

@@ -4,7 +4,7 @@
 
 - Rust stable、Git。
 - Windows 11: MSVC版Rust用のMicrosoft製リンカーとWindows SDK（Visual Studio Build Toolsから導入可能）。既にRustのexeをビルドできれば追加導入は不要。エンジンはRust、shaderはWGSLで記述する。
-- Linux: Cリンカ、X11、VulkanまたはOpenGL ESドライバ。音声pluginのビルドには`pkg-config`とALSA開発パッケージ（Debian/Ubuntu: `libasound2-dev`）が必要。クラウドの`setup.sh`は管理環境向けにローカル導入も行う。ウィンドウ不要のCPU検証も可能。
+- Linux: Cリンカ、X11、VulkanまたはOpenGL ESドライバ（CFDのGPU computeにはVulkanが必要）。音声pluginのビルドには`pkg-config`とALSA開発パッケージ（Debian/Ubuntu: `libasound2-dev`）が必要。クラウドの`setup.sh`は管理環境向けにローカル導入も行う。ウィンドウ不要のCPU検証も可能。
 - `rust-toolchain.toml` はstableを指定する。更新は `rustup update stable`。依存バージョンはCargo.lockで管理する。
 
 ```console
@@ -34,7 +34,7 @@ Linux、または直接Cargoで起動:
 cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts/local/metrics.csv
 ```
 
-クラウドでは先に `source scripts/env.sh` を実行する。初回/依存更新時のみ `bash scripts/setup.sh` を使用する。
+クラウドでは先に `source scripts/env.sh` を実行する。GPUのない管理環境ではSwiftShaderを選び、画面にはSWGPUと表示する。大きなCFD領域の日常確認は`--fluid-backend cpu`を選び、GPU computeの正しさは小領域でも確認する。初回/依存更新時のみ `bash scripts/setup.sh` を使用する。
 
 ウィンドウの初期サイズは1920×1080。1で砂・2で紫色の灰を選び、左ドラッグで配置、右で消去、中でグリッドブロック、Rで初期化、Escで終了。表示サイズとセル数は独立している。端の壁と床は消去できない。
 
@@ -80,13 +80,13 @@ Kでコップと水を作り、A/Dまたは左右キーで並進、Oで油を追
 
 `python3 scripts/capture-linux.py --sample cup`で実ウィンドウと入力を収録し、各相の体積保存・圧力投影後の発散・液面の往復・停止/休止・1ワーカーでの再生を検証する。[結果JSON](media/cup-linux.json)・[状態CSV](media/cup-linux.csv)・[入力記録](media/cup-linux.trace)を同梱する。HUDの水/油は、連続した体積をセル面積に換算した値。CSVには丸め前の体積も記録する。GIFの収録fpsは描画/シミュレーションの速度ではない。
 
-[charon-fluid](../plugins/charon-fluid/src/lib.rs)は砂に依存しないRust製のEuler型流体部品。格子上の速度・圧力と2相の占有率を持ち、個々の粒子を追跡しない。非圧縮流れの慣性・重力・基準座標系の加速度・線形抵抗を扱い、MAC格子で速度移流と可変密度の圧力投影を行う。有効動粘性`Config.viscosity`による速度拡散も計算する。例の設定は0.5セル²/秒、線形抵抗0.8/秒。MIC(0)で前処理した共役勾配法を使い、圧力の前回解を再利用する。圧力反復は液体セルだけの連続配列で処理し、空気の配列を反復走査しない。液体の占有位置を圧力境界の距離へ反映する。相の移流は有限体積法と幾何VOFで、セル内の界面を平面として再構成し、面を横切る体積を運ぶ。水/油は別の体積として保存され、界面を含むセルで両相が存在しても溶解を意味しない。
+[charon-fluid](../plugins/charon-fluid/src/lib.rs)は砂に依存しないRust製のEuler型流体部品。格子上の速度・圧力と2相の占有率を持ち、個々の粒子を追跡しない。非圧縮流れの慣性・重力・基準座標系の加速度・線形抵抗を扱い、MAC格子で速度移流と可変密度の圧力投影を行う。有効動粘性`Config.viscosity`による速度拡散も計算する。例の設定は0.5セル²/秒、線形抵抗0.8/秒。CPU基準版はMIC(0)で前処理した共役勾配法を使い、圧力の前回解を再利用する。圧力反復は液体セルだけの連続配列で処理し、空気の配列を反復走査しない。液体の占有位置を圧力境界の距離へ反映する。相の移流は有限体積法と幾何VOFで、セル内の界面を平面として再構成し、面を横切る体積を運ぶ。水/油は別の体積として保存され、界面を含むセルで両相が存在しても溶解を意味しない。
 
 流体の連続性は水面の高さ1本に限定しない。凹型・仕切り・開口等のセルマスク、液体の分裂・合流、分離した液滴を扱える。`Fluid::new(Config, solid)`で有限の閉境界領域を作り、`add`で指定相の体積を空きへ追加、`set_solid`で形状を編集する。液体へ壁を挿入して物質を消す操作は拒否する。失敗したtickは速度・圧力・体積を巻き戻す。CFL条件で時間を分割し、体積制限は共有する面流量へ適用する。丸め残差も物質の削除ではなく接続した領域への保守的な再分配で処理する。
 
 静止時は流体更新を休止し、編集や加速度変更で再開する。休止の許容値は`Config.sleep_tolerance`で明示指定し、0で無効化できる。例では各セルの運動水頭0.005セル・1tickの相占有率変化0.005以下が60tick続くと休止する。気体側へ延長した速度や、動く小領域を隠す世界平均だけでは判定しない。CFLと運動エネルギーはセル内の液体多角形上で評価し、空気部分の速度で時間分割や休止を誤判定しない。`Config.pressure_cutoff`は独立した圧力自由度を持つ最小占有率で、例では0.01。下回る体積もVOFに残して保存し、速度は近傍場から補間する。活動中は速度の作業範囲を液体周辺へ絞るが、圧力の伝達に必要な液体内部は解く。CPUの速度移流はRayonで並列化し、競合しない書込先へ出力する。圧力の内積と適用順は再現性のため決定的に処理する。描画は体積から作る別のビューで、同じ素材の内部タイルを保持し、変更したタイルだけをGPUへ送る。表示に使う占有率の閾値は物理的な体積を削除しない。
 
-現段階のCFDはセル形状・2相・共通の並進座標系を扱う。コップの最小グリッドは128×100。ゲーム側が流体を所有し、砂側のセル移動とは重複して計算しない。CFDの例は形状を固定した並進座標系で解き、計算領域の外周もその座標系に属する。まだ連成していない地形/砂ブラシは例の実行中に拒否するため、RまたはLで通常のSandboxへ戻して使う。砂との双方向結合、回転する壁、相ごとの粘性・表面張力・圧縮性の気体は後続の機能。離散化には数値拡散とセル解像度による誤差がある。GPU computeによる流体計算やWindows実機性能の確認は含まない。
+現段階のCFDはセル形状・2相・共通の並進座標系を扱う。コップの最小グリッドは128×100。ゲーム側が流体を所有し、砂側のセル移動とは重複して計算しない。CFDの例は形状を固定した並進座標系で解き、計算領域の外周もその座標系に属する。まだ連成していない地形/砂ブラシは例の実行中に拒否するため、RまたはLで通常のSandboxへ戻して使う。砂との双方向結合、回転する壁、相ごとの粘性・表面張力・圧縮性の気体は後続の機能。離散化には数値拡散とセル解像度による誤差がある。Windows実機性能は未確認。
 
 手法の基礎はHarlow/Welchの[MAC法](https://doi.org/10.1063/1.1761178)、Hirt/Nicholsの[VOF法](https://doi.org/10.1016/0021-9991(81)90145-5)。この実装では静水・床上の薄い液体・液体領域上のエネルギー積分・粘性による運動の減衰・重力/抵抗による落下の解析解・障害物を回り込むダム崩壊・相別保存・1/4ワーカー一致を回帰検証する。
 
@@ -96,9 +96,23 @@ Kでコップと水を作り、A/Dまたは左右キーで並進、Oで油を追
 
 従来のセル液体と汎用キネマティック境界も`charon-sand`に残る。`add_obstacle`/`move_obstacle`は1セルの移動、接続した液体列の体積転送、失敗時の原子的な取消しを提供する。マスクは16384セル、探索は1移動262144訪問以内。Clear前のハンドルは再利用しない。海と砂の受入例は引き続きこの経路を使う。
 
-性能記録の`headless_replay`は、描画を除いた4ワーカーの入力再生時間をCFDの物理tick数で割った平均上限。停止中の処理・画像生成・全状態の照合も含み、最悪tick時間やWindows性能の測定ではない。同じ入力は`target/debug/charon-sandbox --replay docs/media/fluid-dam-linux.trace --workers 4`で再生できる。強い崩壊/飛沫ではクラウドの描画込み60Hzを下回るため、本格CFDをGPU compute主体とし、CPUを検証/代替用に残す方針。現在収録しているGIFはCPU基準版であり、GPU流体計算の実装済み証拠ではない。
+性能記録の`headless_replay`は、描画を除いた4ワーカーの入力再生時間をCFDの物理tick数で割った平均上限。停止中の処理・画像生成・全状態の照合も含み、最悪tick時間やWindows性能の測定ではない。同じ入力は`target/debug/charon-sandbox --replay docs/media/fluid-dam-linux.trace --workers 4`で再生できる。強い崩壊/飛沫ではクラウドの描画込み60Hzを下回るため、本格CFDをGPU compute主体とし、CPUを検証/代替用に残す方針。上の480×270のGIFはCPU基準版。GPU経路の検証記録とは区別する。
 
-入力記録v4はCFDのコップを対象にする。v1/v2は当時の素材表、v3は既存の砂/海等を再生できる。計算法が異なる旧コップの記録は明示的に拒否し、v4で再収録する。開発用の再現記録であり、ゲーム保存の長期互換形式ではない。
+サンプルは`--fluid-backend gpu`が既定で、速度移流/粘性と圧力反復をwgpu computeで計算する。`--fluid-backend cpu`（Windows起動スクリプトでは`-FluidBackend cpu`）でCPU基準版を選べる。GPU初期化失敗時は理由と代替オプションを表示し、黙って経路を変えない。plugin単体は`gpu` featureを有効にし、共有する`GpuContext`を`Fluid::use_gpu`へ渡す。体積を所有する幾何VOF・境界係数生成・力/速度延長は現段階でCPU側に残る。
+
+GPUの圧力は液体セルを圧縮した配列でJacobi前処理CGを実行し、反復中のCPU待ちを避ける。f32の解は元のf64作用素で残差を検査し、追加のGPU補正でCPU基準と同じ許容値へ収束させる。密閉した各連結領域は基準圧力を1点固定する。現在の圧力kernelは1 workgroupで協調する初期実装で、大領域でGPU全体を使う性能は保証しない。格子間転送/同期も含む実機測定を行い、圧力の分割・前処理を改善する。GPUの入力/作業/読戻しバッファは容量を拡張しながら再利用する。クラウドのSwiftShaderはGPU命令をCPUで代行するため、RTX 4060の性能指標には使わない。
+
+`VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture`で実computeを検証する。既知解3サイズ、CPU版との全MAC速度面の比較、密閉容器/水と油/液滴の各90tickで体積保存・発散・CPUとの差を確認する。アダプター不在なら失敗し、成功扱いでスキップしない。Linux CIにもこの検証を追加している。
+
+![GPU compute経路の慣性波と水・油（LinuxソフトウェアGPU）](media/fluid-wave-gpu-linux.gif)
+
+`python3 scripts/capture-linux.py --sample fluid-wave --fluid-backend gpu --grid 128x100`は短い慣性波の画面検証。[結果JSON](media/fluid-wave-gpu-linux.json)・[状態CSV](media/fluid-wave-gpu-linux.csv)・[GPU入力記録](media/fluid-wave-gpu-linux.trace)を同梱。往復移動、液面の両方向への傾き、水/油の表示、相別保存、一時停止、入力再生を確認する。静止後の層・深部の空洞・休止まで確認する上のCPUコップ受入例とは範囲を分ける。
+
+![GPU compute経路の水柱崩壊（LinuxソフトウェアGPU）](media/fluid-dam-gpu-linux.gif)
+
+`python3 scripts/capture-linux.py --sample fluid-dam --fluid-backend gpu --grid 128x100`で再収録できる。流体格子128×100、描画1920×1080、computeはSwiftShader、描画はllvmpipe。これはGPU経路の動作検証であり、実機GPUの速度を表さない。JSONの`fluid_active_simulation_hz_range`は場面開始直後と停止/休止中を除いた計測区間で、全体の最大値に含まれる流体開始前の60Hzと区別する。[結果JSON](media/fluid-dam-gpu-linux.json)・[状態CSV](media/fluid-dam-gpu-linux.csv)・[GPU入力記録](media/fluid-dam-gpu-linux.trace)を同梱する。
+
+入力記録v4はCPUのCFDコップを対象にする。GPUはv5にアダプター/ドライバー識別値を持ち、別のGPU環境では完全一致の再生を拒否する。GPU間やCPUとの検証は保存量・発散・誤差許容値で比較し、bit単位の互換性を約束しない。v1/v2は当時の素材表、v3は既存の砂/海等を再生できる。計算法が異なる旧コップの記録は明示的に拒否し、v4で再収録する。開発用の再現記録であり、ゲーム保存の長期互換形式ではない。
 
 ## Platformer
 
@@ -121,7 +135,7 @@ cargo run --locked -p charon-sandbox -- --play --input-log artifacts/local/sessi
 cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace --workers 1
 ```
 
-記録は物質更新と同じスレッドでtickごとに保存する。再生はウィンドウ/GPUを起動せず、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
+記録は物質更新と同じスレッドでtickごとに保存する。CPUの記録はウィンドウ/GPUを起動せずに再生し、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
 
 入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。新規記録は素材定義の識別情報を含むv2で、定義の異なる版は再生前に拒否する。既存v1は従来の3素材だけを対象に再生できる。物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
 

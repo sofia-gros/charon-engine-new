@@ -149,12 +149,15 @@ def source_fingerprint():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-dam"), default="sandbox")
-    sample = parser.parse_args().sample
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
+    parser.add_argument("--fluid-backend", choices=("cpu", "gpu"), default="cpu")
+    parser.add_argument("--grid", default="480x270", help="simulation grid; client remains 1920x1080")
+    args = parser.parse_args()
+    sample = args.sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
-    prefix = f"{sample}-linux"
+    prefix = f"{sample}{'-gpu' if args.fluid_backend == 'gpu' else ''}-linux"
     local = LOCAL / sample
-    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else 14))
+    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -218,7 +221,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -268,7 +271,7 @@ EndSection
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
                 inputs.key(ord("r"))
-            elif sample == "cup":
+            elif sample in ("cup", "fluid-wave"):
                 at(.5)
                 inputs.key(ord("k"))
                 at(1)
@@ -547,6 +550,29 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "custom_material": "demo.ash", "peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
                           "checks": ["mouse painting", "game-defined ash selection/inspection", "authoritative replay with 1 worker", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
+            elif sample == "fluid-wave":
+                fluid_rows=[r for r in rows if r["cup_x"]]
+                assert fluid_rows, "wave scene did not open"
+                assert "Fluid step rejected" not in (local / f"{sample}.log").read_text(), "CFD wave solve failed"
+                water=float(fluid_rows[0]["fluid_water_volume"])
+                assert water>0 and all(abs(float(r["fluid_water_volume"])-water)<1e-6 for r in fluid_rows), "wave scene lost water"
+                oil=[float(r["fluid_oil_volume"]) for r in fluid_rows if float(r["fluid_oil_volume"])>0]
+                assert oil and max(oil)-min(oil)<1e-6, "wave scene lost oil"
+                xs=[int(r["cup_x"]) for r in fluid_rows]
+                assert max(xs)-min(xs)>float(fluid_rows[0]["cup_width"])/5, "wave cup moved less than one fifth of its width"
+                assert any(b>a for a,b in zip(xs,xs[1:])) and any(b<a for a,b in zip(xs,xs[1:])), "wave cup did not reverse"
+                tilts=[float(r["fluid_surface_delta"]) for r in fluid_rows]
+                assert min(tilts)<-1 and max(tilts)>1, "wave surface did not respond in both directions"
+                assert max(float(r["fluid_divergence"]) for r in fluid_rows)<1e-3, "wave projection divergence"
+                paused=[r for r in fluid_rows if r["paused"]=="true"]
+                assert len(paused)>=2 and len({(r["cup_x"],r["simulation_tick"]) for r in paused})==1, "paused wave scene moved"
+                with Image.open(frames[-1][1]) as im:
+                    pixels=list(im.convert("RGB").get_flattened_data())
+                    assert sum(r<80 and g>90 and b>180 for r,g,b in pixels)>100, "water absent from rendered wave scene"
+                    assert sum(r>170 and g>140 and b<100 for r,g,b in pixels)>100, "oil absent from rendered wave scene"
+                replay=subprocess.run([str(ROOT/"target/debug"/package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=90)
+                shutil.copyfile(trace_path,MEDIA/f"{prefix}.trace")
+                checks={"water_volume_cells":water,"oil_volume_cells":oil[-1],"surface_delta_range":[min(tilts),max(tilts)],"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["real left/right movement and reversal", "inertial surface slopes in both directions", "water and oil visible", "separate phase conservation", "bounded projection divergence", "pause freezes movement and liquid", "one-worker authoritative replay", "Escape shutdown"],"scope":"Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep."}
             elif sample == "cup":
                 cup_rows=[r for r in rows if r["cup_x"]]
                 assert cup_rows, "cup was not created"
@@ -763,7 +789,20 @@ EndSection
                       "capture_target": "game client window (desktop excluded)",
                       "source_size": "actual client size; see window_width/window_height in CSV", "gif_size": [960, 540],
                       **({"font_source": json.loads((ROOT / "samples/dialogue/assets/font-source.json").read_text())} if sample == "dialogue" else {}),
+                      "fluid_backend": args.fluid_backend if sample in ("cup", "fluid-wave", "fluid-dam") else None,
+                      "fluid_compute_adapter": next((line for line in (local / f"{sample}.log").read_text().splitlines() if line.startswith("fluid_compute=")), None),
+                      "simulation_grid": [int(v) for v in args.grid.split("x")],
                       **checks}
+            if sample in ("cup", "fluid-wave", "fluid-dam") and args.fluid_backend == "gpu":
+                report["solver"] = "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF"
+            if sample in ("cup", "fluid-wave", "fluid-dam"):
+                # Exclude scene entry and paused/sleeping rows. A one-second
+                # counter interval can still straddle an input transition.
+                active=[r for r in rows if r["cup_x"]][2:]
+                active=[r for r in active if r["paused"]=="false" and r["fluid_sleeping"]=="false"]
+                if active:
+                    report["fluid_active_simulation_hz_range"]=[min(float(r["sim_hz"]) for r in active),max(float(r["sim_hz"]) for r in active)]
+                    report["fluid_active_tick_work_ms_range"]=[min(float(r["tick_work_ms"]) for r in active),max(float(r["tick_work_ms"]) for r in active)]
             (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")
             (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")
             shutil.copyfile(local / "metrics.csv", MEDIA / f"{prefix}.csv")

@@ -287,7 +287,9 @@ dependencies = [
 name = "charon-fluid"
 version = "0.1.0"
 dependencies = [
+ "pollster",
  "rayon",
+ "wgpu",
 ]
 
 [[package]]

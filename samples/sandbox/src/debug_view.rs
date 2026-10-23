@@ -81,6 +81,7 @@ pub fn overlays(
         rect.width *= viewport[0] / camera.size()[0];
         rect.height *= viewport[1] / camera.size()[1];
     }
+    let hud_start = result.len();
     append_performance_overlay(&mut result, metrics, software);
     {
         result.push(rect(
@@ -156,8 +157,11 @@ pub fn overlays(
             4.,
             83.,
             &format!(
-                "MAC/VOF DIV {:.1e} SUB {} TILT {:+.1}",
-                cup.fluid.max_divergence, cup.fluid.substeps, cup.surface_delta
+                "{} MAC/VOF DIV {:.1e} SUB {} TILT {:+.1}",
+                cup.compute_backend,
+                cup.fluid.max_divergence,
+                cup.fluid.substeps,
+                cup.surface_delta
             ),
             [0.75, 0.9, 1., 1.],
         );
@@ -166,5 +170,54 @@ pub fn overlays(
         result.push(rect(2., 69., 270., 11., [0.1, 0.03, 0.03, 1.]));
         text(&mut result, 4., 71., error, [1., 0.4, 0.4, 1.]);
     }
+    // HUD uses a stable 480x270 design canvas; simulation-cell density and
+    // camera zoom must not change the size of screen-space text.
+    let scale = [
+        frame.terrain.width as f32 / 480.,
+        frame.terrain.height as f32 / 270.,
+    ];
+    for rect in &mut result[hud_start..] {
+        rect.x *= scale[0];
+        rect.width *= scale[0];
+        rect.y *= scale[1];
+        rect.height *= scale[1];
+    }
     result
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use charon_runtime::Simulation;
+    #[test]
+    fn hud_keeps_its_screen_size_when_simulation_density_changes() {
+        let render = |w, h| {
+            let mut game = crate::game::Game::new(w, h, 1, false).unwrap();
+            let mut frame = game.step(vec![]);
+            frame.terrain.sand = 0;
+            frame.terrain.liquid = 0;
+            frame.terrain.active_tiles = 0;
+            let camera = charon_render::Camera2D::new([0., 0.], [w as f32, h as f32]).unwrap();
+            overlays(&frame, false, None, true, camera, "TOOLS", None)
+                .into_iter()
+                .map(|r| {
+                    [
+                        r.x * 1920. / w as f32,
+                        r.y * 1080. / h as f32,
+                        r.width * 1920. / w as f32,
+                        r.height * 1080. / h as f32,
+                    ]
+                })
+                .collect::<Vec<_>>()
+        };
+        let regular = render(480, 270);
+        let small = render(128, 100);
+        assert!(!regular.is_empty());
+        assert_eq!(regular.len(), small.len());
+        for (a, b) in regular.iter().zip(small) {
+            for (a, b) in a.iter().zip(b) {
+                assert!((a - b).abs() < 1e-3);
+            }
+        }
+    }
 }

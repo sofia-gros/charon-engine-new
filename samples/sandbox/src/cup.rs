@@ -16,6 +16,7 @@ pub struct Status {
     pub fluid: Stats,
     pub surface_delta: f64,
     pub movable: bool,
+    pub compute_backend: &'static str,
 }
 pub struct Cup {
     id: ObstacleId,
@@ -38,6 +39,9 @@ pub struct Cup {
     base: Option<IndexedImage>,
 }
 impl Cup {
+    pub fn use_gpu(&mut self, gpu: std::sync::Arc<charon_fluid::gpu::GpuContext>) {
+        self.fluid.use_gpu(gpu);
+    }
     pub fn create(
         world: &mut SandWorld,
         width: usize,
@@ -254,6 +258,7 @@ impl Cup {
             fluid: self.fluid.stats(),
             surface_delta: left - right,
             movable: self.movable,
+            compute_backend: self.fluid.backend_label(),
         }
     }
     pub fn signature(&self) -> [u64; 6] {

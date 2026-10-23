@@ -65,13 +65,16 @@ jobs:
       - name: Linux software Vulkan
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y mesa-vulkan-drivers xvfb
+      - name: Linux fluid compute contracts
+        if: runner.os == 'Linux'
+        run: cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture
       - name: Linux offscreen shader check
         if: runner.os == 'Linux'
-        run: ./target/debug/charon-sandbox --smoke --software --grid 65x66
+        run: ./target/debug/charon-sandbox --smoke --software --fluid-backend cpu --grid 65x66
       - name: Windows script and offscreen shader check
         if: runner.os == 'Windows'
         shell: pwsh
-        run: ./scripts/run.ps1 -Smoke -Software
+        run: ./scripts/run.ps1 -Smoke -Software -FluidBackend cpu
       - name: Linux virtual-window smoke
         if: runner.os == 'Linux'
         run: |

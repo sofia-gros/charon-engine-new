@@ -1,0 +1,66 @@
+{
+  "source_sha256": "b0bc78ade0c5416ea586b5f1c1114e1e72d3ec5ec591fb0d895ba660a1e25dce",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "fluid-wave",
+  "base_revision": "7c673a61dd0970b43404ea3242c4ae967ba25ff7",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 7.993,
+  "gif_encoded_frames": 142,
+  "draw_submission_fps_range": [
+    23.61,
+    38.97
+  ],
+  "simulation_hz_range": [
+    0.0,
+    60.94
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "captured_frames": 160,
+  "gif_duration_ms": 20030,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": "gpu",
+  "fluid_compute_adapter": "fluid_compute=AdapterInfo { name: \"SwiftShader Device (Subzero)\", vendor: 6880, device: 49374, device_type: Cpu, device_pci_bus_id: \"\", driver: \"SwiftShader driver\", driver_info: \"\", backend: Vulkan, subgroup_min_size: 4, subgroup_max_size: 4, transient_saves_memory: Some(false), limit_bucket: None } identity=gpu-38d8b6827bf27f4b",
+  "simulation_grid": [
+    128,
+    100
+  ],
+  "water_volume_cells": 364.0,
+  "oil_volume_cells": 84.0,
+  "surface_delta_range": [
+    -10.267497,
+    6.513
+  ],
+  "cup_x_range": [
+    48,
+    56
+  ],
+  "replay": "replay_ticks=1141 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "real left/right movement and reversal",
+    "inertial surface slopes in both directions",
+    "water and oil visible",
+    "separate phase conservation",
+    "bounded projection divergence",
+    "pause freezes movement and liquid",
+    "one-worker authoritative replay",
+    "Escape shutdown"
+  ],
+  "scope": "Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep.",
+  "solver": "Eulerian MAC / GPU Jacobi-PCG with f64 defect correction / CPU geometric VOF",
+  "fluid_active_simulation_hz_range": [
+    3.91,
+    19.54
+  ],
+  "fluid_active_tick_work_ms_range": [
+    57.231,
+    239.457
+  ]
+}

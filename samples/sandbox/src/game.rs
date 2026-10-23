@@ -90,6 +90,7 @@ pub struct Game {
     height: usize,
     workers: usize,
     recorder: Option<crate::trace::Recorder>,
+    fluid_gpu: Option<std::sync::Arc<charon_fluid::gpu::GpuContext>>,
     paused: bool,
     jump_pending: bool,
     inspection: Option<(i32, i32)>,
@@ -148,19 +149,29 @@ impl Game {
             height,
             workers,
             recorder: None,
+            fluid_gpu: None,
             paused: false,
             jump_pending: false,
             inspection: None,
         })
     }
+    pub fn use_fluid_gpu(&mut self, gpu: std::sync::Arc<charon_fluid::gpu::GpuContext>) {
+        self.fluid_gpu = Some(gpu);
+    }
+    pub fn fluid_backend(&self) -> String {
+        self.fluid_gpu
+            .as_ref()
+            .map_or_else(|| "cpu".into(), |g| g.identity())
+    }
     pub fn record_to(&mut self, path: &std::path::Path) -> std::io::Result<()> {
-        self.recorder = Some(crate::trace::Recorder::new(
+        self.recorder = Some(crate::trace::Recorder::with_backend(
             path,
             self.width,
             self.height,
             self.workers,
             self.player.is_some(),
             self.material_fingerprint(),
+            &self.fluid_backend(),
         )?);
         Ok(())
     }
@@ -348,6 +359,7 @@ impl Simulation for Game {
                     let recorder = self.recorder.take();
                     let paused = self.paused;
                     let inspection = self.inspection;
+                    let fluid_gpu = self.fluid_gpu.clone();
                     *self = Self::with_materials(
                         self.width,
                         self.height,
@@ -357,6 +369,7 @@ impl Simulation for Game {
                     )
                     .expect("validated scene dimensions");
                     self.recorder = recorder;
+                    self.fluid_gpu = fluid_gpu;
                     self.paused = paused;
                     self.inspection = inspection;
                     terrain.clear();
@@ -370,7 +383,10 @@ impl Simulation for Game {
                         crate::cup::Cup::dam
                     };
                     match create(&mut self.world, self.width, self.height, self.workers) {
-                        Ok(cup) => {
+                        Ok(mut cup) => {
+                            if let Some(gpu) = &self.fluid_gpu {
+                                cup.use_gpu(gpu.clone());
+                            }
                             self.cup = Some(cup);
                             self.player = None;
                             self.images.clear();

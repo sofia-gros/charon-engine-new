@@ -1,6 +1,8 @@
 //! Eulerian two-phase liquid: MAC velocity/pressure projection and geometric VOF.
 //! No particles or prescribed surface animation. Units: cell, second, relative density.
 mod geometry;
+#[cfg(feature = "gpu")]
+pub mod gpu;
 mod pressure;
 #[cfg(test)]
 mod tests;
@@ -33,6 +35,7 @@ pub enum Error {
     Pressure,
     VolumeBounds,
     TimeStep,
+    Backend,
 }
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Stats {
@@ -64,6 +67,8 @@ struct State {
     pressure: Vec<f64>,
 }
 pub struct Fluid {
+    #[cfg(feature = "gpu")]
+    gpu: Option<std::sync::Arc<gpu::GpuContext>>,
     config: Config,
     solid: Vec<bool>,
     state: State,
@@ -111,6 +116,8 @@ impl Fluid {
             pressure: vec![0.; w * h],
         };
         Ok(Self {
+            #[cfg(feature = "gpu")]
+            gpu: None,
             config,
             solid,
             backup: state.clone(),
@@ -124,6 +131,36 @@ impl Fluid {
             stats: Stats::default(),
             acceleration: None,
         })
+    }
+    /// Use compute for momentum and pressure. Conservative VOF stays on CPU.
+    /// Device resources are shared across worlds, not recreated each tick.
+    #[cfg(feature = "gpu")]
+    pub fn use_gpu(&mut self, context: std::sync::Arc<gpu::GpuContext>) {
+        self.gpu = Some(context);
+        self.sleeping = false;
+        self.idle_ticks = 0;
+    }
+    pub fn backend_label(&self) -> &'static str {
+        #[cfg(feature = "gpu")]
+        if let Some(gpu) = &self.gpu {
+            return if gpu.adapter_info().device_type == wgpu::DeviceType::Cpu {
+                "SWGPU"
+            } else {
+                "GPU"
+            };
+        }
+        "CPU"
+    }
+    fn advance_velocity(&mut self, dt: f64) -> Result<u32, Error> {
+        #[cfg(feature = "gpu")]
+        if let Some(gpu) = &self.gpu {
+            let (u, v) =
+                gpu.advect(self.config, &self.state.u, &self.state.v, self.bounds(), dt)?;
+            self.state.u = u;
+            self.state.v = v;
+            return Ok(0);
+        }
+        Ok(self.advect_velocity(dt))
     }
     pub fn fraction(&self, x: usize, y: usize) -> Option<[f64; 2]> {
         (x < self.config.width && y < self.config.height)
@@ -286,7 +323,7 @@ impl Fluid {
                     self.state.clone_from(&before);
                 }
                 let clock = std::time::Instant::now();
-                stats.workers_used = stats.workers_used.max(self.advect_velocity(sub));
+                stats.workers_used = stats.workers_used.max(self.advance_velocity(sub)?);
                 self.forces(sub, acceleration);
                 stats.velocity_ms += clock.elapsed().as_secs_f64() * 1000.;
                 let clock = std::time::Instant::now();

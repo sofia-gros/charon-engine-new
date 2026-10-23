@@ -1,6 +1,7 @@
 param(
     [ValidateRange(1, 32)][int]$Workers = 4,
     [string]$Grid = '480x270',
+    [ValidateSet('gpu', 'cpu')][string]$FluidBackend = 'gpu',
     [switch]$Smoke,
     [switch]$Play,
     [switch]$RecordInputs,
@@ -17,7 +18,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'Rust toolchain is unavailable.' }
     $cargoArgs = @('run', '--locked', '-p', 'charon-sandbox')
     if (-not $DebugBuild) { $cargoArgs += '--release' }
-    $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid)
+    $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid, '--fluid-backend', $FluidBackend)
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
