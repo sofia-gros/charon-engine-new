@@ -8,15 +8,13 @@
 - `rust-toolchain.toml` はstableを指定する。更新は `rustup update stable`。依存バージョンはCargo.lockで管理する。
 
 ```console
-git clone https://github.com/sofia-gros/charon-engine-new.git
+git clone --branch codex/engine-bootstrap https://github.com/sofia-gros/charon-engine-new.git
 cd charon-engine-new
 ```
 
 開発ブランチを確認する場合は、そのブランチをcheckoutしてから起動する。
 
 ## Sandbox
-
-[Linux操作記録（GIF）](media/sandbox-linux.gif)
 
 壁を描く→砂を積もらせる→壁に穴を開ける→リセットする、実際のマウス/キー入力とウィンドウ描画の記録。Linuxの仮想画面とソフトウェアGPUで約14秒収録。フルHDの画面を動画では960×540に縮小し、8fpsを目安にキャプチャしている。動画のfpsはエンジンの性能値ではない。
 
@@ -52,7 +50,7 @@ cargo run --locked --release -p charon-sandbox -- --play --workers 4 --record ar
 
 Windowsは `scripts/run.ps1 -Play` でも起動できる。既定は480×270セル。A/Dまたは左右キーで移動、Spaceでジャンプ、Fを押している間は足元を掘る。Bで砂の当たり判定を切り替える。壁は常に足場になる。マウスの砂/壁/消去も使える。Rで地形・プレイヤー・判定設定を初期化する。
 
-[Linux操作記録（GIF）](media/platformer-linux.gif)
+![Platformerの移動・ジャンプ・地形破壊](media/platformer-linux.gif)
 
 物質は砂plugin、移動は砂に依存しないplatformer plugin、両者をつなぐ判定方針はサンプル側が所有する。キャラクターは地形と別の矩形としてGPU描画し、地形画像へ焼き込まない。`upload_bytes` は地形、`overlay_upload_bytes` は矩形頂点の転送量。操作モードのCSVは約0.1秒ごとに位置・着地・埋まり・砂の判定設定も記録する。
 
@@ -77,7 +75,9 @@ SandboxとPlatformerで共通。Pで停止/再開、Nで停止したまま1 tick
 
 CSVの `runtime_tick` は入力受付/状態公開の回数、`simulation_tick` は実際の物質更新回数。停止中は前者だけ増える。`sim_hz` も後者から計算する。`paused`・`inspect_x/y`・`material`（0=Air、1=Sand、2=Wall、空欄=範囲外）・`next_tile_awake` を記録する。調査なしの場合も座標は空欄になる。`--play`・停止・セル調査中は約0.1秒ごとの記録。
 
-[Linux操作記録（GIF）](media/debugger-linux.gif) · [再生用入力列](media/debugger-linux.trace)
+![一時停止・コマ送り・セル調査](media/debugger-linux.gif)
+
+[再生用入力列](media/debugger-linux.trace)
 
 `python3 scripts/capture-linux.py --sample debugger` で停止・編集・3回のコマ送り・リセット・再開と入力再生を確認し、録画を更新できる。Pause/Step/Inspectも `--input-log` の対象。既存の停止操作を含まないv1入力列も再生できる。
 
@@ -89,7 +89,7 @@ cargo run --locked --release -p charon-dialogue-sample
 
 Spaceまたはクリックで進む。選択画面で1/2、Rで最初から、Escで終了。砂を依存に含めず、同じ実行基盤とwgpu描画基盤を使う小さな会話サンプル。文章表示はサンプル用の英字ビットマップで、日本語組版・音声・シナリオ編集機能はまだ含まない。
 
-[Linux操作記録（GIF）](media/dialogue-linux.gif)
+![Dialogueの会話・選択肢・分岐](media/dialogue-linux.gif)
 
 実入力で2つの分岐と再開を確認した約12秒の記録。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
 
