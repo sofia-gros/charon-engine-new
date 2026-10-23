@@ -9,20 +9,19 @@ fn sample_field(base:u32, w:u32, h:u32, position:vec2f) -> f32 {
 }
 @compute @workgroup_size(128)
 fn main(@builtin(global_invocation_id) id:vec3u) {
- let un=(p.w+1u)*p.h; let vn=p.w*(p.h+1u); let i=id.x;
- if i>=un+vn {return;}
- next[i]=0.;
- if i<un {
-  let x=i%(p.w+1u); let y=i/(p.w+1u);
-  if x<p.x0 || x>=p.x1 || y<p.y0 || y>=p.y1 {return;}
+ let un=(p.w+1u)*p.h; let width=p.x1-p.x0;
+ let area=width*(p.y1-p.y0); let out=id.x;
+ if out>=2u*area {return;}
+ let local=out%area; let x=p.x0+local%width; let y=p.y0+local/width;
+ if out<area {
+  let i=y*(p.w+1u)+x;
   let vy=sample_field(un,p.w,p.h+1u,vec2f(f32(x)-.5,f32(y)+.5));
   var lap=0.; if y+1u<p.h {lap=old[i-1u]+old[i+1u]+old[i-p.w-1u]+old[i+p.w+1u]-4.*old[i];}
-  next[i]=sample_field(0u,p.w+1u,p.h,vec2f(f32(x)-p.dt*old[i],f32(y)-p.dt*vy))+p.diffusion*lap;
+  next[out]=sample_field(0u,p.w+1u,p.h,vec2f(f32(x)-p.dt*old[i],f32(y)-p.dt*vy))+p.diffusion*lap;
  } else {
-  let j=i-un; let x=j%p.w; let y=j/p.w;
-  if x<p.x0 || x>=p.x1 || y<p.y0 || y>=p.y1 {return;}
+  let i=un+y*p.w+x;
   let ux=sample_field(0u,p.w+1u,p.h,vec2f(f32(x)+.5,f32(y)-.5));
   var lap=0.; if x+1u<p.w {lap=old[i-1u]+old[i+1u]+old[i-p.w]+old[i+p.w]-4.*old[i];}
-  next[i]=sample_field(un,p.w,p.h+1u,vec2f(f32(x)-p.dt*ux,f32(y)-p.dt*old[i]))+p.diffusion*lap;
+  next[out]=sample_field(un,p.w,p.h+1u,vec2f(f32(x)-p.dt*ux,f32(y)-p.dt*old[i]))+p.diffusion*lap;
  }
 }

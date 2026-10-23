@@ -111,6 +111,8 @@ pub struct Stats {
     pub pressure_assembly_ms: f64,
     pub transport_ms: f64,
     pub velocity_ms: f64,
+    /// CPU extension of projected liquid face velocities into the surface band.
+    pub velocity_extension_ms: f64,
     pub gpu: Option<GpuStats>,
 }
 #[derive(Clone)]
@@ -346,6 +348,7 @@ impl Fluid {
             self.stats.pressure_assembly_ms = 0.;
             self.stats.transport_ms = 0.;
             self.stats.velocity_ms = 0.;
+            self.stats.velocity_extension_ms = 0.;
             if let Some(gpu) = &mut self.stats.gpu {
                 gpu.velocity_ms = gpu.velocity_ms.map(|_| 0.);
                 gpu.pressure_ms = gpu.pressure_ms.map(|_| 0.);
@@ -405,7 +408,9 @@ impl Fluid {
                 let clock = std::time::Instant::now();
                 let projection = self.project(sub, acceleration, &mut stats)?;
                 stats.pressure_ms += clock.elapsed().as_secs_f64() * 1000.;
+                let clock = std::time::Instant::now();
                 self.extrapolate_velocity();
+                stats.velocity_extension_ms += clock.elapsed().as_secs_f64() * 1000.;
                 let clock = std::time::Instant::now();
                 let transport = self.transport(sub);
                 stats.transport_ms += clock.elapsed().as_secs_f64() * 1000.;

@@ -330,15 +330,13 @@ impl GpuContext {
         };
         let w = config.width;
         let h = config.height;
+        let x0 = b[0].saturating_sub(3).max(1);
+        let y0 = b[1].saturating_sub(3).max(1);
+        let x1 = (b[2] + 3).min(w);
+        let y1 = (b[3] + 3).min(h);
+        let area = (x1 - x0) * (y1 - y0);
         let mut params = Vec::new();
-        for x in [
-            w,
-            h,
-            b[0].saturating_sub(3).max(1),
-            b[1].saturating_sub(3).max(1),
-            (b[2] + 3).min(w),
-            (b[3] + 3).min(h),
-        ] {
+        for x in [w, h, x0, y0, x1, y1] {
             params.extend_from_slice(&(x as u32).to_le_bytes());
         }
         params.extend_from_slice(&(dt as f32).to_le_bytes());
@@ -366,18 +364,21 @@ impl GpuContext {
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
         );
         self.queue.write_buffer(&input, 0, &input_data);
+        // Only active output faces cross back. Input remains the full field:
+        // arbitrary backtraces and interpolation must retain their real samples.
+        let output_size = (area * 2 * 4) as u64;
         let output = self.buffer(
             &mut cache,
             2,
-            "new velocity",
-            size,
+            "active velocity",
+            output_size,
             wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
         );
         let readback = self.buffer(
             &mut cache,
             5,
             "fluid readback",
-            self.readback_size(size),
+            self.readback_size(output_size),
             wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         );
         let (result, mut work) = self.run(
@@ -385,12 +386,12 @@ impl GpuContext {
             &[
                 (&params_buffer, params.len() as u64),
                 (&input, size),
-                (&output, size),
+                (&output, output_size),
             ],
             &output,
-            size,
+            output_size,
             &readback,
-            ((u.len() + v.len()) as u32).div_ceil(128),
+            ((area * 2) as u32).div_ceil(128),
         )?;
         let values: Vec<_> = result
             .as_chunks::<4>()
@@ -402,9 +403,19 @@ impl GpuContext {
             return Err(Error::Backend);
         }
         work.upload_bytes = params.len() as u64 + size;
+        let mut next_u = vec![0.; u.len()];
+        let mut next_v = vec![0.; v.len()];
+        let row_width = x1 - x0;
+        for (row, y) in (y0..y1).enumerate() {
+            let start = row * row_width;
+            next_u[y * (w + 1) + x0..y * (w + 1) + x1]
+                .copy_from_slice(&values[start..start + row_width]);
+            next_v[y * w + x0..y * w + x1]
+                .copy_from_slice(&values[area + start..area + start + row_width]);
+        }
         Ok(Velocity {
-            u: values[..u.len()].to_vec(),
-            v: values[u.len()..].to_vec(),
+            u: next_u,
+            v: next_v,
             work,
         })
     }

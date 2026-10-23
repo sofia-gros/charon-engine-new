@@ -1,0 +1,106 @@
+{
+  "benchmark": "Active-rectangle velocity output on fixed-input two-phase cup",
+  "platform": "Linux cloud, SwiftShader Vulkan CPU software adapter; no hardware GPU",
+  "profile": "dev; charon-fluid opt-level=2",
+  "baseline_engine_revision": "004e561ccd975f601b0a3aac4c94afb445aad973",
+  "baseline_instrumentation": "Same wave-cost driver with added CPU velocity-extension timer, velocity GPU total and rolling physical hash. Original full-field velocity output unchanged.",
+  "driver": "plugins/charon-fluid/examples/wave-cost.rs",
+  "driver_sha256": "beac60e45e49574aaccd0d32b47e6d1ca3eb08852b306f3cba5d9baa9035b7cc",
+  "after_source_sha256": "e754f03a224ad273b9271b41d4dd9ccee7335e049107c81cccb9d9f0bfa353d2",
+  "command": "cargo run --locked -p charon-fluid --features gpu --example wave-cost",
+  "runs_per_version": 1,
+  "conditions": {
+    "grid": [
+      128,
+      100
+    ],
+    "water": 364,
+    "oil": 84,
+    "configured_cpu_workers": 4,
+    "ticks": 240,
+    "dt_s": 0.016666666666666666,
+    "input": "Tick-indexed speed 0 / +15 / 0 / -15, twice; same wave-cost forcing and material settings before/after"
+  },
+  "change": "GPU velocity shader computes and packs only both MAC components inside the existing liquid bounding box plus three-cell band. CPU zero-fills faces outside this rectangle. Full input velocity fields remain uploaded for arbitrary backtrace and interpolation sources; no hidden CPU fallback or altered precision.",
+  "summary": {
+    "tick_mean_ms": {
+      "before": 34.35217957916667,
+      "after": 32.44794924583333,
+      "reduction_percent": 5.543259137152945
+    },
+    "tick_p95_ms": {
+      "before": 63.906235,
+      "after": 59.086628000000005,
+      "reduction_percent": 7.541685095358841
+    },
+    "velocity_kernel_total_ms": {
+      "before": 636.6369820000003,
+      "after": 145.02272499999998,
+      "reduction_percent": 77.22049942112852
+    },
+    "velocity_host_total_ms": {
+      "before": 959.7711920000002,
+      "after": 482.86293299999994,
+      "reduction_percent": 49.689786792433765
+    },
+    "readback_bytes": {
+      "before": 64989888,
+      "after": 19175664,
+      "reduction_percent": 70.49438829622233
+    }
+  },
+  "before": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "ticks": 240,
+    "grid": [
+      128,
+      100
+    ],
+    "workers": 4,
+    "water": 364,
+    "oil": 84,
+    "tick_mean_ms": 34.35217957916667,
+    "tick_p95_ms": 63.906235,
+    "tick_max_ms": 89.449275,
+    "pressure_host_total_ms": 7050.278710999998,
+    "pressure_kernel_total_ms": 6190.186823999998,
+    "velocity_host_total_ms": 959.7711920000002,
+    "transport_total_ms": 123.66642199999995,
+    "pressure_iterations": 24471,
+    "substeps": 530,
+    "upload_bytes": 88847244,
+    "readback_bytes": 64989888,
+    "max_divergence": 4.324431301938603e-08,
+    "velocity_kernel_total_ms": 636.6369820000003,
+    "velocity_extension_total_ms": 44.12092499999999,
+    "physical_hash": "1b3ea1e1ebbebcc5"
+  },
+  "after": {
+    "adapter_identity": "gpu-38d8b6827bf27f4b",
+    "ticks": 240,
+    "grid": [
+      128,
+      100
+    ],
+    "workers": 4,
+    "water": 364,
+    "oil": 84,
+    "tick_mean_ms": 32.44794924583333,
+    "tick_p95_ms": 59.086628000000005,
+    "tick_max_ms": 73.54023699999999,
+    "pressure_host_total_ms": 7042.9219029999995,
+    "pressure_kernel_total_ms": 6146.454973,
+    "velocity_host_total_ms": 482.86293299999994,
+    "transport_total_ms": 134.65486900000005,
+    "pressure_iterations": 24471,
+    "substeps": 530,
+    "upload_bytes": 88847244,
+    "readback_bytes": 19175664,
+    "max_divergence": 4.324431301938603e-08,
+    "velocity_kernel_total_ms": 145.02272499999998,
+    "velocity_extension_total_ms": 48.521377000000015,
+    "physical_hash": "1b3ea1e1ebbebcc5"
+  },
+  "validation": "All 240 physical ticks feed the same rolling state hash before/after; pressure iterations, substeps and maximum divergence exactly match. Each phase volume checked within 1e-7 cell and divergence below 1e-3 every tick. Thirteen fluid tests include dense -> four boundary corners -> one-cell drop -> smaller grid -> empty output, full-face CPU comparisons with long backtraces, clearing old faces and bounded readback ranges.",
+  "scope": "One run per version, including first-use work. Byte reduction is exact for this workload; software-adapter time varies and does not establish hardware GPU FPS or stable 60 Hz. Readback totals include pressure, timestamps and alignment, not only velocity. Rendered GIF inputs use wall time and are separate from this fixed-tick benchmark. CPU velocity extension averages about 0.2 ms/tick, so its algorithm is unchanged."
+}

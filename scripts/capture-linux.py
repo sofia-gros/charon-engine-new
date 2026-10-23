@@ -814,6 +814,7 @@ EndSection
                 report["fluid_gpu_measurements"]={
                     "timestamp_available": any(r.get("fluid_gpu_pressure_ms") for r in active),
                     "velocity_kernel_ms_range": measured_range("fluid_gpu_velocity_ms"),
+                    "velocity_extension_ms_range": measured_range("fluid_velocity_extension_ms"),
                     "pressure_kernel_ms_range": measured_range("fluid_gpu_pressure_ms"),
                     "pressure_iterations_per_tick_range": measured_range("fluid_pressure_iterations",int),
                     "pressure_assembly_ms_range": measured_range("fluid_pressure_assembly_ms"),

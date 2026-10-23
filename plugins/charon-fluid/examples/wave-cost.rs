@@ -48,6 +48,9 @@ fn main() {
     let (mut pressure, mut velocity, mut transport, mut kernel, mut iterations, mut substeps) =
         (0., 0., 0., gpu.timing_available().then_some(0_f64), 0, 0);
     let (mut upload, mut readback, mut divergence) = (0_u64, 0_u64, 0_f64);
+    let mut velocity_kernel = gpu.timing_available().then_some(0_f64);
+    let mut extension = 0.;
+    let mut physical_hash = 0_u64;
     let mut previous = 0.;
     for tick in 0..240 {
         let speed = match tick {
@@ -63,11 +66,16 @@ fn main() {
         previous = speed;
         pressure += s.pressure_ms;
         velocity += s.velocity_ms;
+        extension += s.velocity_extension_ms;
+        physical_hash = physical_hash.rotate_left(7).wrapping_add(fluid.signature());
         transport += s.transport_ms;
         iterations += s.pressure_iterations;
         substeps += s.substeps;
         let g = s.gpu.unwrap();
         kernel = kernel.zip(g.pressure_ms).map(|(sum, value)| sum + value);
+        velocity_kernel = velocity_kernel
+            .zip(g.velocity_ms)
+            .map(|(sum, value)| sum + value);
         upload += g.upload_bytes;
         readback += g.readback_bytes;
         divergence = divergence.max(s.max_divergence);
@@ -79,6 +87,6 @@ fn main() {
     }
     let total: f64 = times.iter().sum();
     times.sort_by(f64::total_cmp);
-    println!("{{\"adapter_identity\":\"{}\",\"ticks\":240,\"grid\":[128,100],\"workers\":4,\"water\":364,\"oil\":84,\"tick_mean_ms\":{},\"tick_p95_ms\":{},\"tick_max_ms\":{},\"pressure_host_total_ms\":{},\"pressure_kernel_total_ms\":{},\"velocity_host_total_ms\":{},\"transport_total_ms\":{},\"pressure_iterations\":{},\"substeps\":{},\"upload_bytes\":{},\"readback_bytes\":{},\"max_divergence\":{}}}",
-        gpu.identity(), total/240., times[227], times[239], pressure, kernel.map_or_else(|| String::from("null"), |v| v.to_string()), velocity, transport, iterations, substeps, upload, readback, divergence);
+    println!("{{\"adapter_identity\":\"{}\",\"ticks\":240,\"grid\":[128,100],\"workers\":4,\"water\":364,\"oil\":84,\"tick_mean_ms\":{},\"tick_p95_ms\":{},\"tick_max_ms\":{},\"pressure_host_total_ms\":{},\"pressure_kernel_total_ms\":{},\"velocity_host_total_ms\":{},\"transport_total_ms\":{},\"pressure_iterations\":{},\"substeps\":{},\"upload_bytes\":{},\"readback_bytes\":{},\"max_divergence\":{},\"velocity_kernel_total_ms\":{},\"velocity_extension_total_ms\":{},\"physical_hash\":\"{physical_hash:016x}\"}}",
+        gpu.identity(), total/240., times[227], times[239], pressure, kernel.map_or_else(|| String::from("null"), |v| v.to_string()), velocity, transport, iterations, substeps, upload, readback, divergence, velocity_kernel.map_or_else(|| String::from("null"), |v| v.to_string()), extension);
 }

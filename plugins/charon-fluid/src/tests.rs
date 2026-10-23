@@ -365,6 +365,7 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                 assert_eq!(work.readbacks, 0);
                 assert_eq!(work.pressure_setup_ms, 0.);
                 assert_eq!(s.pressure_assembly_ms, 0.);
+                assert_eq!(s.velocity_extension_ms, 0.);
                 assert!(
                     work.velocity_ms.is_none_or(|v| v == 0.)
                         && work.pressure_ms.is_none_or(|v| v == 0.)
@@ -678,5 +679,90 @@ fn gpu_compute_distributed_pressure_matches_known_solution_and_conserves_volume(
         let s = small.step(1. / 60., [0., 120.]).unwrap();
         assert!(s.max_divergence < 1e-3);
         conserved(&small, [16., 0.]);
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_velocity_active_rectangle_matches_reference_and_clears_old_faces() {
+    let gpu = gpu::GpuContext::new().unwrap();
+    // Dense -> all four corners -> small drop -> smaller allocation range.
+    // Nonzero gas velocities exercise distant interpolation sources as well as
+    // clearing previously active faces when the output rectangle shrinks.
+    for (w, h, fill) in [
+        (130, 97, [1, 1, 129, 96]),
+        (130, 97, [1, 1, 3, 3]),
+        (130, 97, [127, 1, 129, 3]),
+        (130, 97, [1, 94, 3, 96]),
+        (130, 97, [127, 94, 129, 96]),
+        (130, 97, [60, 40, 61, 41]),
+        (26, 30, [12, 15, 13, 16]),
+    ] {
+        for dt in [1. / 60., 0.2] {
+            let mut cpu = domain(w, h, 2);
+            for y in fill[1]..fill[3] {
+                for x in fill[0]..fill[2] {
+                    cpu.add(x, y, 0, 1.).unwrap();
+                }
+            }
+            for (i, value) in cpu.state.u.iter_mut().enumerate() {
+                *value = ((i * 17 % 97) as f64 - 48.) * 0.5;
+            }
+            for (i, value) in cpu.state.v.iter_mut().enumerate() {
+                *value = ((i * 13 % 89) as f64 - 44.) * 0.5;
+            }
+            let b = cpu.bounds().unwrap();
+            let rect = [
+                b[0].saturating_sub(3).max(1),
+                b[1].saturating_sub(3).max(1),
+                (b[2] + 3).min(w),
+                (b[3] + 3).min(h),
+            ];
+            let area = (rect[2] - rect[0]) * (rect[3] - rect[1]);
+            let result = gpu
+                .advect(cpu.config, &cpu.state.u, &cpu.state.v, Some(b), dt)
+                .unwrap();
+            cpu.advect_velocity(dt);
+            let error = result
+                .u
+                .iter()
+                .chain(&result.v)
+                .zip(cpu.state.u.iter().chain(&cpu.state.v))
+                .map(|(a, b)| (a - b).abs())
+                .fold(0., f64::max);
+            assert!(
+                error < 1e-3,
+                "grid={w}x{h} fill={fill:?} dt={dt} error={error:e}"
+            );
+            for (values, stride) in [(&result.u, w + 1), (&result.v, w)] {
+                for (i, &value) in values.iter().enumerate() {
+                    let (x, y) = (i % stride, i / stride);
+                    if x < rect[0] || x >= rect[2] || y < rect[1] || y >= rect[3] {
+                        assert_eq!(value, 0., "stale output at {x},{y}");
+                    }
+                }
+            }
+            assert_eq!(result.work.dispatches, 1);
+            assert_eq!(result.work.max_workgroups, (area as u32 * 2).div_ceil(128));
+            assert!(result.work.readback_bytes >= area as u64 * 8);
+            assert!(result.work.readback_bytes <= area as u64 * 8 + 256);
+            assert_eq!(
+                result.work.upload_bytes,
+                ((w + 1) * h + w * (h + 1)) as u64 * 4 + 32
+            );
+            let empty = gpu
+                .advect(cpu.config, &result.u, &result.v, None, dt)
+                .unwrap();
+            assert!(empty.u.iter().chain(&empty.v).all(|&v| v == 0.));
+            assert_eq!(
+                (
+                    empty.work.dispatches,
+                    empty.work.upload_bytes,
+                    empty.work.readback_bytes
+                ),
+                (0, 0, 0)
+            );
+        }
     }
 }

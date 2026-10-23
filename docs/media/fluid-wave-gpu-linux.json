@@ -1,25 +1,25 @@
 {
-  "source_sha256": "887e3753bf5027887f5a920f0e9bacb1ab49e8978240f623ab4764278a7b0694",
+  "source_sha256": "e754f03a224ad273b9271b41d4dd9ccee7335e049107c81cccb9d9f0bfa353d2",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "fluid-wave",
-  "base_revision": "c2e7ebc5c5851c61657a41d17ad87cd0bdd97fb1",
+  "base_revision": "004e561ccd975f601b0a3aac4c94afb445aad973",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.996,
-  "gif_encoded_frames": 158,
+  "observed_capture_fps": 8.0,
+  "gif_encoded_frames": 160,
   "draw_submission_fps_range": [
-    21.34,
-    34.6
+    20.4,
+    32.43
   ],
   "simulation_hz_range": [
     0.0,
-    61.08
+    61.19
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 160,
-  "gif_duration_ms": 20080,
+  "gif_duration_ms": 19930,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -33,16 +33,16 @@
     100
   ],
   "water_volume_cells": 364.0,
-  "oil_volume_cells": 83.996454941,
+  "oil_volume_cells": 82.490490651,
   "surface_delta_range": [
-    -4.171524,
-    4.145385
+    -11.278064,
+    11.066657
   ],
   "cup_x_range": [
     48,
-    76
+    78
   ],
-  "replay": "replay_ticks=1231 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1159 checks=terrain,player,input_state workers=1",
   "checks": [
     "real left/right movement and reversal",
     "entire cup inside the camera",
@@ -57,54 +57,58 @@
   "scope": "Short wave/momentum demonstration; the longer CPU cup acceptance separately checks resting phase layers, deep interior holes and sleep.",
   "solver": "Eulerian MAC / GPU two-level Schwarz-PCG (bounded coarse grid), distributed aggregation multigrid-PCG / f64 defect correction / CPU geometric VOF",
   "fluid_active_simulation_hz_range": [
-    36.49,
-    57.32
+    13.35,
+    59.98
   ],
   "fluid_active_tick_work_ms_range": [
-    11.958,
-    66.94
+    13.068,
+    66.359
   ],
   "fluid_gpu_measurements": {
     "timestamp_available": true,
     "velocity_kernel_ms_range": [
-      1.214939,
-      5.268314
+      0.159929,
+      3.927313
+    ],
+    "velocity_extension_ms_range": [
+      0.032369,
+      0.778576
     ],
     "pressure_kernel_ms_range": [
       0.0,
-      49.352371
+      50.506525
     ],
     "pressure_iterations_per_tick_range": [
       0,
-      145
+      200
     ],
     "pressure_assembly_ms_range": [
-      0.039359,
-      0.273129
+      0.027341,
+      0.222844
     ],
     "pressure_setup_ms_range": [
-      0.015212,
-      2.182174
+      0.065628,
+      2.743797
     ],
     "readbacks_per_tick_range": [
       1,
-      9
+      12
     ],
     "upload_bytes_per_tick_range": [
       103344,
-      500408
+      677132
     ],
     "readback_bytes_per_tick_range": [
-      103328,
-      368368
+      5184,
+      225064
     ],
     "dispatches_per_tick_range": [
       1,
-      9
+      12
     ],
     "velocity_workgroups_per_dispatch_range": [
-      202,
-      202
+      11,
+      110
     ],
     "pressure_workgroups_per_dispatch_range": [
       0,
