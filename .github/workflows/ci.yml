@@ -26,6 +26,9 @@ jobs:
       - uses: Swatinem/rust-cache@8cbdedb5103daa674dcf46d3590fe06a76645684 # v2.8.0
       - name: Format
         run: cargo fmt --all -- --check
+      - name: Linux audio build dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev pkg-config
       - name: Tests
         run: cargo test --locked --workspace
       - name: Clippy

@@ -1,7 +1,8 @@
 //! This game's story and keys. The dialogue plugin contains no sample content.
 use charon_dialogue::{Choice, Dialogue, Node};
 use std::sync::Arc;
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Page {
     Intro,
     Choice,
@@ -18,4 +19,25 @@ pub fn nodes() -> Vec<Node<Page>> {
 }
 pub fn build() -> Result<Dialogue<Page>, &'static str> {
     Dialogue::new(nodes(), Page::Intro)
+}
+
+/// Content compatibility, independent of enum discriminants and hashmap ordering.
+pub fn fingerprint() -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for node in nodes() {
+        let bytes = serde_json::to_vec(&(
+            node.key,
+            &*node.text,
+            node.next,
+            node.choices
+                .iter()
+                .map(|c| (&*c.label, c.target))
+                .collect::<Vec<_>>(),
+        ))
+        .unwrap();
+        for byte in bytes {
+            hash = (hash ^ byte as u64).wrapping_mul(0x100000001b3);
+        }
+    }
+    format!("{hash:016x}")
 }

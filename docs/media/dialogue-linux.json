@@ -1,24 +1,24 @@
 {
-  "source_sha256": "93da86c70a4b0bb0e204ea34e6e0692222917a5c4b3bd50094677a761a3d7ee5",
+  "source_sha256": "6d11d7389ffe03c48abc7c5a96382ccb5632cc6e71be006a377d26f3bae26fc7",
   "sample": "dialogue",
-  "base_revision": "547601bd2d333881f15d7069c7fdecd474b54c35",
+  "base_revision": "f075675fe3a4c03c640d984acc12ef409c42490a",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.002,
-  "gif_encoded_frames": 16,
+  "observed_capture_fps": 7.994,
+  "gif_encoded_frames": 32,
   "draw_submission_fps_range": [
-    14.75,
-    57.55
+    14.86,
+    66.29
   ],
   "simulation_hz_range": [
     0.0,
-    60.61
+    60.85
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
-  "captured_frames": 96,
-  "gif_duration_ms": 12050,
+  "captured_frames": 184,
+  "gif_duration_ms": 23000,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -37,8 +37,19 @@
     "River",
     "Intro",
     "Choice",
+    "Hill",
+    "Intro",
     "Hill"
   ],
+  "audio_output": {
+    "backend": "ALSA plug/file/null (virtual output; no physical speaker verification)",
+    "format": "48000 Hz stereo float32",
+    "bytes": 9306112,
+    "seconds": 24.235,
+    "peak": 0.11967658251523972,
+    "silent_chunks": 429,
+    "nonzero_chunks": 1843
+  },
   "checks": [
     "both choices",
     "mouse button hit testing",
@@ -48,6 +59,8 @@
     "resize and pointer remapping",
     "Japanese font cache",
     "idle UI texture reuse",
+    "F5/F9 progress and volume restoration",
+    "ALSA PCM output/pause/resume/mute",
     "Escape shutdown"
   ]
 }

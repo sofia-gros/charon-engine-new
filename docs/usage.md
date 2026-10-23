@@ -4,7 +4,7 @@
 
 - Rust stable、Git。
 - Windows 11: MSVC版Rust用のMicrosoft製リンカーとWindows SDK（Visual Studio Build Toolsから導入可能）。既にRustのexeをビルドできれば追加導入は不要。エンジンはRust、shaderはWGSLで記述する。
-- Linux: Cリンカ、X11、VulkanまたはOpenGL ESドライバ。ウィンドウ不要のCPU検証も可能。
+- Linux: Cリンカ、X11、VulkanまたはOpenGL ESドライバ。音声pluginのビルドには`pkg-config`とALSA開発パッケージ（Debian/Ubuntu: `libasound2-dev`）が必要。クラウドの`setup.sh`は管理環境向けにローカル導入も行う。ウィンドウ不要のCPU検証も可能。
 - `rust-toolchain.toml` はstableを指定する。更新は `rustup update stable`。依存バージョンはCargo.lockで管理する。
 
 ```console
@@ -137,7 +137,7 @@ cargo run --locked --release -p charon-dialogue-sample
 
 日本語の本文と選択肢を表示する。ボタンのクリック、Enter/Spaceで決定、Tab/Shift+Tabまたは矢印でフォーカス移動、1/2で選択肢を直接指定、Rで最初から、Escで終了する。ボタンを押した後に外へ移動して離すとキャンセルする。640×360の論理画面をウィンドウへ拡縮し、クリックも同じ座標変換で判定する。
 
-物語と分岐はゲーム側の[story.rs](../samples/dialogue/src/story.rs)、見た目は[picture.rs](../samples/dialogue/src/picture.rs)へ置く。`charon-dialogue`はゲームが渡す型付きキー・本文・次のページ・選択肢を管理し、不明な遷移先や重複キーを開始時に拒否する。砂や描画へ依存しない。
+物語と分岐はゲーム側の[story.rs](../samples/dialogue/src/story.rs)、見た目は[picture.rs](../samples/dialogue/src/picture.rs)へ置く。構成と保存内容・サンプル音源は[game.rs](../samples/dialogue/src/game.rs)へ置く。`charon-dialogue`はゲームが渡す型付きキー・本文・次のページ・選択肢を管理し、不明な遷移先や重複キーを開始時に拒否する。砂や描画へ依存しない。
 
 `charon-ui`はRect/Buttons/Text/Canvasを提供し、ウィンドウや砂へ依存しない。文字はNFCで正規化し、横書き日本語/Latinの折り返し（UAX #14）と矩形クリップに対応する。フォントの文字ラスタを再利用し、未収録文字はコードポイント付きエラーにする。文字サイズは1〜256、1回の文章は64 KiB以下、Canvasは各辺4096以下。ルビ・縦書き・IME・複雑な文字シェーピング・自動リフロー/スクロールは未実装。
 
@@ -147,7 +147,19 @@ cargo run --locked --release -p charon-dialogue-sample
 
 ![Dialogueの会話・選択肢・分岐](media/dialogue-linux.gif)
 
-実入力で2つの分岐・クリックのキャンセル・フォーカス・再開・1280×720へのリサイズを確認した約12秒の記録。画面内のDRAW/SIMは描画送信と会話pluginの更新頻度。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
+実入力で2つの分岐・クリックのキャンセル・フォーカス・再開・1280×720へのリサイズ・進行と音量の保存復元を確認した約23秒の記録。画面内のDRAW/SIMは描画送信と会話pluginの更新頻度。収録条件はSandboxと同じ。`python3 scripts/capture-linux.py --sample dialogue` で再実行できる。両サンプルの `.csv` と `.json` を `docs/media/` に同梱する。JSONのbase_revisionは編集前のcommit、source_sha256は収録したengine/plugins/samples内のソース内容を示す。
+
+### 音声と保存
+
+F5で現在の進行・音量・消音・BGMの一時停止設定を保存し、F9で読み込む。Mで消音、＋/－（またはテンキー）で音量を10ずつ調整、PでBGMを一時停止/再開する。保存と読込の結果は画面に表示する。読込中は進行・設定の操作を受け付けず、完了後に操作を再開できる。保存中は進行できる。
+
+保存先はWindowsの`%LOCALAPPDATA%/charon/dialogue/slot.json`、Linuxの`$XDG_DATA_HOME/charon/dialogue/slot.json`（未指定時は`~/.local/share/charon/dialogue/slot.json`）。`--save-file PATH`で変更できる。クラウドでは書き込み可能な`--save-file artifacts/local/dialogue-save.json`を使う。起動時に自動読込/自動上書きはしない。
+
+`charon-save::Store`は1 MiBまでのバイト列を専用workerで保存/読込する。処理は一度に1件、処理中の追加要求はエラーとして返す。同じディレクトリの一時ファイルを書き終えてから既存ファイルを置き換え、通常の書込失敗やcommit前の中断で旧ファイルを消さない。Windowsの置換も`atomic-write-file`へ委譲する。ゲーム側は形式の版・物語のfingerprint・ページキー・全設定を検証してから完了tickで復元する。不正/非対応データは現在の進行へ適用しない。これは会話の基本チェックポイントで、砂世界全体の保存や旧形式からの移行、音源の再生位置の復元は含まない。デバッグ用入力traceとは別の機能。
+
+`charon-audio`は描画や砂に依存しない部品。WAV/Ogg Vorbisの事前decode、PCMの登録、BGM差替え/ループ/一時停止/停止、同時効果音、master/music/effects別の音量を提供する。端末の既定音声デバイスを専用workerから開き、OSの音声callbackで再生する。要求queueは32件、効果音は同時16音まで。超過はqueueエラーまたはStatus.rejected_effectsで通知し、呼出元を待たせない。素材はmono/stereo、8〜192 kHz、decode前16 MiB・decode後16Mサンプル以下の常駐クリップ。長時間BGMのstreamingやデバイス切断後の自動再接続は別工程。サンプル音源はゲーム側で生成した短いオリジナル音。`--no-audio`では明示的に出力を無効にし、利用可能な出力先がなければ画面にも「利用不可」と表示する。
+
+GIFには音声を含められないため、Linux操作検証はALSAの仮想出力を48 kHz stereo PCMとして一時FIFOで読み取り、出力・一時停止・再開・消音を検証する。生の音声ファイルは残さず、[JSON](media/dialogue-linux.json)へ出力先/サンプル量などを記録する。これはスピーカーの聴感やWindows音声デバイスでの確認ではない。
 
 ## 検証
 

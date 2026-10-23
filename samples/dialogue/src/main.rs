@@ -1,10 +1,12 @@
+mod game;
 mod picture;
 mod story;
-use charon_dialogue::{Command, Dialogue};
+use charon_dialogue::Command;
 use charon_render::{
     append_performance_overlay, DebugPerformance, ImageView, Result, Sprite, WindowRenderer,
 };
 use charon_runtime::Runtime;
+use game::Command as GameCommand;
 use picture::Action;
 use std::{
     fs::File,
@@ -22,7 +24,7 @@ use winit::{
 };
 
 struct App {
-    runtime: Runtime<Dialogue<Page>>,
+    runtime: Runtime<game::Game>,
     ui: picture::Ui,
     cursor: Option<[f32; 2]>,
     shift: bool,
@@ -41,6 +43,11 @@ struct App {
 }
 impl App {
     fn command(&self, command: Command) {
+        if let Err(error) = self.runtime.submit(GameCommand::Dialogue(command)) {
+            eprintln!("Input not applied: {error}");
+        }
+    }
+    fn game_command(&self, command: GameCommand) {
         if let Err(error) = self.runtime.submit(command) {
             eprintln!("Input not applied: {error}");
         }
@@ -77,13 +84,14 @@ impl App {
         if size.width == 0 || size.height == 0 {
             return Ok(());
         }
-        let changed = self.page != Some(snapshot.frame.page);
-        self.ui.set_page(&snapshot.frame)?;
+        let changed = self.page != Some(snapshot.frame.dialogue.page);
+        self.ui.set_page(&snapshot.frame.dialogue)?;
+        self.ui.set_status(&snapshot.frame);
         self.ui.pointer_move(self.cursor.and_then(|p| {
             charon_ui::logical_pointer(p, [size.width as f32, size.height as f32], [640., 360.])
         }));
-        let ui_changed = self.ui.render(view, &snapshot.frame)?;
-        let pixels = changed.then(|| picture::background(snapshot.frame.page));
+        let ui_changed = self.ui.render(view, &snapshot.frame.dialogue)?;
+        let pixels = changed.then(|| picture::background(snapshot.frame.dialogue.page));
         let image = pixels.as_ref().map(|rgba| ImageView {
             width: 640,
             height: 360,
@@ -117,12 +125,12 @@ impl App {
             self.report = Instant::now();
         }
         if changed || report {
-            self.page = Some(snapshot.frame.page);
+            self.page = Some(snapshot.frame.dialogue.page);
             let row = format!(
-                "{:.3},{},{:?},{:.2},{:.2},{},{},{},{},{},{},{:?}",
+                "{:.3},{},{:?},{:.2},{:.2},{},{},{},{},{},{},{:?},{},{},{},{},{}",
                 self.started.elapsed().as_secs_f64(),
                 snapshot.tick,
-                snapshot.frame.page,
+                snapshot.frame.dialogue.page,
                 self.performance.map_or(0.0, |m| m.draw_fps),
                 self.performance.map_or(0.0, |m| m.simulation_hz),
                 self.ui.redraws,
@@ -131,7 +139,16 @@ impl App {
                 render.ui_upload_bytes,
                 size.width,
                 size.height,
-                self.ui.buttons.focused()
+                self.ui.buttons.focused(),
+                snapshot.frame.saves,
+                snapshot.frame.loads,
+                snapshot.frame.volume,
+                snapshot.frame.muted,
+                match snapshot.frame.audio {
+                    charon_audio::DeviceState::Ready => "Ready",
+                    charon_audio::DeviceState::Starting => "Starting",
+                    _ => "Unavailable",
+                }
             );
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -212,6 +229,16 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::Digit1) => self.command(Command::Choose(0)),
                     PhysicalKey::Code(KeyCode::Digit2) => self.command(Command::Choose(1)),
+                    PhysicalKey::Code(KeyCode::F5) => self.game_command(GameCommand::Save),
+                    PhysicalKey::Code(KeyCode::F9) => self.game_command(GameCommand::Load),
+                    PhysicalKey::Code(KeyCode::KeyM) => self.game_command(GameCommand::Mute),
+                    PhysicalKey::Code(KeyCode::KeyP) => self.game_command(GameCommand::PauseMusic),
+                    PhysicalKey::Code(KeyCode::Equal | KeyCode::NumpadAdd) => {
+                        self.game_command(GameCommand::Volume(10))
+                    }
+                    PhysicalKey::Code(KeyCode::Minus | KeyCode::NumpadSubtract) => {
+                        self.game_command(GameCommand::Volume(-10))
+                    }
                     PhysicalKey::Code(KeyCode::KeyR) => self.command(Command::Reset),
                     PhysicalKey::Code(KeyCode::Escape) => event_loop.exit(),
                     _ => {}
@@ -245,10 +272,16 @@ impl ApplicationHandler for App {
 fn main() -> Result<()> {
     let mut seconds = None;
     let mut path: Option<PathBuf> = None;
+    let mut save_file = None;
+    let mut audio = true;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         match arg.as_str() {
             "--seconds" => seconds = Some(args.next().ok_or("missing seconds")?.parse()?),
+            "--save-file" => {
+                save_file = Some(PathBuf::from(args.next().ok_or("missing save path")?))
+            }
+            "--no-audio" => audio = false,
             "--record" => path = Some(args.next().ok_or("missing record path")?.into()),
             _ => return Err(format!("unknown option: {arg}").into()),
         }
@@ -262,11 +295,14 @@ fn main() -> Result<()> {
         })
         .transpose()?;
     if let Some(file) = &mut record {
-        writeln!(file, "elapsed_s,tick,page,draw_fps,sim_hz,ui_redraws,cached_glyphs,ui_texture_changed,ui_vertex_bytes,window_width,window_height,focused")?;
+        writeln!(file, "elapsed_s,tick,page,draw_fps,sim_hz,ui_redraws,cached_glyphs,ui_texture_changed,ui_vertex_bytes,window_width,window_height,focused,saves,loads,volume,muted,audio")?;
     }
     let now = Instant::now();
     let mut app = App {
-        runtime: Runtime::start(story::build()?)?,
+        runtime: Runtime::start(game::Game::new(
+            save_file.map_or_else(default_save_file, Ok)?,
+            audio,
+        )?)?,
         ui: picture::Ui::new()?,
         cursor: None,
         shift: false,
@@ -288,4 +324,18 @@ fn main() -> Result<()> {
         return Err(error.into());
     }
     Ok(())
+}
+
+fn default_save_file() -> Result<PathBuf> {
+    let base = if cfg!(target_os = "windows") {
+        std::env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else {
+        std::env::var_os("XDG_DATA_HOME")
+            .map(PathBuf::from)
+            .filter(|p| p.is_absolute())
+            .or_else(|| std::env::var_os("HOME").map(|p| PathBuf::from(p).join(".local/share")))
+    };
+    Ok(base
+        .ok_or("no user data directory; specify --save-file")?
+        .join("charon/dialogue/slot.json"))
 }

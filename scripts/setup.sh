@@ -25,6 +25,8 @@ rustup toolchain install stable --profile minimal \
   --component rustfmt --component clippy --component rust-analyzer
 
 cd "$repo_root"
+if [ "$(uname -s)" = Linux ]; then bash scripts/setup-audio-linux.sh; fi
+source scripts/env.sh
 bash scripts/dev.sh doctor
 # Never generate a project or rewrite a lockfile during setup.
 if [ -f Cargo.toml ] && [ -f Cargo.lock ]; then

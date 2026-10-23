@@ -1,0 +1,9 @@
+[package]
+name = "charon-audio"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+rodio = { version = "0.23.0", default-features = false, features = ["playback", "wav", "vorbis"] }

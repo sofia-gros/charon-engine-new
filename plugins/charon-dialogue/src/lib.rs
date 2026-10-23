@@ -69,6 +69,26 @@ impl<K: Copy + Eq + Hash> Dialogue<K> {
             current: entry,
         })
     }
+    pub fn current(&self) -> K {
+        self.current
+    }
+    /// Validate before replacing progress. Serialized keys remain game-owned.
+    pub fn restore(&mut self, key: K) -> Result<(), &'static str> {
+        if !self.nodes.contains_key(&key) {
+            return Err("unknown dialogue checkpoint");
+        }
+        self.current = key;
+        Ok(())
+    }
+    pub fn frame(&self) -> Frame<K> {
+        let node = &self.nodes[&self.current];
+        Frame {
+            page: self.current,
+            text: Arc::clone(&node.text),
+            can_advance: node.next.is_some(),
+            choices: Arc::clone(&node.choices),
+        }
+    }
 }
 impl<K: Copy + Eq + Hash + Send + Sync + 'static> Simulation for Dialogue<K> {
     type Command = Command;
@@ -85,13 +105,7 @@ impl<K: Copy + Eq + Hash + Send + Sync + 'static> Simulation for Dialogue<K> {
                     .map_or(self.current, |choice| choice.target),
             };
         }
-        let node = &self.nodes[&self.current];
-        Frame {
-            page: self.current,
-            text: Arc::clone(&node.text),
-            can_advance: node.next.is_some(),
-            choices: Arc::clone(&node.choices),
-        }
+        self.frame()
     }
 }
 #[cfg(test)]
@@ -146,6 +160,14 @@ mod tests {
             story.step(vec![Command::Reset]);
             assert_eq!(frame.page, target);
         }
+    }
+    #[test]
+    fn restore_rejects_unknown_key_without_changing_progress() {
+        let mut story = Dialogue::new(nodes(), 0).unwrap();
+        story.restore(3).unwrap();
+        assert_eq!(story.frame().page, 3);
+        assert!(story.restore(99).is_err());
+        assert_eq!(story.current(), 3);
     }
     #[test]
     fn invalid_story_targets_and_ambiguous_nodes_fail_before_play() {

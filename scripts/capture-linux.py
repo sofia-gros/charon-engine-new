@@ -144,7 +144,7 @@ def main():
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
     local = LOCAL / sample
-    duration = 12 if sample == "dialogue" else 14
+    duration = 23 if sample == "dialogue" else 14
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -160,6 +160,7 @@ def main():
     inputs = None
     capture_stop = threading.Event()
     capture_thread = None
+    audio_probe = None
     with tempfile.TemporaryDirectory(prefix="charon-capture-") as temporary:
         temporary = Path(temporary)
         number = next(n for n in range(91, 121) if not Path(f"/tmp/.X{n}-lock").exists() and not Path(f"/tmp/.X11-unix/X{n}").exists())
@@ -197,12 +198,16 @@ Section "Screen"
 EndSection
 ''')
         try:
+            if sample == "dialogue":
+                from audio_probe import AudioProbe
+                audio_probe = AudioProbe(temporary)
+                env["ALSA_CONFIG_PATH"] = str(audio_probe.config)
             with open(local / "xorg.log", "w") as log:
                 server = subprocess.Popen([xorg, env["DISPLAY"], "-config", str(config), "-auth", env["XAUTHORITY"], "-logfile", str(temporary / "xorg.log"), "-nolisten", "tcp", "-noreset", "-novtswitch", "-extension", "MIT-SHM"], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -283,6 +288,26 @@ EndSection
                 inputs.button(1,False)
                 at(10)
                 inputs.resize(1920,1080)
+                at(11)
+                inputs.key(ord("="))
+                inputs.key(ord("="))
+                at(12)
+                inputs.key(0xffc2)  # F5 saves Hill and volume 70.
+                at(13)
+                inputs.key(ord("r"))
+                at(14)
+                for _ in range(3):
+                    inputs.key(ord("-"))
+                at(15)
+                inputs.key(ord("m"))
+                at(16)
+                inputs.key(0xffc6)  # F9 restores Hill/70/unmuted.
+                at(18)
+                inputs.key(ord("p"))
+                at(19.5)
+                inputs.key(ord("p"))
+                at(21)
+                inputs.key(ord("m"))
             elif sample == "platformer":
                 at(1)
                 inputs.hold(ord("d"), True)
@@ -452,7 +477,7 @@ EndSection
                           "checks": ["mouse painting", "game-defined ash selection/inspection", "authoritative replay with 1 worker", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
             elif sample == "dialogue":
                 pages = [page for page, _ in itertools.groupby(row["page"] for row in rows)]
-                assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages
+                assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill", "Intro", "Hill"], pages
                 first_choice = next(float(r["elapsed_s"]) for r in rows if r["page"]=="Choice")
                 first_river = next(float(r["elapsed_s"]) for r in rows if r["page"]=="River")
                 assert first_river-first_choice >= 1.5, "release outside button activated an early choice"
@@ -460,7 +485,19 @@ EndSection
                 assert any(r["focused"] == "Some(Choose(1))" and r["page"] == "Choice" for r in rows), "keyboard focus did not reach second choice"
                 assert max(int(r["cached_glyphs"]) for r in rows)>80, "Japanese font glyphs were not cached"
                 assert any(a["page"]==b["page"] and a["ui_redraws"]==b["ui_redraws"] for a,b in zip(rows,rows[1:])), "idle UI rerendered every sample"
-                checks = {"pages": pages, "checks": ["both choices", "mouse button hit testing", "cancel release outside button", "keyboard choice and focus", "restart button", "resize and pointer remapping", "Japanese font cache", "idle UI texture reuse", "Escape shutdown"]}
+                assert any(r["saves"] == "1" for r in rows), "save did not commit"
+                assert any(r["volume"] == "40" and r["muted"] == "true" and r["page"] == "Intro" for r in rows), "settings did not change before load"
+                assert any(r["loads"] == "1" and r["page"] == "Hill" and r["volume"] == "70" and r["muted"] == "false" for r in rows), "checkpoint did not restore progress/settings"
+                assert all(r["audio"] == "Ready" for r in rows[1:]), "ALSA device did not stay ready"
+                audio = audio_probe.evidence()
+                # Buffered driver output trails input slightly; use stable windows.
+                def peak_between(a, b):
+                    return max(r["peak"] for r in audio_probe.rows if a <= r["at"] - start <= b)
+                assert peak_between(16.8, 17.5) > .001, "loaded audio remained muted"
+                assert peak_between(18.8, 19.3) == 0, "paused BGM was not silent"
+                assert peak_between(20.2, 20.7) > .001, "BGM did not resume"
+                assert peak_between(21.8, 22.5) == 0, "mute did not silence output"
+                checks = {"pages": pages, "audio_output": audio, "checks": ["both choices", "mouse button hit testing", "cancel release outside button", "keyboard choice and focus", "restart button", "resize and pointer remapping", "Japanese font cache", "idle UI texture reuse", "F5/F9 progress and volume restoration", "ALSA PCM output/pause/resume/mute", "Escape shutdown"]}
             elif sample == "platformer":
                 xs = [float(row["player_x"]) for row in rows]
                 ys = [float(row["player_y"]) for row in rows]
@@ -584,6 +621,8 @@ EndSection
                     except subprocess.TimeoutExpired:
                         process.kill()
                         process.wait()
+            if audio_probe:
+                audio_probe.close()
 
 
 if __name__ == "__main__":

@@ -19,6 +19,7 @@ pub struct Ui {
     texture: Option<SpriteTexture>,
     page: Option<Page>,
     dirty: bool,
+    status: String,
     pub redraws: u64,
 }
 impl Ui {
@@ -37,8 +38,34 @@ impl Ui {
             texture: None,
             page: None,
             dirty: true,
+            status: String::new(),
             redraws: 0,
         })
+    }
+    pub fn set_status(&mut self, frame: &crate::game::Frame) {
+        let device = match frame.audio {
+            charon_audio::DeviceState::Starting => "準備中",
+            charon_audio::DeviceState::Ready => "出力中",
+            charon_audio::DeviceState::Unavailable(_) => "利用不可",
+        };
+        let status = format!(
+            "音声：{}　音量：{}%{}　BGM：{}\n{}",
+            device,
+            frame.volume,
+            if frame.muted { "（消音）" } else { "" },
+            if !matches!(frame.audio, charon_audio::DeviceState::Ready) {
+                "停止"
+            } else if frame.music_paused {
+                "一時停止"
+            } else {
+                "再生"
+            },
+            frame.notice
+        );
+        if status != self.status {
+            self.status = status;
+            self.dirty = true;
+        }
     }
     pub fn cached_glyphs(&self) -> usize {
         self.text.cached_glyphs()
@@ -122,6 +149,9 @@ impl Ui {
         )?;
         self.text
             .paint(&mut canvas, &help, [40., 76.], [190, 199, 214, 255], all);
+        let status = self.text.layout(&self.status, 11., 560.)?;
+        self.text
+            .paint(&mut canvas, &status, [40., 103.], [190, 211, 214, 255], all);
         canvas.fill(Rect::new(28., 152., 584., 190.)?, [17, 25, 40, 255]);
         canvas.fill(Rect::new(28., 152., 584., 2.)?, accent);
         let body = self.text.layout(&frame.text, 20., 536.)?;
