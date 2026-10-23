@@ -7,6 +7,8 @@ use charon_sand::{Command as SandCommand, SandWorld};
 #[derive(Clone, Copy, Debug)]
 pub enum Command {
     Terrain(SandCommand),
+    PlaceImage([f32; 2]),
+    EraseImage([f32; 2]),
     Left(bool),
     Right(bool),
     Jump,
@@ -26,12 +28,15 @@ pub struct Inspection {
 }
 pub struct Frame {
     pub terrain: charon_sand::Frame,
+    pub images: Vec<[f32; 2]>,
+    pub image_error: Option<&'static str>,
     pub shots: Vec<[f32; 2]>,
     pub sparks: Vec<[f32; 2]>,
     pub impacts: u64,
     pub player: Option<Body>,
     pub previous_player: Option<[f32; 2]>,
     pub direction: i8,
+    pub facing: i8,
     pub sand_solid: bool,
     pub paused: bool,
     pub simulation_tick: u64,
@@ -62,12 +67,16 @@ struct Spark {
 }
 pub struct Game {
     world: SandWorld,
+    images: Vec<[f32; 2]>,
+    image_error: Option<&'static str>,
     projectiles: Projectiles,
     sparks: Vec<Spark>,
     fire_pending: bool,
     impacts: u64,
     player: Option<Body>,
     previous_player: Option<[f32; 2]>,
+    facing: i8,
+    presentation_direction: i8,
     sand_solid: bool,
     left: bool,
     right: bool,
@@ -104,7 +113,11 @@ impl Game {
             SandWorld::with_materials(width, height, workers, palette())?
         };
         Ok(Self {
+            images: vec![],
+            image_error: None,
             previous_player: None,
+            facing: 1,
+            presentation_direction: 0,
             world,
             projectiles: Projectiles::default(),
             sparks: vec![],
@@ -147,6 +160,15 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if !self.images.is_empty() {
+            mix(0x696d616765);
+            mix(self.images.len() as u64);
+            for position in &self.images {
+                for value in position {
+                    mix(u64::from(value.to_bits()));
+                }
+            }
+        }
         mix(u64::from(self.sand_solid));
         mix(u64::from(self.left));
         mix(u64::from(self.right));
@@ -182,6 +204,10 @@ impl Game {
     }
     fn advance(&mut self, mut terrain: Vec<SandCommand>) -> charon_sand::Frame {
         self.previous_player = self.player.map(|p| [p.x(), p.y()]);
+        self.presentation_direction = i8::from(self.right) - i8::from(self.left);
+        if self.presentation_direction != 0 {
+            self.facing = self.presentation_direction;
+        }
         if self.dig {
             if let Some(player) = self.player {
                 for x in [
@@ -297,7 +323,36 @@ impl Simulation for Game {
                     terrain.clear();
                     steps = 0;
                 }
+                Command::Terrain(SandCommand::Clear) => {
+                    self.images.clear();
+                    self.image_error = None;
+                    terrain.push(SandCommand::Clear);
+                }
                 Command::Terrain(command) => terrain.push(command),
+                Command::PlaceImage(position) => {
+                    self.image_error = if position
+                        .iter()
+                        .any(|v| !v.is_finite() || v.abs() > 1_000_000.)
+                    {
+                        Some("INVALID IMAGE POSITION")
+                    } else if self.images.len() >= 128 {
+                        Some("IMAGE LIMIT 128")
+                    } else {
+                        self.images.push(position);
+                        None
+                    };
+                }
+                Command::EraseImage(point) => {
+                    if let Some(index) = self.images.iter().rposition(|p| {
+                        point[0] >= p[0]
+                            && point[0] < p[0] + 8.
+                            && point[1] >= p[1]
+                            && point[1] < p[1] + 14.
+                    }) {
+                        self.images.remove(index);
+                    }
+                    self.image_error = None;
+                }
                 Command::Left(down) => self.left = down,
                 Command::Right(down) => self.right = down,
                 Command::Jump => self.jump_pending = true,
@@ -337,6 +392,8 @@ impl Simulation for Game {
         }
         Frame {
             terrain: frame,
+            images: self.images.clone(),
+            image_error: self.image_error,
             shots: self
                 .projectiles
                 .shots()
@@ -347,7 +404,8 @@ impl Simulation for Game {
             impacts: self.impacts,
             player: self.player,
             previous_player: self.previous_player,
-            direction: i8::from(self.right) - i8::from(self.left),
+            direction: self.presentation_direction,
+            facing: self.facing,
             sand_solid: self.sand_solid,
             paused: self.paused,
             simulation_tick: self.world.tick(),
@@ -363,6 +421,54 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn free_images_keep_subcell_coordinates_without_changing_terrain_and_reset_cleanly() {
+        let mut game = Game::new(96, 96, 1, false).unwrap();
+        game.step(vec![Command::Pause]);
+        let checksum = game.world.checksum();
+        let frame = game.step(vec![Command::PlaceImage([12.25, 33.75])]);
+        assert_eq!(frame.images, vec![[12.25, 33.75]]);
+        assert_eq!(game.world.checksum(), checksum);
+        assert_eq!(frame.simulation_tick, 0);
+        game.step(vec![Command::EraseImage([13., 34.])]);
+        assert!(game.images.is_empty());
+        game.step(vec![Command::PlaceImage([1., 2.])]);
+        assert!(game
+            .step(vec![Command::Terrain(SandCommand::Clear)])
+            .images
+            .is_empty());
+        assert!(game
+            .step(vec![Command::PlaceImage([f32::NAN, 0.])])
+            .image_error
+            .is_some());
+    }
+
+    #[test]
+    fn facing_matches_movement_stays_frozen_when_paused_and_resets_right() {
+        let mut game = Game::new(160, 120, 1, true).unwrap();
+        let right = game.step(vec![Command::Right(true)]);
+        assert_eq!(right.facing, 1);
+        let left = game.step(vec![Command::Right(false), Command::Left(true)]);
+        assert_eq!(left.facing, -1);
+        assert!(left.player.unwrap().x() < right.player.unwrap().x());
+        let paused = game.step(vec![
+            Command::Pause,
+            Command::Left(false),
+            Command::Right(true),
+        ]);
+        assert_eq!(paused.facing, -1, "paused input changed visible facing");
+        let stepped = game.step(vec![Command::Step]);
+        assert_eq!(stepped.facing, 1);
+        game.step(vec![
+            Command::Right(false),
+            Command::Left(true),
+            Command::Step,
+        ]);
+        let reset = game.step(vec![Command::Terrain(SandCommand::Clear)]);
+        assert_eq!((reset.facing, reset.direction), (1, 0));
+        assert!(reset.paused);
+    }
+
     #[test]
     fn presentation_interpolates_only_between_physics_states_and_snaps_debug_actions() {
         use std::time::Duration;

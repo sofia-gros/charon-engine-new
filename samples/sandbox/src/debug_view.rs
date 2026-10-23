@@ -18,6 +18,8 @@ pub fn overlays(
     metrics: Option<DebugPerformance>,
     software: bool,
     camera: charon_render::Camera2D,
+    tool_label: &str,
+    preview: Option<[f32; 4]>,
 ) -> Vec<OverlayRect> {
     let mut result = Vec::new();
     if let Some(body) = frame.player.filter(|body| body.embedded) {
@@ -59,6 +61,16 @@ pub fn overlays(
     }
     for &[x, y] in &frame.sparks {
         result.push(rect(x, y, 0.8, 0.8, [1., 0.5, 0.15, 1.]));
+    }
+    if let Some([x, y, w, h]) = preview {
+        let color = [0.5, 1., 0.65, 1.];
+        let line = 0.2;
+        result.extend([
+            rect(x, y, w, line, color),
+            rect(x, y + h - line, w, line, color),
+            rect(x, y, line, h, color),
+            rect(x + w - line, y, line, h, color),
+        ]);
     }
     // World geometry follows the camera; the HUD appended below remains fixed.
     for rect in &mut result {
@@ -111,6 +123,12 @@ pub fn overlays(
         if frame.paused || inspect_enabled {
             text(&mut result, 4., 35., &detail, [0.9, 0.95, 1., 1.]);
         }
+    }
+    result.push(rect(2., 45., 270., 11., [0.03, 0.06, 0.1, 1.]));
+    text(&mut result, 4., 47., tool_label, [0.7, 1., 0.8, 1.]);
+    if let Some(error) = frame.image_error {
+        result.push(rect(2., 57., 270., 11., [0.1, 0.03, 0.03, 1.]));
+        text(&mut result, 4., 59., error, [1., 0.4, 0.4, 1.]);
     }
     result
 }

@@ -9,7 +9,6 @@ pub struct ActorVisual {
     idle: Clip,
     walk: Clip,
     texture: Option<SpriteTexture>,
-    facing_left: bool,
 }
 impl ActorVisual {
     pub fn new() -> Result<Self> {
@@ -25,19 +24,26 @@ impl ActorVisual {
             idle,
             walk,
             texture: None,
-            facing_left: false,
         })
     }
     pub fn upload(&mut self, renderer: &WindowRenderer) {
         self.texture = Some(renderer.upload_sprite_texture(self.atlas.texture()));
     }
     pub fn sprites(&mut self, frame: &Frame, position: Option<[f32; 2]>) -> Vec<Sprite<'_>> {
+        let texture = self.texture.as_ref().expect("upload before drawing");
+        let mut sprites: Vec<_> = frame
+            .images
+            .iter()
+            .map(|&[x, y]| Sprite {
+                texture,
+                source: self.idle.frame_at(Duration::ZERO).rect,
+                destination: [x, y, 8., 14.],
+                flip_x: false,
+            })
+            .collect();
         let Some(body) = frame.player.filter(|body| !body.embedded) else {
-            return vec![];
+            return sprites;
         };
-        if frame.direction != 0 {
-            self.facing_left = frame.direction < 0;
-        }
         let clip = if frame.direction == 0 {
             &self.idle
         } else {
@@ -46,11 +52,13 @@ impl ActorVisual {
         let elapsed = Duration::from_secs_f64(frame.simulation_tick as f64 / 60.);
         let selected = clip.frame_at(elapsed);
         let [x, y] = position.unwrap_or([body.x(), body.y()]);
-        vec![Sprite {
+        sprites.push(Sprite {
             texture: self.texture.as_ref().expect("upload before drawing"),
             source: selected.rect,
             destination: [x - 0.5, y - 2., 8., 14.],
-            flip_x: self.facing_left,
-        }]
+            // This sample sheet is authored facing right.
+            flip_x: frame.facing < 0,
+        });
+        sprites
     }
 }

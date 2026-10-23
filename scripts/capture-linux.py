@@ -139,7 +139,7 @@ def check_debugger_rows(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
@@ -224,8 +224,9 @@ EndSection
                         path = temporary / f"frame-{index:04}.ppm"
                         before = time.monotonic()
                         # XGetImage works even when the virtual display has no
-                        # shared-memory transport. This captures the actual window.
-                        subprocess.run(["import", "-window", "root", "-filter", "point", "-resize", "960x540!", "-depth", "8", str(path)], env=env, check=True, capture_output=True, timeout=5)
+                        # shared-memory transport. Capture only the client window,
+                        # so a resize never includes the surrounding desktop.
+                        subprocess.run(["import", "-window", str(inputs.window), "-filter", "point", "-resize", "960x540!", "-depth", "8", str(path)], env=env, check=True, capture_output=True, timeout=5)
                         frames.append(((before + time.monotonic()) / 2, path))
                 except Exception as error:
                     capture_errors.append(error)
@@ -277,6 +278,47 @@ EndSection
                 inputs.hold(ord("f"), False)
                 at(9)
                 at(10)
+                inputs.key(ord("r"))
+            elif sample == "placement":
+                at(0.4)
+                inputs.key(ord("p"))
+                inputs.key(ord("i"))
+                inputs.key(ord("3"))
+                at(1)
+                inputs.move(405,279)
+                inputs.button(1, True)
+                at(1.2)
+                inputs.button(1, False)
+                at(1.7)
+                inputs.move(441,279)
+                inputs.button(1, True)
+                at(1.9)
+                inputs.button(1, False)
+                at(3)
+                inputs.key(ord("4"))
+                inputs.move(493,335)
+                inputs.button(1, True)
+                at(3.2)
+                inputs.button(1, False)
+                at(4)
+                inputs.move(555,357)
+                inputs.button(1, True)
+                at(4.2)
+                inputs.button(1, False)
+                at(5)
+                inputs.key(ord("c"))
+                at(6)
+                inputs.move(900,400)
+                inputs.button(1, True)
+                at(6.2)
+                inputs.button(1, False)
+                at(8)
+                inputs.button(3, True)
+                at(8.2)
+                inputs.button(3, False)
+                at(10)
+                inputs.key(ord("c"))
+                at(11)
                 inputs.key(ord("r"))
             elif sample == "camera":
                 at(0.5)
@@ -407,19 +449,33 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "player_x_range": [min(xs), max(xs)], "player_y_range": [min(ys), max(ys)],
                           "checks": ["movement", "jump", "sand/wall collision policy", "support destruction", "reset", "Escape shutdown", "authoritative input replay with 1 worker"]}
+            elif sample == "placement":
+                assert any(r["inspect_x"] == "110" and r["inspect_y"] == "69" and r["material"] == "2" for r in rows), "grid block not placed under preview"
+                assert any(r["placed_images"] == "1" and float(r["last_image_x"]) == 123.25 and float(r["last_image_y"]) == 83.75 for r in rows), "free image lost fractional mouse coordinates"
+                assert max(int(r["placed_images"]) for r in rows) == 3, "image click generated duplicates or missed a placement"
+                assert any(r["placed_images"] == "3" and float(r["last_image_x"]) == 232.5 and float(r["last_image_y"]) == 117.5 for r in rows), "free image placement ignored camera zoom"
+                assert any(r["placed_images"] == "2" and 8.5 < float(r["elapsed_s"]) < 10 for r in rows), "image erase failed"
+                assert rows[-1]["placed_images"] == "0", "reset did not remove placed images"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                records = trace_path.read_text().splitlines()
+                assert any("rect:96:64:8:8:2" in line for line in records) and any("rect:104:64:8:8:2" in line for line in records), "blocks did not snap to the configured grid"
+                checks = {"replay": replay.stdout.strip(), "checks": ["8x8 grid blocks", "fractional image placement", "one image per click", "image placement with camera zoom", "image erase", "reset", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "camera":
                 assert any(float(r["camera_x"]) > 60 for r in rows), "camera did not follow moving actor"
                 assert any(abs(float(r["camera_width"])-192) < 0.01 for r in rows), "zoom did not change view extent"
                 assert any(r["window_width"] == "1280" and r["window_height"] == "720" for r in rows), "real window resize missing"
                 inspected = [r for r in rows if r["paused"] == "true" and r["material"] == "2" and abs(float(r["camera_width"])-240)<0.01]
                 assert any(int(r["inspect_x"]) == math.floor(float(r["camera_x"])+180) and int(r["inspect_y"]) == math.floor(float(r["camera_y"])+67.5) for r in inspected), "zoomed mouse paint/inspection coordinates disagree"
+                assert any(r["facing"] == "-1" for r in rows), "left-facing state missing"
+                assert rows[-1]["facing"] == "1", "reset retained previous facing"
                 paused = [r for r in rows if r["paused"] == "true"]
                 assert all(abs(float(r["display_player_x"])-float(r["player_x"]))<0.001 and abs(float(r["display_player_y"])-float(r["player_y"]))<0.001 for r in paused), "paused/stepped display interpolated away from exact state"
                 assert any(0.001 < abs(float(r["display_player_x"])-float(r["player_x"])) < 1.51 for r in rows if r["paused"] == "false"), "no interpolated render positions observed"
                 assert float(rows[-1]["camera_width"]) == 480, "full world view not restored"
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
-                checks = {"replay": replay.stdout.strip(), "checks": ["camera follow", "zoom", "real window resize", "mouse paint/inspection in world coordinates", "interpolated player presentation", "exact pause/step/reset positions", "authoritative replay with 1 worker", "Escape shutdown"]}
+                checks = {"replay": replay.stdout.strip(), "checks": ["camera follow", "zoom", "real window resize", "mouse paint/inspection in world coordinates", "interpolated player presentation", "exact pause/step/reset positions", "facing reset", "client-only capture during resize", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "projectiles":
                 assert max(int(r["impacts"]) for r in rows) >= 2, "shots did not hit terrain"
                 assert any(int(r["sparks"]) > 0 for r in rows), "impact particles missing"
@@ -445,6 +501,9 @@ EndSection
             for _, path in frames:
                 with Image.open(path) as image:
                     images.append(image.convert("RGB"))
+            if sample == "camera":
+                assert all(all(image.getpixel(point) != (0,0,0) for point in [(0,0),(959,0),(0,539),(959,539)]) for image in images), "black desktop margin leaked into client capture"
+                checks["checks"].append("no black desktop margin at client corners")
             if sample == "sandbox":
                 paused = [r for r in rows if r["paused"] == "true" and r["material"] == "3"]
                 assert len({r["simulation_tick"] for r in paused}) == 1, "physics advanced during texture animation"
@@ -453,7 +512,7 @@ EndSection
                 checks["paused_simulation_tick"] = int(paused[0]["simulation_tick"])
                 checks["texture_frames_while_paused"] = len(patches)
                 checks["checks"].append("material texture animation while physics tick stays fixed")
-            if sample in ("platformer", "debugger", "projectiles", "camera"):
+            if sample in ("platformer", "debugger", "projectiles", "camera", "placement"):
                 assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
                 assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"
                 checks["checks"].append("PNG+JSON actor sprite rendered through shared GPU pipeline")
@@ -476,7 +535,8 @@ EndSection
                       "simulation_hz_range": [min(simulation_rates), max(simulation_rates)],
                       "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
                       "captured_frames": len(frames), "gif_duration_ms": sum(durations),
-                      "source_size": [1920, 1080], "gif_size": [960, 540],
+                      "capture_target": "game client window (desktop excluded)",
+                      "source_size": "actual client size; see window_width/window_height in CSV", "gif_size": [960, 540],
                       **checks}
             (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")
             (MEDIA / f"{prefix}.json").write_text(json.dumps(report, indent=2) + "\n")

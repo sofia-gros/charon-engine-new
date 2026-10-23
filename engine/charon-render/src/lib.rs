@@ -1,4 +1,6 @@
 mod camera;
+mod placement;
+pub use placement::Placement;
 mod debug_text;
 pub use camera::Camera2D;
 mod indexed;

@@ -1,0 +1,40 @@
+{
+  "source_sha256": "575f45d6cef02598a102bad5dae1732c9a14cd72402443e90c31e8a1cb3e48cd",
+  "sample": "placement",
+  "base_revision": "855425c6580a21e5013fe37ebb580b9547457395",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.003,
+  "gif_encoded_frames": 102,
+  "draw_submission_fps_range": [
+    18.12,
+    49.79
+  ],
+  "simulation_hz_range": [
+    0.0,
+    61.03
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "captured_frames": 112,
+  "gif_duration_ms": 14010,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "replay": "replay_ticks=902 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "8x8 grid blocks",
+    "fractional image placement",
+    "one image per click",
+    "image placement with camera zoom",
+    "image erase",
+    "reset",
+    "authoritative replay with 1 worker",
+    "Escape shutdown",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
+  ]
+}

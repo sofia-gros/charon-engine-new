@@ -15,7 +15,18 @@ const TILE: usize = 32;
 
 #[derive(Clone, Copy, Debug)]
 pub enum Command {
-    Paint { x: usize, y: usize, material: u8 },
+    Paint {
+        x: usize,
+        y: usize,
+        material: u8,
+    },
+    FillRect {
+        x: usize,
+        y: usize,
+        width: usize,
+        height: usize,
+        material: u8,
+    },
     Clear,
 }
 
@@ -188,22 +199,40 @@ impl SandWorld {
     fn command(&mut self, command: Command) {
         match command {
             Command::Clear => self.reset(),
-            Command::Paint { x, y, material } => {
-                if self.materials.get(material).is_none() {
-                    return;
-                }
-                for py in y.saturating_sub(3)..=y.saturating_add(3).min(self.height - 1) {
-                    for px in x.saturating_sub(3)..=x.saturating_add(3).min(self.width - 1) {
-                        if px > 0 && px < self.width - 1 && py < self.height - 1 {
-                            let index = py * self.width + px;
-                            if self.cells[index] != material {
-                                self.sand -= usize::from(self.is_powder(self.cells[index]));
-                                self.sand += usize::from(self.is_powder(material));
-                                self.cells[index] = material;
-                                self.wake(index);
-                            }
-                        }
-                    }
+            Command::Paint { x, y, material } => self.paint_rect(
+                x.saturating_sub(3),
+                y.saturating_sub(3),
+                x.saturating_add(4),
+                y.saturating_add(4),
+                material,
+            ),
+            Command::FillRect {
+                x,
+                y,
+                width,
+                height,
+                material,
+            } => self.paint_rect(
+                x,
+                y,
+                x.saturating_add(width),
+                y.saturating_add(height),
+                material,
+            ),
+        }
+    }
+    fn paint_rect(&mut self, x: usize, y: usize, end_x: usize, end_y: usize, material: u8) {
+        if self.materials.get(material).is_none() {
+            return;
+        }
+        for py in y..end_y.min(self.height - 1) {
+            for px in x.max(1)..end_x.min(self.width - 1) {
+                let index = py * self.width + px;
+                if self.cells[index] != material {
+                    self.sand -= usize::from(self.is_powder(self.cells[index]));
+                    self.sand += usize::from(self.is_powder(material));
+                    self.cells[index] = material;
+                    self.wake(index);
                 }
             }
         }
@@ -377,6 +406,40 @@ mod tests {
             frame.sand,
             world.cells.iter().filter(|&&cell| cell == SAND).count()
         );
+    }
+
+    #[test]
+    fn rectangular_edits_fill_exact_blocks_and_preserve_protected_edges() {
+        let mut world = SandWorld::new(65, 66, 2).unwrap();
+        world.edit(vec![Command::FillRect {
+            x: 16,
+            y: 32,
+            width: 8,
+            height: 8,
+            material: WALL,
+        }]);
+        for y in 1..65 {
+            for x in 1..64 {
+                assert_eq!(
+                    world.material_at(x, y),
+                    Some(if (16..24).contains(&x) && (32..40).contains(&y) {
+                        WALL
+                    } else {
+                        AIR
+                    })
+                );
+            }
+        }
+        let frame = world.edit(vec![Command::FillRect {
+            x: 0,
+            y: 0,
+            width: usize::MAX,
+            height: usize::MAX,
+            material: AIR,
+        }]);
+        assert_eq!(world.material_at(0, 20), Some(WALL));
+        assert_eq!(world.material_at(20, 65), Some(WALL));
+        assert_image_matches_cells(&world, &frame);
     }
 
     #[test]

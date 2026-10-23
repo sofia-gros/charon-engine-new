@@ -5,7 +5,9 @@ mod material_view;
 mod materials;
 mod smoke;
 mod trace;
-use charon_render::{self as gpu, Camera2D, DebugPerformance, Gpu, Result, WindowRenderer};
+use charon_render::{
+    self as gpu, Camera2D, DebugPerformance, Gpu, Placement, Result, WindowRenderer,
+};
 use charon_runtime::Runtime;
 use charon_sand::Command;
 use game::{Command as GameCommand, Game};
@@ -24,6 +26,21 @@ use winit::{
     window::WindowId,
 };
 
+#[derive(Clone, Copy)]
+enum Tool {
+    Brush,
+    Blocks,
+    Images,
+}
+impl Tool {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Brush => "1 SAND 2 ASH 3 BLOCK 4 IMAGE",
+            Self::Blocks => "3 BLOCK GRID 8",
+            Self::Images => "4 IMAGE FREE",
+        }
+    }
+}
 struct Options {
     input_log: Option<PathBuf>,
     replay: Option<PathBuf>,
@@ -75,7 +92,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash brush; 3 grid blocks; 4 freely positioned images. Mouse: left paint, right erase, middle grid block. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -96,6 +113,8 @@ struct App {
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
     brush: u8,
+    tool: Tool,
+    clicks: [bool; 3],
     follow_camera: bool,
     zoom: f32,
     inspect_enabled: bool,
@@ -123,14 +142,10 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y")?;
         }
         let now = Instant::now();
-        let actor = if options.play {
-            Some(actor_view::ActorVisual::new()?)
-        } else {
-            None
-        };
+        let actor = Some(actor_view::ActorVisual::new()?);
         Ok(Self {
             material_visual: material_view::MaterialVisual::new()?,
             actor,
@@ -140,6 +155,8 @@ impl App {
             cursor: None,
             buttons: [false; 3],
             brush: SAND,
+            tool: Tool::Brush,
+            clicks: [false; 3],
             follow_camera: false,
             zoom: 1.,
             inspect_enabled: false,
@@ -205,19 +222,84 @@ impl App {
                 [size.width as f32, size.height as f32],
             )
         });
+        let preview = match self.tool {
+            Tool::Brush => None,
+            Tool::Blocks => pointer
+                .map(|point| {
+                    Placement::Grid {
+                        origin: [0., 0.],
+                        cell: [8., 8.],
+                    }
+                    .position(point)
+                })
+                .transpose()?
+                .map(|[x, y]| [x, y, 8., 8.]),
+            Tool::Images => pointer
+                .map(|point| Placement::Free.position(point))
+                .transpose()?
+                .map(|[x, y]| [x, y, 8., 14.]),
+        };
         if let Some([x, y]) = pointer {
-            for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL]) {
-                if pressed {
-                    self.runtime
-                        .submit(GameCommand::Terrain(Command::Paint {
-                            x: x.floor() as usize,
-                            y: y.floor() as usize,
-                            material,
-                        }))
-                        .map_err(|e| format!("input queue: {e}"))?;
+            match self.tool {
+                Tool::Brush => {
+                    for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL])
+                    {
+                        if pressed {
+                            let command = if material == WALL {
+                                let [bx, by] = Placement::Grid {
+                                    origin: [0., 0.],
+                                    cell: [8., 8.],
+                                }
+                                .position([x, y])?;
+                                Command::FillRect {
+                                    x: bx as usize,
+                                    y: by as usize,
+                                    width: 8,
+                                    height: 8,
+                                    material,
+                                }
+                            } else {
+                                Command::Paint {
+                                    x: x.floor() as usize,
+                                    y: y.floor() as usize,
+                                    material,
+                                }
+                            };
+                            self.runtime
+                                .submit(GameCommand::Terrain(command))
+                                .map_err(|e| format!("input queue: {e}"))?;
+                        }
+                    }
+                }
+                Tool::Blocks => {
+                    let [bx, by, _, _] = preview.expect("block pointer preview");
+                    if self.buttons[0] || self.buttons[1] {
+                        self.runtime
+                            .submit(GameCommand::Terrain(Command::FillRect {
+                                x: bx as usize,
+                                y: by as usize,
+                                width: 8,
+                                height: 8,
+                                material: if self.buttons[1] { AIR } else { WALL },
+                            }))
+                            .map_err(|e| format!("input queue: {e}"))?;
+                    }
+                }
+                Tool::Images => {
+                    if self.clicks[0] {
+                        self.runtime
+                            .submit(GameCommand::PlaceImage([x, y]))
+                            .map_err(|e| format!("input queue: {e}"))?;
+                    }
+                    if self.clicks[1] {
+                        self.runtime
+                            .submit(GameCommand::EraseImage([x, y]))
+                            .map_err(|e| format!("input queue: {e}"))?;
+                    }
                 }
             }
         }
+        self.clicks.fill(false);
         let inspection = pointer
             .filter(|_| self.inspect_enabled)
             .map(|[x, y]| (x.floor() as i32, y.floor() as i32));
@@ -233,6 +315,8 @@ impl App {
             self.performance,
             view.software_adapter,
             camera,
+            self.tool.label(),
+            preview,
         );
         let sprites = self.actor.as_mut().map_or_else(Vec::new, |actor| {
             actor.sprites(&snapshot.frame, displayed_player)
@@ -328,7 +412,17 @@ impl App {
                 displayed_player.map_or(0., |p| p[0]),
                 displayed_player.map_or(0., |p| p[1])
             ));
-            row.push_str(&format!(",{},{}", size.width, size.height));
+            row.push_str(&format!(
+                ",{},{},{}",
+                size.width, size.height, snapshot.frame.facing
+            ));
+            let last_image = snapshot.frame.images.last().copied().unwrap_or([0.; 2]);
+            row.push_str(&format!(
+                ",{},{:.4},{:.4}",
+                snapshot.frame.images.len(),
+                last_image[0],
+                last_image[1]
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -380,6 +474,7 @@ impl ApplicationHandler for App {
             WindowEvent::CursorLeft { .. } => self.cursor = None,
             WindowEvent::Focused(false) => {
                 self.buttons.fill(false);
+                self.clicks.fill(false);
                 self.game_command(GameCommand::Left(false));
                 self.game_command(GameCommand::Right(false));
                 self.game_command(GameCommand::Dig(false));
@@ -393,6 +488,9 @@ impl ApplicationHandler for App {
                 };
                 if let Some(index) = index {
                     self.buttons[index] = state == ElementState::Pressed;
+                    if state == ElementState::Pressed {
+                        self.clicks[index] = true;
+                    }
                 }
             }
             WindowEvent::KeyboardInput { event, .. } if !event.repeat => {
@@ -405,8 +503,16 @@ impl ApplicationHandler for App {
                         self.game_command(GameCommand::Right(down))
                     }
                     PhysicalKey::Code(KeyCode::KeyF) => self.game_command(GameCommand::Dig(down)),
-                    PhysicalKey::Code(KeyCode::Digit1) if down => self.brush = SAND,
-                    PhysicalKey::Code(KeyCode::Digit2) if down => self.brush = ASH,
+                    PhysicalKey::Code(KeyCode::Digit1) if down => {
+                        self.brush = SAND;
+                        self.tool = Tool::Brush;
+                    }
+                    PhysicalKey::Code(KeyCode::Digit2) if down => {
+                        self.brush = ASH;
+                        self.tool = Tool::Brush;
+                    }
+                    PhysicalKey::Code(KeyCode::Digit3) if down => self.tool = Tool::Blocks,
+                    PhysicalKey::Code(KeyCode::Digit4) if down => self.tool = Tool::Images,
                     PhysicalKey::Code(KeyCode::KeyP) if down => {
                         self.game_command(GameCommand::Pause)
                     }

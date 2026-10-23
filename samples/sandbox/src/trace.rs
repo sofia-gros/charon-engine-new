@@ -48,6 +48,17 @@ fn encode(command: &Command) -> String {
             format!("paint:{x}:{y}:{material}")
         }
         Command::Terrain(SandCommand::Clear) => "clear".into(),
+        Command::Terrain(SandCommand::FillRect {
+            x,
+            y,
+            width,
+            height,
+            material,
+        }) => format!("rect:{x}:{y}:{width}:{height}:{material}"),
+        Command::PlaceImage([x, y]) => format!("image:{:08x}:{:08x}", x.to_bits(), y.to_bits()),
+        Command::EraseImage([x, y]) => {
+            format!("erase-image:{:08x}:{:08x}", x.to_bits(), y.to_bits())
+        }
         Command::Left(down) => format!("left:{}", u8::from(*down)),
         Command::Right(down) => format!("right:{}", u8::from(*down)),
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
@@ -69,6 +80,32 @@ fn decode(text: &str) -> Result<Command, String> {
             y: y.parse().map_err(|_| bad())?,
             material: m.parse().map_err(|_| bad())?,
         }),
+        ["rect", x, y, w, h, m] => Command::Terrain(SandCommand::FillRect {
+            x: x.parse().map_err(|_| bad())?,
+            y: y.parse().map_err(|_| bad())?,
+            width: w.parse().map_err(|_| bad())?,
+            height: h.parse().map_err(|_| bad())?,
+            material: m.parse().map_err(|_| bad())?,
+        }),
+        [kind @ ("image" | "erase-image"), x, y] => {
+            let position = [x, y].map(|v| {
+                u32::from_str_radix(v, 16)
+                    .map(f32::from_bits)
+                    .map_err(|_| bad())
+            });
+            let point = [
+                position[0].as_ref().copied().map_err(|_| bad())?,
+                position[1].as_ref().copied().map_err(|_| bad())?,
+            ];
+            if !point.into_iter().all(f32::is_finite) {
+                return Err(bad());
+            }
+            if *kind == "image" {
+                Command::PlaceImage(point)
+            } else {
+                Command::EraseImage(point)
+            }
+        }
         ["clear"] => Command::Terrain(SandCommand::Clear),
         ["jump"] => Command::Jump,
         ["fire"] => Command::Fire,
@@ -126,7 +163,10 @@ pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
             fields[2].split(';').map(decode).collect::<Result<_, _>>()?
         };
         for command in &commands {
-            if let Command::Terrain(SandCommand::Paint { material, .. }) = command {
+            if let Command::Terrain(
+                SandCommand::Paint { material, .. } | SandCommand::FillRect { material, .. },
+            ) = command
+            {
                 if !game.has_material(*material) || legacy && *material > 2 {
                     return Err(format!("unknown material {material} at tick {ticks}"));
                 }
@@ -164,6 +204,14 @@ mod tests {
                 38 => vec![Command::Jump],
                 40 => vec![Command::Step, Command::Step],
                 45 => vec![Command::Pause],
+                52 => vec![Command::PlaceImage([45.25, 30.75])],
+                53 => vec![Command::Terrain(SandCommand::FillRect {
+                    x: 80,
+                    y: 32,
+                    width: 8,
+                    height: 8,
+                    material: 2,
+                })],
                 54 => vec![Command::Terrain(SandCommand::Paint {
                     x: 100,
                     y: 20,

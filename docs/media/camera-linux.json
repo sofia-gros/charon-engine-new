@@ -1,33 +1,31 @@
 {
-  "source_sha256": "55b506721ce761f7a7ceb5c237e1df7f921edd6b04d92043ce8d7bcf07f84120",
+  "source_sha256": "575f45d6cef02598a102bad5dae1732c9a14cd72402443e90c31e8a1cb3e48cd",
   "sample": "camera",
-  "base_revision": "e68a3bc6fc002574ece7c5438f6ec06c9dcc6c4c",
+  "base_revision": "855425c6580a21e5013fe37ebb580b9547457395",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.997,
+  "observed_capture_fps": 8.003,
   "gif_encoded_frames": 111,
   "draw_submission_fps_range": [
     3.54,
-    67.25
+    76.5
   ],
   "simulation_hz_range": [
     0.0,
-    78.73
+    76.63
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 112,
-  "gif_duration_ms": 13990,
-  "source_size": [
-    1920,
-    1080
-  ],
+  "gif_duration_ms": 14000,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
     960,
     540
   ],
-  "replay": "replay_ticks=857 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=860 checks=terrain,player,input_state workers=1",
   "checks": [
     "camera follow",
     "zoom",
@@ -35,8 +33,11 @@
     "mouse paint/inspection in world coordinates",
     "interpolated player presentation",
     "exact pause/step/reset positions",
+    "facing reset",
+    "client-only capture during resize",
     "authoritative replay with 1 worker",
     "Escape shutdown",
+    "no black desktop margin at client corners",
     "PNG+JSON actor sprite rendered through shared GPU pipeline"
   ]
 }
