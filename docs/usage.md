@@ -52,7 +52,7 @@ A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。Qで照準�
 
 ## 世界規模の基準
 
-探索世界はNoitaの規模・座標構成を基準にする。公開されている[Noita-mapcapの範囲定義](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/AREAS.md)では、通常の新規ゲームの基本配置は35,840×24,576ワールドピクセル、空・地下を含む撮影範囲は35,840×73,728。左右の平行世界は35,840間隔で配置される。[ツールのコード](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/files/config.lua)は512単位で範囲を計算している。撮影範囲は世界全体の固定上限ではなく、これだけでNoita内部のシミュレーション方式や正確な読込半径を確認したことにはならない。
+探索世界はNoitaの規模・座標構成を基準にする。公開されている[Noita-mapcapの範囲定義](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/AREAS.md)では、通常の新規ゲームの基本配置は35,840×24,576ワールドピクセル、空・地下を含む撮影範囲は35,840×73,728。左右の平行世界は35,840間隔で配置される。[ツールのコード](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/files/config.lua)は512単位で範囲を計算している。撮影範囲は世界全体の固定上限ではなく、512はこのツールがバイオーム範囲を計算する単位で、Noita内部のシミュレーション区画/保存区画や正確な読込半径まで確認したことにはならない。
 
 `charon-world`は、ゲームが指定した生成関数とチャンク保存をつなぐ部品。全世界の配列を確保せず、読み込む数とIO待ち件数を制限する。生成/ディスク処理は専用スレッドで実行し、編集済みデータは保存成功まで退避できない。上の探索例へ接続し、領域切替時の位置/セル/更新時計の保持を検証した。GPU流体や全ゲーム状態の退避/復元は未接続。
 
