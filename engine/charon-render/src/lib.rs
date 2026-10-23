@@ -1,7 +1,10 @@
 mod debug_text;
+mod indexed;
 mod sprites;
+pub use charon_image::IndexedImage;
 pub use charon_image::TiledImage;
 pub use debug_text::{append_debug_text, append_performance_overlay, DebugPerformance};
+pub use indexed::TileAppearance;
 pub use sprites::{Sprite, SpriteTexture};
 use std::sync::Arc;
 use winit::{dpi::PhysicalSize, event_loop::ActiveEventLoop, window::Window};
@@ -66,6 +69,9 @@ pub struct Gpu {
     pub queue: wgpu::Queue,
     pipeline: wgpu::RenderPipeline,
     sprites: sprites::SpriteLayer,
+    indexed: Option<indexed::IndexedLayer>,
+    indexed_active: bool,
+    format: wgpu::TextureFormat,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     uploaded_tiles: Option<TiledImage>,
@@ -186,6 +192,9 @@ impl Gpu {
         let sprites = sprites::SpriteLayer::new(&device, format);
         Ok(Self {
             sprites,
+            indexed: None,
+            indexed_active: false,
+            format,
             device,
             queue,
             pipeline,
@@ -205,6 +214,7 @@ impl Gpu {
     }
 
     pub fn upload(&mut self, frame: &ImageView<'_>) {
+        self.indexed_active = false;
         assert_eq!(
             (frame.width, frame.height),
             (
@@ -229,6 +239,7 @@ impl Gpu {
     /// Compare against the last uploaded image, not the preceding simulation tick.
     /// Retaining handles prevents lost updates when the consumer skips snapshots.
     pub fn upload_tiled(&mut self, image: &TiledImage) -> usize {
+        self.indexed_active = false;
         assert_eq!(
             (image.width(), image.height()),
             (
@@ -272,6 +283,25 @@ impl Gpu {
             self.uploaded_tiles = Some(image.clone());
         }
         bytes
+    }
+
+    pub fn upload_indexed(
+        &mut self,
+        image: &IndexedImage,
+        looks: &[TileAppearance],
+        atlas: &Arc<charon_assets::Texture>,
+    ) -> Result<[usize; 3]> {
+        let layer = self.indexed.get_or_insert_with(|| {
+            indexed::IndexedLayer::new(
+                &self.device,
+                self.format,
+                self.texture.width(),
+                self.texture.height(),
+            )
+        });
+        let bytes = layer.upload(&self.device, &self.queue, image, looks, atlas)?;
+        self.indexed_active = true;
+        Ok(bytes)
     }
 
     fn set_overlays(&mut self, rectangles: &[OverlayRect]) -> usize {
@@ -328,9 +358,16 @@ impl Gpu {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        pass.set_pipeline(&self.pipeline);
-        pass.set_bind_group(0, &self.bind, &[]);
-        pass.draw(0..3, 0..1);
+        if self.indexed_active {
+            self.indexed
+                .as_ref()
+                .expect("uploaded indexed layer")
+                .draw(&mut pass);
+        } else {
+            pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.bind, &[]);
+            pass.draw(0..3, 0..1);
+        }
         self.sprites.draw(&mut pass);
         if self.overlay_vertices > 0 {
             pass.set_pipeline(&self.overlay_pipeline);
@@ -432,6 +469,38 @@ impl Gpu {
             image.height() as u32,
         )?;
         Ok(())
+    }
+
+    pub fn smoke_indexed(
+        &mut self,
+        image: &IndexedImage,
+        looks: &[TileAppearance],
+        atlas: &Arc<charon_assets::Texture>,
+    ) -> Result<[usize; 3]> {
+        let bytes = self.upload_indexed(image, looks, atlas)?;
+        let mut rgba = Vec::with_capacity(image.width() * image.height() * 4);
+        for (index, id) in image.to_bytes().into_iter().enumerate() {
+            let look = looks[id as usize];
+            let mut color = look.color;
+            if let Some([x, y, w, h]) = look.source {
+                let px = index % image.width() % w as usize + x as usize;
+                let py = index / image.width() % h as usize + y as usize;
+                let texel = &atlas.rgba()[(py * atlas.width() as usize + px) * 4..][..4];
+                for channel in 0..3 {
+                    color[channel] = ((u32::from(texel[channel]) * u32::from(texel[3])
+                        + u32::from(color[channel]) * (255 - u32::from(texel[3]))
+                        + 127)
+                        / 255) as u8;
+                }
+            }
+            rgba.extend_from_slice(&color);
+        }
+        self.verify(&ImageView {
+            width: image.width(),
+            height: image.height(),
+            rgba: &rgba,
+        })?;
+        Ok(bytes)
     }
 
     fn verify(&self, frame: &ImageView<'_>) -> Result<()> {
@@ -599,6 +668,24 @@ impl WindowRenderer {
     ) -> Result<Option<RenderStats>> {
         self.present_image(Some(Upload::Tiled(image)), overlays, sprites)
     }
+    pub fn present_indexed_with_sprites(
+        &mut self,
+        image: &IndexedImage,
+        looks: &[TileAppearance],
+        atlas: &Arc<charon_assets::Texture>,
+        sprites: &[Sprite<'_>],
+        overlays: &[OverlayRect],
+    ) -> Result<Option<RenderStats>> {
+        self.present_image(
+            Some(Upload::Indexed {
+                image,
+                looks,
+                atlas,
+            }),
+            overlays,
+            sprites,
+        )
+    }
     fn present_image(
         &mut self,
         image: Option<Upload<'_>>,
@@ -631,12 +718,24 @@ impl WindowRenderer {
         };
         let acquire_ms = acquire_start.elapsed().as_secs_f64() * 1000.0;
         let upload_start = std::time::Instant::now();
+        let mut appearance_upload_bytes = 0;
+        let mut atlas_upload_bytes = 0;
         let upload_bytes = match image {
             Some(Upload::Full(image)) => {
                 self.gpu.upload(&image);
                 image.rgba.len()
             }
             Some(Upload::Tiled(image)) => self.gpu.upload_tiled(image),
+            Some(Upload::Indexed {
+                image,
+                looks,
+                atlas,
+            }) => {
+                let [cells, appearance, atlas] = self.gpu.upload_indexed(image, looks, atlas)?;
+                appearance_upload_bytes = appearance;
+                atlas_upload_bytes = atlas;
+                cells
+            }
             None => 0,
         };
         let overlay_upload_bytes = self.gpu.set_overlays(overlays);
@@ -662,6 +761,8 @@ impl WindowRenderer {
         Ok(Some(RenderStats {
             upload_enqueue_ms,
             upload_bytes,
+            appearance_upload_bytes,
+            atlas_upload_bytes,
             overlay_upload_bytes,
             sprite_upload_bytes,
             acquire_ms,
@@ -673,6 +774,8 @@ impl WindowRenderer {
 pub struct RenderStats {
     pub upload_enqueue_ms: f64,
     pub upload_bytes: usize,
+    pub appearance_upload_bytes: usize,
+    pub atlas_upload_bytes: usize,
     pub overlay_upload_bytes: usize,
     pub sprite_upload_bytes: usize,
     pub acquire_ms: f64,
@@ -682,4 +785,9 @@ pub struct RenderStats {
 enum Upload<'a> {
     Full(ImageView<'a>),
     Tiled(&'a TiledImage),
+    Indexed {
+        image: &'a IndexedImage,
+        looks: &'a [TileAppearance],
+        atlas: &'a Arc<charon_assets::Texture>,
+    },
 }

@@ -229,6 +229,7 @@ impl Game {
             // the physics counters from the same step in the newly published frame.
             let edited = self.world.edit(destruction);
             frame.image = edited.image;
+            frame.indices = edited.indices;
             frame.sand = edited.sand;
             frame.converted_cells += edited.converted_cells;
             frame.update_ms += edited.update_ms;

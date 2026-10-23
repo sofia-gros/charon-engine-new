@@ -1,6 +1,7 @@
 mod actor_view;
 mod debug_view;
 mod game;
+mod material_view;
 mod materials;
 mod smoke;
 mod trace;
@@ -90,6 +91,7 @@ struct App {
     options: Options,
     runtime: Runtime<Game>,
     actor: Option<actor_view::ActorVisual>,
+    material_visual: material_view::MaterialVisual,
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
@@ -119,7 +121,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes")?;
         }
         let now = Instant::now();
         let actor = if options.play {
@@ -128,6 +130,7 @@ impl App {
             None
         };
         Ok(Self {
+            material_visual: material_view::MaterialVisual::new()?,
             actor,
             options,
             runtime,
@@ -210,8 +213,14 @@ impl App {
             .actor
             .as_mut()
             .map_or_else(Vec::new, |actor| actor.sprites(&snapshot.frame));
-        let Some(render) =
-            view.present_tiled_with_sprites(&snapshot.frame.terrain.image, &sprites, &overlays)?
+        self.material_visual.update(self.started.elapsed());
+        let Some(render) = view.present_indexed_with_sprites(
+            &snapshot.frame.terrain.indices,
+            self.material_visual.looks(),
+            self.material_visual.texture(),
+            &sprites,
+            &overlays,
+        )?
         else {
             return Ok(());
         };
@@ -280,7 +289,12 @@ impl App {
                 snapshot.frame.sparks.len(),
                 snapshot.frame.impacts
             ));
-            row.push_str(&format!(",{}", render.sprite_upload_bytes));
+            row.push_str(&format!(
+                ",{},{},{}",
+                render.sprite_upload_bytes,
+                render.appearance_upload_bytes,
+                render.atlas_upload_bytes
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;

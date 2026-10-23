@@ -39,6 +39,40 @@ pub fn verify_updates(gpu: &mut Gpu, width: usize, height: usize) -> Result<()> 
     );
     gpu.smoke_overlay(&reset_idle.image)?;
     gpu.smoke_sprites(&reset_idle.image)?;
+    let atlas = std::sync::Arc::new(charon_assets::Texture::from_rgba(
+        2,
+        2,
+        vec![
+            255, 0, 0, 255, 0, 255, 0, 255, 0, 0, 255, 255, 255, 255, 255, 255,
+        ],
+    )?);
+    let mut looks = vec![
+        charon_render::TileAppearance {
+            color: [16, 23, 36, 255],
+            source: None
+        };
+        256
+    ];
+    looks[WALL as usize].source = Some([0, 0, 2, 2]);
+    let uploaded = gpu.smoke_indexed(&reset_idle.indices, &looks, &atlas)?;
+    assert_eq!(uploaded, [width * height, 8192, 16]);
+    assert_eq!(
+        gpu.smoke_indexed(&reset_idle.indices, &looks, &atlas)?,
+        [0; 3]
+    );
+    // Animate the surface of sleeping terrain without editing or uploading cells.
+    looks[WALL as usize].source = Some([1, 0, 1, 2]);
+    assert_eq!(
+        gpu.smoke_indexed(&reset_idle.indices, &looks, &atlas)?,
+        [0, 8192, 0]
+    );
+    world.step(vec![Command::Paint {
+        x: 4,
+        y: 4,
+        material: WALL,
+    }]);
+    let skipped = world.step(vec![]);
+    assert!(gpu.smoke_indexed(&skipped.indices, &looks, &atlas)?[0] > 0);
     println!("partial_upload_checks=idle,skipped_snapshots,edge_tiles,clear");
     Ok(())
 }

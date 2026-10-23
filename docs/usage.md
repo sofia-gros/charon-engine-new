@@ -46,7 +46,7 @@ PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョ�
 
 [samples/sandbox/src/materials.rs](../samples/sandbox/src/materials.rs)で素材のキー・単色表示・動き・足場判定・弾の遮蔽を定義し、`SandWorld::with_materials` / `from_material_cells`へ渡す。`demo.ash`は落下・堆積し、足場にならず弾は遮る粉体。素材追加にCoreや砂plugin本体の編集は不要。表は起動時に検証され、世界作成後は不変。IDは表内の位置で、現在の上限256種を超える登録、重複キー、不正な境界はエラーになる。`Frame.sand`とCSVのsand列は互換名で、現在は全粉体のセル数を表す。
 
-現在の動きは空・静止・粉体。独自の液体/反応ルールの登録や汎用plugin依存解決はまだ実装していない。単色表示は最小実装で、PNG/JPG・PNG+JSONシートとアニメーションは共通アセット/描画機能として物理から分離して追加する。見た目だけのアニメーションは物質の休止を解除しない設計にする。
+現在の動きは空・静止・粉体。独自の液体/反応ルールの登録や汎用plugin依存解決はまだ実装していない。見た目は別の[material_view.rs](../samples/sandbox/src/material_view.rs)で素材キーへ割り当てる。壁の繰り返し画像と灰の3フレームアニメーションを共通描画基盤へ渡し、物質の休止/停止を解除せずに表示を更新する。
 
 ## Platformer
 
@@ -79,7 +79,9 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 
 `Clip::new(atlas, &["walk0", "walk1"], true)`のようにゲーム側で待機/歩行/走行/攻撃などを組み立てる。複数クリップで同じ画像を共有し、`frame_at(Duration)`で表示フレームを得る。末尾で止まるクリップも作れる。時刻は呼出側から渡すため、物理時計と見た目の時計を分離できる。読込は開始前に行い、フレームごとにファイルを開かない。
 
-[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。素材への画像/アニメーション適用、回転/トリミング取込、補間・カメラ・汎用UIは今後の工程。
+[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。回転/トリミング取込、補間・カメラ・汎用UIは今後の工程。
+
+素材の画像には`present_indexed_with_sprites`を使う。1セル1バイトの素材IDを不変タイルで渡し、GPUが素材の色またはアトラス矩形を選ぶ。現在は共有アトラス1枚・256項目の表示表・画像の繰り返し配置に対応し、透過部分には素材の単色を使う。アニメーションは表示表だけを更新し、静止セルや画像本体を再転送しない。`upload_bytes`はセル、`appearance_upload_bytes`は表示表、`atlas_upload_bytes`は画像本体。CPU側には画素照合用のRGBAスナップショットも保持している。大量画像の自動パックや多アトラスの管理は未実装。
 
 ## 弾と破壊
 

@@ -385,6 +385,14 @@ EndSection
             for _, path in frames:
                 with Image.open(path) as image:
                     images.append(image.convert("RGB"))
+            if sample == "sandbox":
+                paused = [r for r in rows if r["paused"] == "true" and r["material"] == "3"]
+                assert len({r["simulation_tick"] for r in paused}) == 1, "physics advanced during texture animation"
+                patches = {image.crop((494,114,508,128)).tobytes() for (timestamp,_),image in zip(frames,images) if 7.2 <= timestamp-start <= 7.95}
+                assert len(patches) >= 2, "material texture did not animate while physics was paused"
+                checks["paused_simulation_tick"] = int(paused[0]["simulation_tick"])
+                checks["texture_frames_while_paused"] = len(patches)
+                checks["checks"].append("material texture animation while physics tick stays fixed")
             if sample in ("platformer", "debugger", "projectiles"):
                 assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
                 assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"

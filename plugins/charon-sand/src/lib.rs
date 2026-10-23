@@ -1,6 +1,6 @@
 //! Sand plugin: immutable reads, parallel proposals, deterministic conflict commit.
 
-use charon_image::TiledImage;
+use charon_image::{IndexedImage, TiledImage};
 use charon_runtime::Simulation;
 use rayon::prelude::*;
 use std::{sync::Arc, time::Instant};
@@ -23,6 +23,7 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub image: TiledImage,
+    pub indices: IndexedImage,
     pub materials: Arc<Materials>,
     pub converted_cells: usize,
     /// Total powder cells, including custom powders (legacy field name).
@@ -42,6 +43,7 @@ pub struct SandWorld {
     materials: Arc<Materials>,
     sand: usize,
     image: TiledImage,
+    indices: IndexedImage,
     dirty: Vec<bool>,
     awake: Vec<bool>,
     pool: rayon::ThreadPool,
@@ -149,6 +151,7 @@ impl SandWorld {
             materials: Arc::new(materials),
             sand: 0,
             image: TiledImage::new(width, height, TILE),
+            indices: IndexedImage::new(width, height, TILE),
             dirty: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
             awake: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
             pool,
@@ -305,8 +308,10 @@ impl SandWorld {
             }
             let rect = self.image.rect(tile);
             let mut rgba = Vec::with_capacity(rect.width * rect.height * 4);
+            let mut indices = Vec::with_capacity(rect.width * rect.height);
             for y in rect.y..rect.y + rect.height {
                 for x in rect.x..rect.x + rect.width {
+                    indices.push(self.cells[y * self.width + x]);
                     rgba.extend_from_slice(
                         &self
                             .materials
@@ -318,12 +323,14 @@ impl SandWorld {
             }
             converted_cells += rect.width * rect.height;
             self.image.replace(tile, rgba);
+            self.indices.replace(tile, indices);
             self.dirty[tile] = false;
         }
         Frame {
             width: self.width,
             height: self.height,
             image: self.image.clone(),
+            indices: self.indices.clone(),
             materials: Arc::clone(&self.materials),
             converted_cells,
             sand: self.sand,
@@ -365,6 +372,7 @@ mod tests {
             .flat_map(|&cell| world.materials.get(cell).unwrap().color)
             .collect();
         assert_eq!(frame.image.to_rgba(), expected);
+        assert_eq!(frame.indices.to_bytes(), world.cells);
         assert_eq!(
             frame.sand,
             world.cells.iter().filter(|&&cell| cell == SAND).count()
@@ -453,6 +461,7 @@ mod tests {
             .flat_map(|&id| world.materials.get(id).unwrap().color)
             .collect();
         assert_eq!(frame.image.to_rgba(), pixels);
+        assert_eq!(frame.indices.to_bytes(), world.cells);
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! Immutable RGBA tiles shared by producers and consumers, without GPU dependencies.
+//! Immutable byte-plane tiles shared by producers and consumers, without GPU dependencies.
 use std::sync::Arc;
 
 #[derive(Clone, Copy, Debug)]
@@ -12,18 +12,21 @@ pub struct Rect {
 /// Cloning copies tile handles, never pixel buffers. Replacing a tile preserves
 /// all previously published images. Consumers may safely skip intermediate images.
 #[derive(Clone)]
-pub struct TiledImage {
+pub struct TiledPlane<const CHANNELS: usize> {
     width: usize,
     height: usize,
     tile_size: usize,
     tiles: Vec<Arc<[u8]>>,
 }
-impl TiledImage {
+pub type TiledImage = TiledPlane<4>;
+pub type IndexedImage = TiledPlane<1>;
+
+impl<const CHANNELS: usize> TiledPlane<CHANNELS> {
     pub fn new(width: usize, height: usize, tile_size: usize) -> Self {
-        assert!(width > 0 && height > 0 && tile_size > 0);
+        assert!(width > 0 && height > 0 && tile_size > 0 && CHANNELS > 0);
         width
             .checked_mul(height)
-            .and_then(|v| v.checked_mul(4))
+            .and_then(|v| v.checked_mul(CHANNELS))
             .expect("image too large");
         let mut image = Self {
             width,
@@ -35,7 +38,7 @@ impl TiledImage {
             let rect = image.rect(index);
             image
                 .tiles
-                .push(vec![0; rect.width * rect.height * 4].into());
+                .push(vec![0; rect.width * rect.height * CHANNELS].into());
         }
         image
     }
@@ -49,7 +52,7 @@ impl TiledImage {
         self.tiles.len()
     }
     pub fn byte_len(&self) -> usize {
-        self.width * self.height * 4
+        self.width * self.height * CHANNELS
     }
     pub fn rect(&self, index: usize) -> Rect {
         assert!(index < self.width.div_ceil(self.tile_size) * self.height.div_ceil(self.tile_size));
@@ -70,7 +73,7 @@ impl TiledImage {
     }
     pub fn replace(&mut self, index: usize, rgba: Vec<u8>) {
         let rect = self.rect(index);
-        assert_eq!(rgba.len(), rect.width * rect.height * 4);
+        assert_eq!(rgba.len(), rect.width * rect.height * CHANNELS);
         if self.pixels(index) != rgba {
             self.tiles[index] = rgba.into();
         }
@@ -83,17 +86,23 @@ impl TiledImage {
             && Arc::ptr_eq(&self.tiles[index], &other.tiles[index])
     }
     /// For export/readback validation only; normal presentation does not flatten.
-    pub fn to_rgba(&self) -> Vec<u8> {
+    pub fn to_bytes(&self) -> Vec<u8> {
         let mut pixels = vec![0; self.byte_len()];
         for index in 0..self.tile_count() {
             let rect = self.rect(index);
             for row in 0..rect.height {
-                let target = ((rect.y + row) * self.width + rect.x) * 4;
-                let start = row * rect.width * 4;
-                pixels[target..target + rect.width * 4]
-                    .copy_from_slice(&self.pixels(index)[start..start + rect.width * 4]);
+                let target = ((rect.y + row) * self.width + rect.x) * CHANNELS;
+                let start = row * rect.width * CHANNELS;
+                pixels[target..target + rect.width * CHANNELS]
+                    .copy_from_slice(&self.pixels(index)[start..start + rect.width * CHANNELS]);
             }
         }
         pixels
+    }
+}
+
+impl TiledPlane<4> {
+    pub fn to_rgba(&self) -> Vec<u8> {
+        self.to_bytes()
     }
 }
