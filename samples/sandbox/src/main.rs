@@ -565,7 +565,10 @@ impl ApplicationHandler for App {
     }
     fn window_event(&mut self, event_loop: &ActiveEventLoop, _id: WindowId, event: WindowEvent) {
         match event {
-            WindowEvent::CloseRequested => event_loop.exit(),
+            WindowEvent::CloseRequested => {
+                self.runtime.request_stop();
+                event_loop.exit();
+            }
             WindowEvent::Resized(size) => {
                 if let Some(view) = &mut self.view {
                     view.resize(size);
@@ -666,7 +669,10 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::KeyB) if down => {
                         self.game_command(GameCommand::ToggleSand)
                     }
-                    PhysicalKey::Code(KeyCode::Escape) if down => event_loop.exit(),
+                    PhysicalKey::Code(KeyCode::Escape) if down => {
+                        self.runtime.request_stop();
+                        event_loop.exit();
+                    }
                     PhysicalKey::Code(KeyCode::KeyR) if down => self.submit(Command::Clear),
                     _ => {}
                 }
@@ -686,6 +692,7 @@ impl ApplicationHandler for App {
             .seconds
             .is_some_and(|seconds| self.started.elapsed() >= Duration::from_secs(seconds))
         {
+            self.runtime.request_stop();
             event_loop.exit();
             return;
         }

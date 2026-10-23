@@ -75,6 +75,9 @@ impl<S: Simulation> Runtime<S> {
                     // No input lock is held while the simulation does its work.
                     let mut commands: Vec<_> = {
                         let mut pending = inputs.lock().expect("input lock poisoned");
+                        if !alive.load(Ordering::Acquire) {
+                            break;
+                        }
                         receiver
                             .try_iter()
                             .take(128)
@@ -112,6 +115,9 @@ impl<S: Simulation> Runtime<S> {
 
     pub fn submit(&self, command: S::Command) -> Result<(), TrySendError<S::Command>> {
         let mut pending = self.pending.lock().expect("input lock poisoned");
+        if !self.running.load(Ordering::Acquire) || self.is_finished() {
+            return Err(TrySendError::Disconnected(command));
+        }
         let sequence = pending.sequence;
         pending.sequence += 1;
         self.sender
@@ -129,7 +135,7 @@ impl<S: Simulation> Runtime<S> {
     /// Commands apply only after the current simulation step returns.
     pub fn submit_control(&self, command: S::Command) -> Result<(), TrySendError<S::Command>> {
         let mut pending = self.pending.lock().expect("input lock poisoned");
-        if self.is_finished() {
+        if !self.running.load(Ordering::Acquire) || self.is_finished() {
             return Err(TrySendError::Disconnected(command));
         }
         if pending.controls.len() == 32 {
@@ -152,13 +158,24 @@ impl<S: Simulation> Runtime<S> {
         command: S::Command,
     ) -> Result<(), TrySendError<S::Command>> {
         let mut pending = self.pending.lock().expect("input lock poisoned");
-        if self.is_finished() {
+        if !self.running.load(Ordering::Acquire) || self.is_finished() {
             return Err(TrySendError::Disconnected(command));
         }
         let sequence = pending.sequence;
         pending.sequence += 1;
         pending.states.insert(slot, (sequence, command));
         Ok(())
+    }
+
+    /// Request shutdown without waiting for the in-flight step. No new inputs are
+    /// accepted. Queued inputs are abandoned at shutdown; the current step may
+    /// finish and publish. Drop still joins, so plugin state is never detached.
+    pub fn request_stop(&self) {
+        let _pending = self.pending.lock().expect("input lock poisoned");
+        self.running.store(false, Ordering::Release);
+        if let Some(thread) = &self.thread {
+            thread.thread().unpark();
+        }
     }
 
     pub fn latest(&self) -> Option<Arc<Snapshot<S::Frame>>> {
@@ -172,7 +189,7 @@ impl<S: Simulation> Runtime<S> {
 
 impl<S: Simulation> Drop for Runtime<S> {
     fn drop(&mut self) {
-        self.running.store(false, Ordering::Release);
+        self.request_stop();
         if let Some(thread) = self.thread.take() {
             thread.thread().unpark();
             let _ = thread.join();
@@ -321,6 +338,130 @@ mod tests {
                 Instant::now() < deadline,
                 "accepted inputs were not consumed"
             );
+            thread::sleep(Duration::from_millis(1));
+        }
+    }
+    #[test]
+    fn stop_bypasses_full_queues_and_joins_only_the_in_flight_step() {
+        struct Gated {
+            entered: mpsc::SyncSender<()>,
+            resume: mpsc::Receiver<()>,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+        impl Simulation for Gated {
+            type Command = u32;
+            type Frame = ();
+            fn step(&mut self, _: Vec<u32>) {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                self.entered.send(()).unwrap();
+                self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+            }
+        }
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let runtime = Runtime::start(Gated {
+            entered: entered_tx,
+            resume: resume_rx,
+            calls: calls.clone(),
+        })
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        for i in 0..128 {
+            runtime.submit(i).unwrap();
+        }
+        for i in 0..32 {
+            runtime.submit_control(i).unwrap();
+        }
+        runtime.request_stop();
+        assert!(
+            !runtime.is_finished(),
+            "stop must not detach or pretend the step finished"
+        );
+        assert!(matches!(
+            runtime.submit(999),
+            Err(TrySendError::Disconnected(999))
+        ));
+        assert!(matches!(
+            runtime.submit_state(0, 999),
+            Err(TrySendError::Disconnected(999))
+        ));
+        assert!(matches!(
+            runtime.submit_control(999),
+            Err(TrySendError::Disconnected(999))
+        ));
+        let (done_tx, done) = mpsc::sync_channel(1);
+        let join = thread::spawn(move || {
+            drop(runtime);
+            done_tx.send(()).unwrap();
+        });
+        assert!(matches!(
+            done.recv_timeout(Duration::from_millis(20)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        resume.send(()).unwrap();
+        done.recv_timeout(Duration::from_secs(2)).unwrap();
+        join.join().unwrap();
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "shutdown drained more work"
+        );
+    }
+
+    #[test]
+    fn finite_stall_recovers_without_skipping_simulation_ticks() {
+        struct Gated {
+            entered: mpsc::SyncSender<()>,
+            resume: mpsc::Receiver<()>,
+            calls: u64,
+        }
+        impl Simulation for Gated {
+            type Command = u64;
+            type Frame = u64;
+            fn step(&mut self, _: Vec<u64>) -> u64 {
+                self.calls += 1;
+                if self.calls <= 3 {
+                    self.entered.send(()).unwrap();
+                    self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                self.calls
+            }
+        }
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let runtime = Runtime::start(Gated {
+            entered: entered_tx,
+            resume: resume_rx,
+            calls: 0,
+        })
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        // Deliberately stall longer than three fixed periods, once.
+        assert!(matches!(
+            entered.recv_timeout(Duration::from_millis(60)),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        ));
+        resume.send(()).unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let first = runtime.latest().unwrap();
+        assert_eq!((first.tick, first.frame), (1, 1));
+        assert!(first.work_ms >= 50.);
+        resume.send(()).unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        let late = runtime.latest().unwrap();
+        assert_eq!((late.tick, late.frame), (2, 2));
+        assert!(late.late_ms >= 30., "overload must remain visible");
+        resume.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(snapshot) = runtime.latest() {
+                assert_eq!(snapshot.tick, snapshot.frame, "physics ticks were skipped");
+                if snapshot.tick >= 8 && snapshot.late_ms < 20. {
+                    break;
+                }
+            }
+            assert!(Instant::now() < deadline, "finite backlog did not recover");
             thread::sleep(Duration::from_millis(1));
         }
     }
