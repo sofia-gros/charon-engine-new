@@ -22,6 +22,19 @@ pub enum Command {
     Step,
     Inspect(Option<(i32, i32)>),
 }
+/// Shared by keyboard and focus-loss handling in the window client.
+pub fn submit_input<S: Simulation<Command = Command>>(
+    runtime: &charon_runtime::Runtime<S>,
+    command: Command,
+) -> Result<(), std::sync::mpsc::TrySendError<Command>> {
+    match command {
+        Command::Left(_) => runtime.submit_state(0, command),
+        Command::Right(_) => runtime.submit_state(1, command),
+        Command::Dig(_) => runtime.submit_state(2, command),
+        _ => runtime.submit(command),
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Inspection {
     pub x: i32,
@@ -928,5 +941,105 @@ mod tests {
         game.step(vec![Command::Right(false)]);
         let x = game.step(vec![]).player.unwrap().x();
         assert_eq!(game.step(vec![]).player.unwrap().x(), x);
+    }
+
+    #[test]
+    fn held_input_releases_survive_a_full_queue_after_a_stalled_step() {
+        use std::{
+            sync::mpsc,
+            time::{Duration, Instant},
+        };
+        struct StalledGame {
+            game: Game,
+            entered: mpsc::SyncSender<()>,
+            resume: mpsc::Receiver<()>,
+            initial: bool,
+            commands: usize,
+        }
+        impl Simulation for StalledGame {
+            type Command = Command;
+            type Frame = ([bool; 3], usize);
+            fn step(&mut self, commands: Vec<Command>) -> Self::Frame {
+                if self.initial {
+                    self.initial = false;
+                    self.entered.send(()).unwrap();
+                    self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                self.commands += commands.len();
+                self.game.step(commands);
+                (
+                    [self.game.left, self.game.right, self.game.dig],
+                    self.commands,
+                )
+            }
+        }
+        let mut game = Game::new(160, 120, 1, true).unwrap();
+        game.step(vec![
+            Command::Left(true),
+            Command::Right(true),
+            Command::Dig(true),
+        ]);
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let runtime = charon_runtime::Runtime::start(StalledGame {
+            game,
+            entered: entered_tx,
+            resume: resume_rx,
+            initial: true,
+            commands: 0,
+        })
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        for _ in 0..128 {
+            runtime.submit(Command::Inspect(None)).unwrap();
+        }
+        assert!(matches!(
+            runtime.submit(Command::Inspect(None)),
+            Err(mpsc::TrySendError::Full(_))
+        ));
+        // Exercise the same input route as keyboard/focus-loss handling while
+        // a long step prevents the worker draining its ordinary queue.
+        for command in [
+            Command::Left(false),
+            Command::Right(false),
+            Command::Dig(false),
+        ] {
+            let _ = submit_input(&runtime, command);
+        }
+        resume.send(()).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(snapshot) = runtime.latest() {
+                if snapshot.frame.1 >= 128 {
+                    assert_eq!(
+                        snapshot.frame.0, [false; 3],
+                        "a rejected key release left controls held"
+                    );
+                    break;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "worker did not recover from the stalled step"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        for down in [true, false] {
+            submit_input(&runtime, Command::Right(down)).unwrap();
+            let deadline = Instant::now() + Duration::from_secs(2);
+            loop {
+                if runtime
+                    .latest()
+                    .is_some_and(|snapshot| snapshot.frame.0 == [false, down, false])
+                {
+                    break;
+                }
+                assert!(
+                    Instant::now() < deadline,
+                    "controls did not resume after saturation"
+                );
+                std::thread::sleep(Duration::from_millis(1));
+            }
+        }
     }
 }

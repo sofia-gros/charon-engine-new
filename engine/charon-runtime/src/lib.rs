@@ -1,5 +1,6 @@
 //! Fixed-rate execution of a simulation plugin, independent of rendering and sand.
 
+use std::collections::BTreeMap;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     mpsc::{self, SyncSender, TrySendError},
@@ -26,10 +27,16 @@ pub struct Snapshot<F> {
 
 type FrameMailbox<F> = Arc<Mutex<Option<Arc<Snapshot<F>>>>>;
 
+struct PendingInput<C> {
+    sequence: u64,
+    states: BTreeMap<u8, (u64, C)>,
+}
+
 /// A bounded command queue and a latest-completed-frame mailbox.
 /// Dropping the runtime stops and joins its simulation thread.
 pub struct Runtime<S: Simulation> {
-    sender: SyncSender<S::Command>,
+    sender: SyncSender<(u64, S::Command)>,
+    pending: Arc<Mutex<PendingInput<S::Command>>>,
     latest: FrameMailbox<S::Frame>,
     running: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
@@ -38,6 +45,11 @@ pub struct Runtime<S: Simulation> {
 impl<S: Simulation> Runtime<S> {
     pub fn start(mut simulation: S) -> std::io::Result<Self> {
         let (sender, receiver) = mpsc::sync_channel(128);
+        let pending = Arc::new(Mutex::new(PendingInput {
+            sequence: 0,
+            states: BTreeMap::new(),
+        }));
+        let inputs = pending.clone();
         let latest = Arc::new(Mutex::new(None));
         let running = Arc::new(AtomicBool::new(true));
         let output = latest.clone();
@@ -56,7 +68,19 @@ impl<S: Simulation> Runtime<S> {
                         continue;
                     }
                     let start = Instant::now();
-                    let frame = simulation.step(receiver.try_iter().take(128).collect());
+                    // Drain both input paths at one boundary. Sequence numbers
+                    // retain ordering between accepted events and latest states.
+                    // No input lock is held while the simulation does its work.
+                    let mut commands: Vec<_> = {
+                        let mut pending = inputs.lock().expect("input lock poisoned");
+                        receiver
+                            .try_iter()
+                            .take(128)
+                            .chain(std::mem::take(&mut pending.states).into_values())
+                            .collect()
+                    };
+                    commands.sort_unstable_by_key(|(sequence, _)| *sequence);
+                    let frame = simulation.step(commands.into_iter().map(|(_, c)| c).collect());
                     let snapshot = Arc::new(Snapshot {
                         tick: tick + 1,
                         work_ms: start.elapsed().as_secs_f64() * 1000.0,
@@ -66,7 +90,8 @@ impl<S: Simulation> Runtime<S> {
                     });
                     *output.lock().expect("snapshot lock poisoned") = Some(snapshot);
                     tick += 1;
-                    // No ticks/commands are discarded. Yield when behind rather than
+                    // No ticks/accepted events are discarded; held states coalesce.
+                    // Yield when behind rather than
                     // starving other threads; lateness remains visible to the client.
                     if start.elapsed() > Duration::from_secs_f64(1.0 / 60.0) {
                         thread::yield_now();
@@ -75,6 +100,7 @@ impl<S: Simulation> Runtime<S> {
             })?;
         Ok(Self {
             sender,
+            pending,
             latest,
             running,
             thread: Some(thread),
@@ -82,7 +108,35 @@ impl<S: Simulation> Runtime<S> {
     }
 
     pub fn submit(&self, command: S::Command) -> Result<(), TrySendError<S::Command>> {
-        self.sender.try_send(command)
+        let mut pending = self.pending.lock().expect("input lock poisoned");
+        let sequence = pending.sequence;
+        pending.sequence += 1;
+        self.sender
+            .try_send((sequence, command))
+            .map_err(|error| match error {
+                TrySendError::Full((_, c)) => TrySendError::Full(c),
+                TrySendError::Disconnected((_, c)) => TrySendError::Disconnected(c),
+            })
+    }
+
+    /// Latest value for one held-input slot, independent of the event queue.
+    /// Up to 256 slots are bounded by u8; newer values replace unconsumed ones.
+    /// Use stable, distinct slots for held states, never for one-shot actions.
+    /// Intermediate values in one slot may be coalesced; accepted events retain
+    /// FIFO order relative to the remaining states. No simulation work is locked.
+    pub fn submit_state(
+        &self,
+        slot: u8,
+        command: S::Command,
+    ) -> Result<(), TrySendError<S::Command>> {
+        let mut pending = self.pending.lock().expect("input lock poisoned");
+        if self.is_finished() {
+            return Err(TrySendError::Disconnected(command));
+        }
+        let sequence = pending.sequence;
+        pending.sequence += 1;
+        pending.states.insert(slot, (sequence, command));
+        Ok(())
     }
 
     pub fn latest(&self) -> Option<Arc<Snapshot<S::Frame>>> {
@@ -181,5 +235,59 @@ mod tests {
         }
         assert_eq!(first.frame, 7, "published snapshot was mutated");
         assert!(first.tick < runtime.latest().unwrap().tick);
+    }
+
+    #[test]
+    fn latest_held_states_stay_bounded_and_ordered_with_a_saturated_event_queue() {
+        struct Recorder {
+            commands: Vec<u32>,
+            gate: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
+        }
+        impl Simulation for Recorder {
+            type Command = u32;
+            type Frame = Vec<u32>;
+            fn step(&mut self, commands: Vec<u32>) -> Vec<u32> {
+                if let Some((entered, resume)) = self.gate.take() {
+                    entered.send(()).unwrap();
+                    resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                self.commands.extend(commands);
+                self.commands.clone()
+            }
+        }
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let runtime = Runtime::start(Recorder {
+            commands: vec![],
+            gate: Some((entered_tx, resume_rx)),
+        })
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        runtime.submit_state(1, 999).unwrap();
+        runtime.submit(0).unwrap();
+        runtime.submit_state(2, 1000).unwrap();
+        for event in 1..128 {
+            runtime.submit(event).unwrap();
+        }
+        assert!(matches!(runtime.submit(128), Err(TrySendError::Full(128))));
+        for value in 2000..12000 {
+            runtime.submit_state(1, value).unwrap();
+        }
+        resume.send(()).unwrap();
+        let expected: Vec<_> = [0, 1000].into_iter().chain(1..128).chain([11999]).collect();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        loop {
+            if let Some(snapshot) = runtime.latest() {
+                if snapshot.frame.len() >= expected.len() {
+                    assert_eq!(snapshot.frame, expected);
+                    break;
+                }
+            }
+            assert!(
+                Instant::now() < deadline,
+                "accepted inputs were not consumed"
+            );
+            thread::sleep(Duration::from_millis(1));
+        }
     }
 }

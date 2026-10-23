@@ -194,7 +194,7 @@ impl App {
         }
     }
     fn game_command(&self, command: GameCommand) {
-        if let Err(error) = self.runtime.submit(command) {
+        if let Err(error) = game::submit_input(&self.runtime, command) {
             eprintln!("Input not applied: {error}");
         }
     }
