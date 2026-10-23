@@ -31,6 +31,7 @@ pub fn submit_input<S: Simulation<Command = Command>>(
         Command::Left(_) => runtime.submit_state(0, command),
         Command::Right(_) => runtime.submit_state(1, command),
         Command::Dig(_) => runtime.submit_state(2, command),
+        Command::Inspect(_) => runtime.submit_state(3, command),
         Command::Pause | Command::Step => runtime.submit_control(command),
         _ => runtime.submit(command),
     }

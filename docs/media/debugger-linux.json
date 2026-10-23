@@ -1,25 +1,25 @@
 {
-  "source_sha256": "50dde765606035bbce333cbe11a6c97169de6378ada56268c10c1223ad8864e9",
+  "source_sha256": "8b19c3968e3ac4b7ccf669f8c23801e7884f8bebb50a5478425724beb5af904a",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "debugger",
-  "base_revision": "5e367b632bf83fb26a51e517c0ed682b21176948",
+  "base_revision": "c420079b4cf07eba5b83e5fab7de0fdbd8497ab9",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.012,
-  "gif_encoded_frames": 109,
+  "observed_capture_fps": 8.017,
+  "gif_encoded_frames": 107,
   "draw_submission_fps_range": [
-    3.08,
-    39.08
+    2.78,
+    40.8
   ],
   "simulation_hz_range": [
     0.0,
-    79.69
+    73.02
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 112,
-  "gif_duration_ms": 13980,
+  "gif_duration_ms": 13960,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -33,12 +33,12 @@
     270
   ],
   "paused_step_ticks": [
-    95,
     96,
     97,
-    98
+    98,
+    99
   ],
-  "replay": "replay_ticks=863 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=864 checks=terrain,player,input_state workers=1",
   "checks": [
     "frozen terrain/actor",
     "display while paused",

@@ -28,6 +28,20 @@ use winit::{
     window::WindowId,
 };
 
+// Full is a recoverable UI condition; disconnection still stops the client.
+fn submit_draw_command<S: charon_runtime::Simulation<Command = GameCommand>>(
+    runtime: &Runtime<S>,
+    command: GameCommand,
+) -> Result<bool> {
+    match runtime.submit(command) {
+        Ok(()) => Ok(true),
+        Err(std::sync::mpsc::TrySendError::Full(_)) => Ok(false),
+        Err(std::sync::mpsc::TrySendError::Disconnected(_)) => {
+            Err("simulation input disconnected".into())
+        }
+    }
+}
+
 #[derive(Clone, Copy)]
 enum Tool {
     Brush,
@@ -133,6 +147,7 @@ struct App {
     zoom: f32,
     inspect_enabled: bool,
     inspected: Option<(i32, i32)>,
+    rejected_edits: u64,
     next_draw: Instant,
     report: Instant,
     started: Instant,
@@ -175,6 +190,7 @@ impl App {
             zoom: 1.,
             inspect_enabled: false,
             inspected: None,
+            rejected_edits: 0,
             next_draw: now,
             report: now,
             started: now,
@@ -279,36 +295,40 @@ impl App {
                                     material,
                                 }
                             };
-                            self.runtime
-                                .submit(GameCommand::Terrain(command))
-                                .map_err(|e| format!("input queue: {e}"))?;
+                            self.rejected_edits += u64::from(!submit_draw_command(
+                                &self.runtime,
+                                GameCommand::Terrain(command),
+                            )?);
                         }
                     }
                 }
                 Tool::Blocks => {
                     let [bx, by, _, _] = preview.expect("block pointer preview");
                     if self.buttons[0] || self.buttons[1] {
-                        self.runtime
-                            .submit(GameCommand::Terrain(Command::FillRect {
+                        self.rejected_edits += u64::from(!submit_draw_command(
+                            &self.runtime,
+                            GameCommand::Terrain(Command::FillRect {
                                 x: bx as usize,
                                 y: by as usize,
                                 width: 8,
                                 height: 8,
                                 material: if self.buttons[1] { AIR } else { WALL },
-                            }))
-                            .map_err(|e| format!("input queue: {e}"))?;
+                            }),
+                        )?);
                     }
                 }
                 Tool::Images => {
                     if self.clicks[0] {
-                        self.runtime
-                            .submit(GameCommand::PlaceImage([x, y]))
-                            .map_err(|e| format!("input queue: {e}"))?;
+                        self.rejected_edits += u64::from(!submit_draw_command(
+                            &self.runtime,
+                            GameCommand::PlaceImage([x, y]),
+                        )?);
                     }
                     if self.clicks[1] {
-                        self.runtime
-                            .submit(GameCommand::EraseImage([x, y]))
-                            .map_err(|e| format!("input queue: {e}"))?;
+                        self.rejected_edits += u64::from(!submit_draw_command(
+                            &self.runtime,
+                            GameCommand::EraseImage([x, y]),
+                        )?);
                     }
                 }
             }
@@ -318,18 +338,22 @@ impl App {
             .filter(|_| self.inspect_enabled)
             .map(|[x, y]| (x.floor() as i32, y.floor() as i32));
         if inspection != self.inspected {
-            self.runtime
-                .submit(GameCommand::Inspect(inspection))
+            game::submit_input(&self.runtime, GameCommand::Inspect(inspection))
                 .map_err(|e| format!("inspection queue: {e}"))?;
             self.inspected = inspection;
         }
+        let input_label = if self.rejected_edits == 0 {
+            self.tool.label().to_owned()
+        } else {
+            format!("QUEUE FULL: {} EDITS NOT APPLIED", self.rejected_edits)
+        };
         let overlays = debug_view::overlays(
             &snapshot.frame,
             self.inspect_enabled,
             self.performance,
             view.software_adapter,
             camera,
-            self.tool.label(),
+            &input_label,
             preview,
         );
         let sprites = self.actor.as_mut().map_or_else(Vec::new, |actor| {
@@ -758,4 +782,87 @@ fn main() -> Result<()> {
         return Err(error.into());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod input_tests {
+    use super::*;
+    use std::sync::mpsc;
+
+    #[test]
+    fn draw_queue_full_is_recoverable_but_disconnection_is_fatal() {
+        struct Gated {
+            game: Game,
+            entered: mpsc::SyncSender<()>,
+            resume: mpsc::Receiver<()>,
+            gate: bool,
+        }
+        impl charon_runtime::Simulation for Gated {
+            type Command = GameCommand;
+            type Frame = (Vec<[f32; 2]>, Option<(i32, i32)>);
+            fn step(&mut self, commands: Vec<GameCommand>) -> Self::Frame {
+                if self.gate {
+                    self.gate = false;
+                    self.entered.send(()).unwrap();
+                    self.resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                let frame = self.game.step(commands);
+                (frame.images, frame.inspection.map(|cell| (cell.x, cell.y)))
+            }
+        }
+        let (entered_tx, entered) = mpsc::sync_channel(1);
+        let (resume, resume_rx) = mpsc::sync_channel(1);
+        let runtime = Runtime::start(Gated {
+            game: Game::new(160, 120, 1, true).unwrap(),
+            entered: entered_tx,
+            resume: resume_rx,
+            gate: true,
+        })
+        .unwrap();
+        entered.recv_timeout(Duration::from_secs(2)).unwrap();
+        for _ in 0..127 {
+            runtime
+                .submit(GameCommand::PlaceImage([1.25, 2.5]))
+                .unwrap();
+        }
+        runtime.submit(GameCommand::Inspect(None)).unwrap();
+        let rejected = submit_draw_command(&runtime, GameCommand::EraseImage([1.25, 2.5]));
+        for point in [(10, 11), (20, 21)] {
+            game::submit_input(&runtime, GameCommand::Inspect(Some(point))).unwrap();
+        }
+        resume.send(()).unwrap();
+        assert!(
+            matches!(rejected, Ok(false)),
+            "Full must keep the draw loop alive: {rejected:?}"
+        );
+        let deadline = Instant::now() + Duration::from_secs(2);
+        while runtime.latest().is_none_or(|s| s.tick < 2) {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let snapshot = runtime.latest().unwrap();
+        assert_eq!(snapshot.frame.0, vec![[1.25, 2.5]; 127]);
+        assert_eq!(snapshot.frame.1, Some((20, 21)));
+        assert!(submit_draw_command(&runtime, GameCommand::PlaceImage([3.5, 4.25])).unwrap());
+        while runtime.latest().is_none_or(|s| s.frame.0.len() != 128) {
+            assert!(Instant::now() < deadline, "editing did not recover");
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(runtime.latest().unwrap().frame.0.last(), Some(&[3.5, 4.25]));
+        // A failed worker must still be reported as fatal.
+        struct Finished;
+        impl charon_runtime::Simulation for Finished {
+            type Command = GameCommand;
+            type Frame = ();
+            fn step(&mut self, _: Vec<GameCommand>) {
+                panic!("simulated worker failure");
+            }
+        }
+        let stopped = Runtime::start(Finished).unwrap();
+        while !stopped.is_finished() {
+            assert!(Instant::now() < deadline);
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(submit_draw_command(&stopped, GameCommand::Inspect(None)).is_err());
+    }
 }
