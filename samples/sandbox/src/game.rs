@@ -8,6 +8,7 @@ use charon_sand::{Command as SandCommand, SandWorld};
 pub enum Command {
     Terrain(SandCommand),
     CupScene,
+    DamScene,
     AddOil,
     PlaceImage([f32; 2]),
     EraseImage([f32; 2]),
@@ -245,7 +246,9 @@ impl Game {
         let mut frame = if let Some(cup) = &mut self.cup {
             let start = std::time::Instant::now();
             self.world.apply_edits(terrain);
-            self.image_error = cup.step(&mut self.world, self.presentation_direction);
+            if let Some(error) = cup.step(&mut self.world, self.presentation_direction) {
+                self.image_error = Some(error);
+            }
             let coupling_ms = start.elapsed().as_secs_f64() * 1000.;
             let mut frame = self.world.step(vec![]);
             frame.update_ms += coupling_ms;
@@ -359,9 +362,14 @@ impl Simulation for Game {
                     terrain.clear();
                     steps = 0;
                 }
-                Command::CupScene => {
+                command @ (Command::CupScene | Command::DamScene) => {
                     terrain.clear();
-                    match crate::cup::Cup::create(&mut self.world, self.width, self.height) {
+                    let create = if matches!(command, Command::CupScene) {
+                        crate::cup::Cup::create
+                    } else {
+                        crate::cup::Cup::dam
+                    };
+                    match create(&mut self.world, self.width, self.height, self.workers) {
                         Ok(cup) => {
                             self.cup = Some(cup);
                             self.player = None;
@@ -378,9 +386,9 @@ impl Simulation for Game {
                     }
                 }
                 Command::AddOil => {
-                    if let Some(cup) = &self.cup {
+                    if let Some(cup) = &mut self.cup {
                         self.world.apply_edits(std::mem::take(&mut terrain));
-                        cup.add_oil(&mut self.world);
+                        cup.add_oil();
                     }
                 }
                 Command::Terrain(SandCommand::Clear) => {
@@ -388,6 +396,9 @@ impl Simulation for Game {
                     self.images.clear();
                     self.image_error = None;
                     terrain.push(SandCommand::Clear);
+                }
+                Command::Terrain(_) if self.cup.is_some() => {
+                    self.image_error = Some("CFD DEMO: R RESET BEFORE TERRAIN EDITS");
                 }
                 Command::Terrain(command) => terrain.push(command),
                 Command::PlaceImage(position) => {
@@ -433,7 +444,7 @@ impl Simulation for Game {
         } else {
             usize::from(!self.paused)
         };
-        let frame = if advances == 0 {
+        let mut frame = if advances == 0 {
             self.world.edit(terrain)
         } else {
             let mut frame = self.advance(terrain);
@@ -442,6 +453,9 @@ impl Simulation for Game {
             }
             frame
         };
+        if let Some(cup) = &mut self.cup {
+            cup.compose(&mut frame);
+        }
         if let Some(commands) = recorded {
             let signature = self.signature();
             // A recording failure stops the simulation; the app reports the stopped thread.
@@ -474,8 +488,17 @@ impl Simulation for Game {
             inspection: self.inspection.map(|(x, y)| Inspection {
                 x,
                 y,
-                material: self.world.material_at(x, y),
-                awake: self.world.awake_at(x, y),
+                material: self
+                    .cup
+                    .as_ref()
+                    .and_then(|c| c.material_at(x, y))
+                    .or_else(|| self.world.material_at(x, y)),
+                awake: self
+                    .cup
+                    .as_ref()
+                    .filter(|c| c.material_at(x, y).is_some())
+                    .map(|c| !c.status(&self.world).fluid.sleeping)
+                    .or_else(|| self.world.awake_at(x, y)),
             }),
         }
     }
@@ -484,13 +507,37 @@ impl Simulation for Game {
 mod tests {
     use super::*;
     #[test]
+    fn cfd_view_matches_both_image_planes_and_rejects_uncoupled_terrain_edits() {
+        let mut game = Game::new(160, 120, 2, false).unwrap();
+        let first = game.step(vec![Command::CupScene, Command::Pause]);
+        let ids = first.terrain.indices.to_bytes();
+        let rgba: Vec<_> = ids
+            .iter()
+            .flat_map(|&id| first.terrain.materials.get(id).unwrap().color)
+            .collect();
+        assert_eq!(first.terrain.image.to_rgba(), rgba);
+        let cup = first.cup.unwrap();
+        let signature = game.cup.as_ref().unwrap().signature();
+        let frame = game.step(vec![Command::Terrain(SandCommand::FillRect {
+            x: (cup.x + 3) as usize,
+            y: (cup.y + cup.height - 4) as usize,
+            width: 3,
+            height: 1,
+            material: WALL,
+        })]);
+        assert!(frame.image_error.is_some());
+        assert_eq!(game.cup.as_ref().unwrap().signature(), signature);
+        game.step(vec![Command::DamScene, Command::Pause]);
+        assert_eq!(first.terrain.indices.to_bytes(), ids);
+        assert_eq!(first.terrain.image.to_rgba(), rgba);
+    }
+    #[test]
     fn cup_shakes_with_immiscible_oil_preserves_counts_and_freezes_with_pause() {
-        let mut game = Game::new(480, 270, 4, false).unwrap();
-        let frame = game.step(vec![Command::CupScene]);
-        let initial = frame.cup.unwrap();
-        let frame = game.step(vec![Command::AddOil]);
-        let oil = frame.cup.unwrap().oil;
+        let mut game = Game::new(240, 160, 4, false).unwrap();
+        let initial = game.step(vec![Command::CupScene]).cup.unwrap();
+        let oil = game.step(vec![Command::AddOil]).cup.unwrap().oil;
         assert!(initial.water > 0 && oil > 0);
+        let mut max_speed: f64 = 0.;
         for tick in 0..600 {
             let commands = match tick {
                 0 => vec![Command::Right(true)],
@@ -502,49 +549,47 @@ mod tests {
             };
             let frame = game.step(commands);
             let cup = frame.cup.unwrap();
+            assert!(
+                frame.image_error.is_none(),
+                "tick={tick} {:?}",
+                frame.image_error
+            );
             assert_eq!((cup.water, cup.oil), (initial.water, oil));
-            assert_eq!(cup.blocked, 0);
-            // Check every published tick, including turns and oil injection.
-            // Final settling alone misses air pockets left by a moving wall.
-            for y in cup.y + cup.height / 2 - 2..cup.y + cup.height - 2 {
-                for x in cup.x + 2..cup.x + cup.width - 2 {
-                    assert_eq!(
-                        game.world.material_at(x, y),
-                        Some(crate::materials::WATER),
-                        "submerged cup cell changed at tick {tick}: ({x}, {y})"
-                    );
-                }
+            for (volume, expected) in cup.fluid.volume.into_iter().zip([initial.water, oil]) {
+                assert!((volume - expected as f64).abs() < 1e-6);
             }
+            assert_eq!(cup.blocked, 0);
+            assert!(
+                cup.fluid.max_divergence < 1e-3,
+                "tick={tick} {:?}",
+                cup.fluid
+            );
+            max_speed = max_speed.max(cup.fluid.max_speed);
         }
+        assert!(max_speed > 2., "cup acceleration did not create flow");
         let frame = game.step(vec![Command::Pause, Command::Right(true)]);
         let x = frame.cup.unwrap().x;
         let clock = frame.simulation_tick;
+        let signature = game.cup.as_ref().unwrap().signature();
         for _ in 0..8 {
             let frame = game.step(vec![]);
             assert_eq!((frame.cup.unwrap().x, frame.simulation_tick), (x, clock));
+            assert_eq!(game.cup.as_ref().unwrap().signature(), signature);
         }
         game.step(vec![Command::Right(false), Command::Pause]);
         let mut settled = false;
-        for _ in 0..2400 {
+        for tick in 0..2400 {
             let frame = game.step(vec![]);
-            if frame.terrain.active_tiles == 0 {
+            assert!(frame.image_error.is_none(), "settling {tick}");
+            if frame.cup.unwrap().fluid.sleeping {
                 settled = true;
                 break;
             }
         }
-        assert!(settled, "shaken cup did not settle");
-        let cup = game.cup.as_ref().unwrap().status(&game.world);
-        let inside_rows = |id| {
-            (cup.y..cup.y + cup.height - 2)
-                .flat_map(|y| (cup.x + 2..cup.x + cup.width - 2).map(move |x| (x, y)))
-                .filter_map(|(x, y)| (game.world.material_at(x, y) == Some(id)).then_some(y))
-                .collect::<Vec<_>>()
-        };
-        let oil_rows = inside_rows(crate::materials::OIL);
-        let water_rows = inside_rows(crate::materials::WATER);
         assert!(
-            oil_rows.iter().max().unwrap() <= &(water_rows.iter().min().unwrap() + 1),
-            "oil did not form an upper layer"
+            settled,
+            "shaken cup did not settle: {:?}",
+            game.cup.as_ref().unwrap().status(&game.world).fluid
         );
     }
     #[test]

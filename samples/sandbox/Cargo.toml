@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+charon-fluid.workspace = true
+charon-image.workspace = true
 charon-assets.workspace = true
 charon-projectiles.workspace = true
 charon-platformer.workspace = true

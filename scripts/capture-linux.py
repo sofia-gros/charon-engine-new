@@ -137,9 +137,19 @@ def check_debugger_rows(rows):
     return counts
 
 
+def source_fingerprint():
+    source_hash=hashlib.sha256()
+    for path in sorted(path for folder in ("engine","plugins","samples") for path in (ROOT/folder).rglob("*")):
+        if path.is_file() and path.suffix in (".rs",".wgsl",".toml",".png",".jpg",".json",".ttf",".otf"):
+            source_hash.update(str(path.relative_to(ROOT)).encode());source_hash.update(path.read_bytes())
+    for name in ("Cargo.toml","Cargo.lock"):
+        source_hash.update(name.encode());source_hash.update((ROOT/name).read_bytes())
+    return source_hash.hexdigest()
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-dam"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
@@ -156,6 +166,7 @@ def main():
     if not Path("/usr/lib/xorg/modules/drivers/dummy_drv.so").exists():
         raise SystemExit("Xorg dummy driver is required for this Linux capture helper")
     subprocess.run(["cargo", "build", "--locked", "-p", package], check=True)
+    built_source=source_fingerprint()
     processes = []
     inputs = None
     capture_stop = threading.Event()
@@ -288,6 +299,11 @@ EndSection
                 inputs.hold(ord("d"),False)
                 at(17.5)
                 inputs.key(ord("p"))
+            elif sample=="fluid-dam":
+                at(.5); inputs.key(ord("h"))
+                at(1); inputs.key(ord("=")); inputs.key(ord("="))
+                at(7); inputs.key(ord("p"))
+                at(8); inputs.key(ord("p"))
             elif sample == "sea":
                 at(.5)
                 inputs.key(ord("l"))
@@ -511,6 +527,13 @@ EndSection
             inputs.key(0xff1b)  # Escape verifies normal application shutdown.
             if client.wait(timeout=5) != 0:
                 raise RuntimeError(f"{sample} exited with an error")
+            # Retain a private GIF even when acceptance fails, so visual bugs can
+            # be inspected immediately. Published media still requires all checks.
+            preview=[]
+            for _,path in frames:
+                with Image.open(path) as im: preview.append(im.convert("RGB"))
+            preview[0].save(local / "preview.gif",save_all=True,append_images=preview[1:],duration=125,loop=0,disposal=2)
+            del preview
             rows = list(csv.DictReader((local / "metrics.csv").open()))
             if sample == "sandbox":
                 peak = max(int(row["sand"]) for row in rows)
@@ -552,6 +575,12 @@ EndSection
                             if r>170 and g>140 and b<100: yellow.append(y)
                     assert blue and yellow and max(yellow)<=min(blue)+math.ceil(540/vh), "rendered oil did not form an upper layer"
                     layer_bands={"oil_y":[min(yellow),max(yellow)],"water_y":[min(blue),max(blue)]}
+                assert "Fluid step rejected" not in (local / f"{sample}.log").read_text(), "CFD step failed"
+                assert all(abs(float(r["fluid_water_volume"])-water)<1e-6 for r in cup_rows), "CFD water volume drift"
+                assert all(abs(float(r["fluid_oil_volume"])-int(r["oil"]))<1e-6 for r in cup_rows), "CFD oil volume drift"
+                assert max(float(r["fluid_divergence"]) for r in cup_rows)<1e-3, "pressure projection left divergence"
+                tilts=[float(r["fluid_surface_delta"]) for r in cup_rows]
+                assert min(tilts)<-1 and max(tilts)>1, "surface did not slosh in both directions"
                 # Use the intersection of all cup interiors, avoiding wall/CSV
                 # sampling offsets. Falling oil above the water is allowed; air
                 # below the first water pixel in a column is not.
@@ -564,8 +593,9 @@ EndSection
                     with Image.open(path) as im:
                         rgb=im.convert("RGB")
                         for x in range(left,right):
-                            submerged=False
-                            for y in range(top,bottom):
+                            submerged=True
+                            deep_top=math.ceil((cy+ch-14-oy)/vh*540)
+                            for y in range(deep_top,bottom):
                                 r,g,b=rgb.getpixel((x,y))
                                 submerged |= r<80 and g>90 and b>180
                                 assert not (submerged and (r,g,b)==(16,23,36)), f"rendered air pocket at ({x},{y}), t={timestamp-start:.2f}s"
@@ -573,7 +603,26 @@ EndSection
                 assert checked_frames>=50, "insufficient moving-cup frames checked"
                 replay=subprocess.run([str(ROOT / "target/debug" / package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=50)
                 shutil.copyfile(trace_path,MEDIA / f"{prefix}.trace")
-                checks={"water_cells":water,"oil_cells":oil[-1],"rendered_layers":layer_bands,"air_pocket_frames_checked":checked_frames,"cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["game-owned cup shape", "left/right real input", "separate water/oil mass conservation", "oil injection into air", "no rendered air pockets below water during motion", "oil above water in rendered output", "pause freezes cup and liquid", "resting contents sleep", "authoritative replay with one worker", "Escape shutdown"]}
+                checks={"water_cells":water,"oil_cells":oil[-1],"rendered_layers":layer_bands,"air_pocket_frames_checked":checked_frames,"sleep_tolerance_cells":0.005,"fluid_settings":{"viscosity_cell2_s":0.5,"pressure_cutoff":0.01,"drag_s_inverse":0.8},"volume_unit":"simulation cell area","simulation_grid":[int(v) for v in trace_path.read_text().splitlines()[0].split()[1:3]],"surface_delta_range":[min(tilts),max(tilts)],"solver":"Eulerian MAC / geometric VOF, cut-cell pressure, MIC-PCG","cup_x_range":[min(xs),max(xs)],"replay":replay.stdout.strip(),"checks":["game-owned cup shape", "left/right real input", "separate water/oil mass conservation", "oil injection into air", "no artificial holes in the deep interior during gentle sloshing", "oil above water in rendered output", "pause freezes cup and liquid", "resting contents sleep", "authoritative replay with one worker", "Escape shutdown"]}
+            elif sample=="fluid-dam":
+                fluid_rows=[r for r in rows if r["cup_x"]]
+                assert fluid_rows, "dam scene did not open"
+                water=float(fluid_rows[0]["fluid_water_volume"])
+                assert water>0 and all(abs(float(r["fluid_water_volume"])-water)<1e-6 for r in fluid_rows), "dam lost water"
+                assert max(float(r["fluid_divergence"]) for r in fluid_rows)<1e-3, "dam projection divergence"
+                assert "Fluid step rejected" not in (local / f"{sample}.log").read_text(), "CFD dam solve failed"
+                paused=[r for r in fluid_rows if r["paused"]=="true"]
+                assert paused and len({r["simulation_tick"] for r in paused})==1, "dam pause did not freeze"
+                last=fluid_rows[-1]
+                cx,cy,cw,ch=[float(last[k]) for k in ("cup_x","cup_y","cup_width","cup_height")]
+                ox,oy,vw,vh=[float(last[k]) for k in ("camera_x","camera_y","camera_width","camera_height")]
+                box=(math.ceil((cx+cw/2+4-ox)/vw*960),math.ceil((cy-oy)/vh*540),math.floor((cx+cw-2-ox)/vw*960),math.floor((cy+ch-2-oy)/vh*540))
+                with Image.open(frames[-1][1]) as im:
+                    spread=sum(r<80 and g>90 and b>180 for r,g,b in im.convert("RGB").crop(box).get_flattened_data())
+                assert spread>100, "dam water did not pass the baffle in rendered output"
+                replay=subprocess.run([str(ROOT/"target/debug"/package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=90)
+                shutil.copyfile(trace_path,MEDIA/f"{prefix}.trace")
+                checks={"solver":"Eulerian MAC / geometric VOF, cut-cell pressure, MIC-PCG","fluid_settings":{"viscosity_cell2_s":0.5,"pressure_cutoff":0.01,"drag_s_inverse":0.8,"sleep_tolerance":0.005},"water_volume_cells":water,"water_pixels_beyond_baffle":spread,"replay":replay.stdout.strip(),"checks":["collapse of a water column", "concave domain with an internal baffle", "separate conserved phase volume", "bounded divergence after projection", "pause and resume", "real rendered water beyond the baffle", "one-worker authoritative replay", "Escape shutdown"]}
             elif sample == "sea":
                 sea_rows=[r for r in rows if int(r["liquid"])>0]
                 assert sea_rows, "sea was not created"
@@ -701,12 +750,8 @@ EndSection
             images[0].save(MEDIA / f"{prefix}.gif", save_all=True, append_images=images[1:], duration=durations, loop=0, optimize=True, disposal=2)
             with Image.open(MEDIA / f"{prefix}.gif") as gif:
                 encoded_frames = gif.n_frames
-            source_hash = hashlib.sha256()
-            for path in sorted(path for folder in ("engine", "plugins", "samples") for path in (ROOT / folder).rglob("*")):
-                if path.is_file() and path.parts[len(ROOT.parts)] in ("engine", "plugins", "samples") and path.suffix in (".rs", ".wgsl", ".toml", ".png", ".jpg", ".json", ".ttf", ".otf"):
-                    source_hash.update(str(path.relative_to(ROOT)).encode())
-                    source_hash.update(path.read_bytes())
-            report = {"source_sha256": source_hash.hexdigest(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
+            assert source_fingerprint()==built_source, "source changed during capture; retain private preview and recapture"
+            report = {"source_sha256": built_source,"compiler":subprocess.check_output(["rustc","--version"],text=True).strip(), "sample": sample, "base_revision": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
                       "platform": "Linux Xorg dummy", "adapter": adapter_line, "build_profile": "dev",
                       "target_capture_fps": 8,
                       "observed_capture_fps": round((len(frames) - 1) / (frames[-1][0] - frames[0][0]), 3),

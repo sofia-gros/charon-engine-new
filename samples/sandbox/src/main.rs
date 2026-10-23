@@ -144,7 +144,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -431,8 +431,27 @@ impl App {
                     ",{},{},{},{},{},{},{},{}",
                     cup.x, cup.y, cup.width, cup.height, cup.moves, cup.blocked, cup.water, cup.oil
                 ));
+                let f = cup.fluid;
+                row.push_str(&format!(
+                    ",{:.9},{:.9},{:.9},{},{:.6},{:.6},{:.6},{},{:.6},{},{:.6}",
+                    f.volume[0],
+                    f.volume[1],
+                    f.max_divergence,
+                    f.substeps,
+                    f.pressure_ms,
+                    f.transport_ms,
+                    f.velocity_ms,
+                    f.flux_retries,
+                    f.max_speed,
+                    f.sleeping,
+                    cup.surface_delta
+                ));
+                row.push_str(&format!(
+                    ",{:.9},{:.9},{:.9}",
+                    f.rms_speed, f.max_mass_speed, f.max_fraction_change
+                ));
             } else {
-                row.push_str(",,,,,,,,");
+                row.push_str(",,,,,,,,,,,,,,,,,,,,,,");
             }
             println!("{row}");
             if let Some(file) = &mut self.record {
@@ -529,6 +548,9 @@ impl ApplicationHandler for App {
                     PhysicalKey::Code(KeyCode::Digit6) if down => {
                         self.brush = OIL;
                         self.tool = Tool::Brush;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyH) if down => {
+                        self.game_command(GameCommand::DamScene)
                     }
                     PhysicalKey::Code(KeyCode::KeyK) if down => {
                         self.game_command(GameCommand::CupScene)

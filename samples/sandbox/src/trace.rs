@@ -28,7 +28,7 @@ impl Recorder {
             BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
         writeln!(
             writer,
-            "charon-input-v3 {width} {height} {workers} {} {materials:016x}",
+            "charon-input-v4 {width} {height} {workers} {} {materials:016x}",
             u8::from(play)
         )?;
         writer.flush()?;
@@ -45,6 +45,7 @@ impl Recorder {
 fn encode(command: &Command) -> String {
     match command {
         Command::CupScene => "cup".into(),
+        Command::DamScene => "dam".into(),
         Command::AddOil => "oil".into(),
         Command::Terrain(SandCommand::Paint { x, y, material }) => {
             format!("paint:{x}:{y}:{material}")
@@ -109,6 +110,7 @@ fn decode(text: &str) -> Result<Command, String> {
             }
         }
         ["cup"] => Command::CupScene,
+        ["dam"] => Command::DamScene,
         ["oil"] => Command::AddOil,
         ["clear"] => Command::Terrain(SandCommand::Clear),
         ["jump"] => Command::Jump,
@@ -144,7 +146,7 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
     if !(legacy && fields.len() == 5
         || matches!(
             fields.first(),
-            Some(&"charon-input-v2" | &"charon-input-v3")
+            Some(&"charon-input-v2" | &"charon-input-v3" | &"charon-input-v4")
         ) && fields.len() == 6)
         || !["0", "1"].contains(&fields[4])
     {
@@ -169,6 +171,7 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
             "material definitions differ from input trace; use the matching game version".into(),
         );
     }
+    let cfd_trace = fields[0] == "charon-input-v4";
     let mut ticks = 0;
     for line in lines {
         let line = line.map_err(|e| e.to_string())?;
@@ -184,6 +187,14 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
             fields[2].split(';').map(decode).collect::<Result<_, _>>()?
         };
         for command in &commands {
+            if !cfd_trace
+                && matches!(
+                    command,
+                    Command::CupScene | Command::DamScene | Command::AddOil
+                )
+            {
+                return Err("cup physics changed; record a v4 trace with the CFD solver".into());
+            }
             if let Command::Terrain(
                 SandCommand::Paint { material, .. } | SandCommand::FillRect { material, .. },
             ) = command
@@ -273,6 +284,7 @@ mod tests {
                 106 => vec![Command::AddOil],
                 107 => vec![Command::Right(true)],
                 113 => vec![Command::Right(false), Command::Left(true)],
+                117 => vec![Command::DamScene],
                 _ => vec![],
             };
             game.step(commands);

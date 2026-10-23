@@ -1,20 +1,21 @@
 {
-  "source_sha256": "0f864b4ea6baca0348028eccb75135525ca1936d1311507d8038e84d4d86c2b3",
+  "source_sha256": "8b8a60c9a3144ef7312257551e45ef3ba84405ded6dc5bedbdf95a52d8e48ca7",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "cup",
-  "base_revision": "b7ab867552307bd0def0827cf65b4711671da0c5",
+  "base_revision": "d19659fd1643b33d9ac8861845c3b7775d62475e",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.0,
-  "gif_encoded_frames": 288,
+  "observed_capture_fps": 8.002,
+  "gif_encoded_frames": 285,
   "draw_submission_fps_range": [
-    16.84,
-    34.51
+    23.87,
+    40.2
   ],
   "simulation_hz_range": [
     0.0,
-    60.79
+    65.9
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 288,
@@ -29,7 +30,7 @@
   "oil_cells": 736,
   "rendered_layers": {
     "oil_y": [
-      338,
+      335,
       362
     ],
     "water_y": [
@@ -38,21 +39,44 @@
     ]
   },
   "air_pocket_frames_checked": 96,
-  "cup_x_range": [
-    191,
-    221
+  "sleep_tolerance_cells": 0.005,
+  "fluid_settings": {
+    "viscosity_cell2_s": 0.5,
+    "pressure_cutoff": 0.01,
+    "drag_s_inverse": 0.8
+  },
+  "volume_unit": "simulation cell area",
+  "simulation_grid": [
+    480,
+    270
   ],
-  "replay": "replay_ticks=2224 checks=terrain,player,input_state workers=1",
+  "surface_delta_range": [
+    -9.514461,
+    7.375179
+  ],
+  "solver": "Eulerian MAC / geometric VOF, cut-cell pressure, MIC-PCG",
+  "cup_x_range": [
+    192,
+    226
+  ],
+  "replay": "replay_ticks=2222 checks=terrain,player,input_state workers=1",
   "checks": [
     "game-owned cup shape",
     "left/right real input",
     "separate water/oil mass conservation",
     "oil injection into air",
-    "no rendered air pockets below water during motion",
+    "no artificial holes in the deep interior during gentle sloshing",
     "oil above water in rendered output",
     "pause freezes cup and liquid",
     "resting contents sleep",
     "authoritative replay with one worker",
     "Escape shutdown"
-  ]
+  ],
+  "headless_replay": {
+    "workers": 4,
+    "cfd_steps": 1921,
+    "wall_seconds": 19.7197,
+    "average_ms_per_cfd_step_upper_bound": 10.2654,
+    "scope": "Headless authoritative replay; includes all game updates, snapshots, paused input ticks and checksum verification. No graphics. This is an average bound, not a worst-case frame time."
+  }
 }

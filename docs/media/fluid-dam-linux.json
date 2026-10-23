@@ -1,0 +1,68 @@
+{
+  "source_sha256": "8b8a60c9a3144ef7312257551e45ef3ba84405ded6dc5bedbdf95a52d8e48ca7",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "fluid-dam",
+  "base_revision": "d19659fd1643b33d9ac8861845c3b7775d62475e",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 7.999,
+  "gif_encoded_frames": 111,
+  "draw_submission_fps_range": [
+    22.61,
+    33.19
+  ],
+  "simulation_hz_range": [
+    0.0,
+    61.12
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "captured_frames": 112,
+  "gif_duration_ms": 13970,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "solver": "Eulerian MAC / geometric VOF, cut-cell pressure, MIC-PCG",
+  "fluid_settings": {
+    "viscosity_cell2_s": 0.5,
+    "pressure_cutoff": 0.01,
+    "drag_s_inverse": 0.8,
+    "sleep_tolerance": 0.005
+  },
+  "water_volume_cells": 2220.0,
+  "water_pixels_beyond_baffle": 6430,
+  "replay": "replay_ticks=769 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "collapse of a water column",
+    "concave domain with an internal baffle",
+    "separate conserved phase volume",
+    "bounded divergence after projection",
+    "pause and resume",
+    "real rendered water beyond the baffle",
+    "one-worker authoritative replay",
+    "Escape shutdown"
+  ],
+  "headless_replay": {
+    "workers": 4,
+    "cfd_steps": 370,
+    "wall_seconds": 9.7258,
+    "average_ms_per_cfd_step_upper_bound": 26.286,
+    "scope": "Headless authoritative replay; includes all game updates, snapshots, paused input ticks and checksum verification. No graphics. This is an average bound, not a worst-case frame time."
+  },
+  "rendered_liquid_regions": {
+    "connectivity": 8,
+    "max_regions": 4,
+    "region_cells": [
+      2148,
+      135,
+      31,
+      7
+    ],
+    "gif_time_ms": 6000,
+    "scope": "Water-color cell-center probes inside the basin; rendered topology, not a measurement of phase volume."
+  }
+}

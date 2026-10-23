@@ -284,6 +284,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-fluid"
+version = "0.1.0"
+dependencies = [
+ "rayon",
+]
+
+[[package]]
 name = "charon-image"
 version = "0.1.0"
 
@@ -324,6 +331,8 @@ name = "charon-sandbox"
 version = "0.1.0"
 dependencies = [
  "charon-assets",
+ "charon-fluid",
+ "charon-image",
  "charon-platformer",
  "charon-projectiles",
  "charon-render",
