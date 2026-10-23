@@ -3,7 +3,10 @@
 use charon_image::TiledImage;
 use charon_runtime::Simulation;
 use rayon::prelude::*;
-use std::time::Instant;
+use std::{sync::Arc, time::Instant};
+
+mod material;
+pub use material::{Material, Materials, Motion};
 
 pub const AIR: u8 = 0;
 pub const SAND: u8 = 1;
@@ -20,7 +23,9 @@ pub struct Frame {
     pub width: usize,
     pub height: usize,
     pub image: TiledImage,
+    pub materials: Arc<Materials>,
     pub converted_cells: usize,
+    /// Total powder cells, including custom powders (legacy field name).
     pub sand: usize,
     pub active_tiles: usize,
     pub visited_cells: usize,
@@ -34,6 +39,7 @@ pub struct SandWorld {
     width: usize,
     height: usize,
     cells: Vec<u8>,
+    materials: Arc<Materials>,
     sand: usize,
     image: TiledImage,
     dirty: Vec<bool>,
@@ -57,17 +63,33 @@ impl SandWorld {
         workers: usize,
         cells: Vec<u8>,
     ) -> Result<Self, String> {
-        let mut world = Self::new(width, height, workers)?;
+        Self::from_material_cells(width, height, workers, cells, Materials::default())
+    }
+
+    /// Assemble a sand plugin with game-owned material definitions and a bounded grid.
+    pub fn from_material_cells(
+        width: usize,
+        height: usize,
+        workers: usize,
+        cells: Vec<u8>,
+        materials: Materials,
+    ) -> Result<Self, String> {
+        let mut world = Self::with_materials(width, height, workers, materials)?;
         if cells.len() != width * height
-            || cells.iter().any(|&cell| cell > WALL)
-            || (0..height).any(|y| cells[y * width] != WALL || cells[y * width + width - 1] != WALL)
+            || cells
+                .iter()
+                .any(|&cell| world.materials.get(cell).is_none())
+            || (0..height).any(|y| {
+                cells[y * width] != world.materials.boundary()
+                    || cells[y * width + width - 1] != world.materials.boundary()
+            })
             || cells[(height - 1) * width..]
                 .iter()
-                .any(|&cell| cell != WALL)
+                .any(|&cell| cell != world.materials.boundary())
         {
             return Err("material grid must match dimensions and contain valid materials and protected walls".into());
         }
-        world.sand = cells.iter().filter(|&&cell| cell == SAND).count();
+        world.sand = cells.iter().filter(|&&cell| world.is_powder(cell)).count();
         world.cells = cells;
         Ok(world)
     }
@@ -90,6 +112,25 @@ impl SandWorld {
     }
 
     pub fn new(width: usize, height: usize, workers: usize) -> Result<Self, String> {
+        Self::with_materials(width, height, workers, Materials::default())
+    }
+
+    pub fn materials(&self) -> &Materials {
+        &self.materials
+    }
+
+    fn is_powder(&self, id: u8) -> bool {
+        self.materials
+            .get(id)
+            .is_some_and(|m| m.motion == Motion::Powder)
+    }
+
+    pub fn with_materials(
+        width: usize,
+        height: usize,
+        workers: usize,
+        materials: Materials,
+    ) -> Result<Self, String> {
         if !(8..=1920).contains(&width)
             || !(8..=1080).contains(&height)
             || !(1..=32).contains(&workers)
@@ -104,7 +145,8 @@ impl SandWorld {
         let mut world = Self {
             width,
             height,
-            cells: vec![AIR; width * height],
+            cells: vec![materials.air(); width * height],
+            materials: Arc::new(materials),
             sand: 0,
             image: TiledImage::new(width, height, TILE),
             dirty: vec![true; width.div_ceil(TILE) * height.div_ceil(TILE)],
@@ -118,14 +160,14 @@ impl SandWorld {
     }
 
     fn reset(&mut self) {
-        self.cells.fill(AIR);
+        self.cells.fill(self.materials.air());
         self.sand = 0;
         self.dirty.fill(true);
         for y in 0..self.height {
-            self.cells[y * self.width] = WALL;
-            self.cells[y * self.width + self.width - 1] = WALL;
+            self.cells[y * self.width] = self.materials.boundary();
+            self.cells[y * self.width + self.width - 1] = self.materials.boundary();
         }
-        self.cells[(self.height - 1) * self.width..].fill(WALL);
+        self.cells[(self.height - 1) * self.width..].fill(self.materials.boundary());
         self.awake.fill(true);
     }
 
@@ -144,7 +186,7 @@ impl SandWorld {
         match command {
             Command::Clear => self.reset(),
             Command::Paint { x, y, material } => {
-                if ![AIR, SAND, WALL].contains(&material) {
+                if self.materials.get(material).is_none() {
                     return;
                 }
                 for py in y.saturating_sub(3)..=y.saturating_add(3).min(self.height - 1) {
@@ -152,8 +194,8 @@ impl SandWorld {
                         if px > 0 && px < self.width - 1 && py < self.height - 1 {
                             let index = py * self.width + px;
                             if self.cells[index] != material {
-                                self.sand -= usize::from(self.cells[index] == SAND);
-                                self.sand += usize::from(material == SAND);
+                                self.sand -= usize::from(self.is_powder(self.cells[index]));
+                                self.sand += usize::from(self.is_powder(material));
                                 self.cells[index] = material;
                                 self.wake(index);
                             }
@@ -185,7 +227,7 @@ impl SandWorld {
                         for x in tx.max(1)..(tx + TILE).min(width - 1) {
                             visited += 1;
                             let source = y * width + x;
-                            if cells[source] != SAND {
+                            if !self.is_powder(cells[source]) {
                                 continue;
                             }
                             let below = source + width;
@@ -196,7 +238,7 @@ impl SandWorld {
                             };
                             if let Some(destination) = [below, diagonals[0], diagonals[1]]
                                 .into_iter()
-                                .find(|&index| cells[index] == AIR)
+                                .find(|&index| cells[index] == self.materials.air())
                             {
                                 moves.push((source, destination));
                             }
@@ -218,12 +260,12 @@ impl SandWorld {
             (priority(source, tick), source, destination)
         });
         self.awake.fill(false);
-        // A source is sand and a destination was air in the read snapshot, so
+        // A source is powder and a destination was air in the read snapshot, so
         // source/destination sets cannot overlap; only destination conflicts remain.
         for (source, destination) in proposals {
-            if self.cells[destination] == AIR {
-                self.cells[source] = AIR;
-                self.cells[destination] = SAND;
+            if self.cells[destination] == self.materials.air() {
+                self.cells[destination] = self.cells[source];
+                self.cells[source] = self.materials.air();
                 self.wake(source);
                 self.wake(destination);
             }
@@ -265,7 +307,13 @@ impl SandWorld {
             let mut rgba = Vec::with_capacity(rect.width * rect.height * 4);
             for y in rect.y..rect.y + rect.height {
                 for x in rect.x..rect.x + rect.width {
-                    rgba.extend_from_slice(&color(self.cells[y * self.width + x]));
+                    rgba.extend_from_slice(
+                        &self
+                            .materials
+                            .get(self.cells[y * self.width + x])
+                            .expect("validated cell")
+                            .color,
+                    );
                 }
             }
             converted_cells += rect.width * rect.height;
@@ -276,6 +324,7 @@ impl SandWorld {
             width: self.width,
             height: self.height,
             image: self.image.clone(),
+            materials: Arc::clone(&self.materials),
             converted_cells,
             sand: self.sand,
             active_tiles,
@@ -305,25 +354,105 @@ impl Simulation for SandWorld {
     }
 }
 
-fn color(material: u8) -> [u8; 4] {
-    match material {
-        SAND => [232, 181, 72, 255],
-        WALL => [82, 100, 121, 255],
-        _ => [16, 23, 36, 255],
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn assert_image_matches_cells(world: &SandWorld, frame: &Frame) {
-        let expected: Vec<_> = world.cells.iter().flat_map(|&cell| color(cell)).collect();
+        let expected: Vec<_> = world
+            .cells
+            .iter()
+            .flat_map(|&cell| world.materials.get(cell).unwrap().color)
+            .collect();
         assert_eq!(frame.image.to_rgba(), expected);
         assert_eq!(
             frame.sand,
             world.cells.iter().filter(|&&cell| cell == SAND).count()
         );
+    }
+
+    #[test]
+    fn custom_powders_preserve_identity_sleep_and_wake_independently_of_worker_count() {
+        // Deliberately non-default IDs prove the solver does not depend on AIR/SAND/WALL.
+        let materials = Materials::new(
+            vec![
+                Material {
+                    key: "barrier".into(),
+                    color: [1, 2, 3, 255],
+                    motion: Motion::Static,
+                    blocks_actors: true,
+                    blocks_projectiles: true,
+                },
+                Material {
+                    key: "vacuum".into(),
+                    color: [0, 0, 0, 255],
+                    motion: Motion::Empty,
+                    blocks_actors: false,
+                    blocks_projectiles: false,
+                },
+                Material {
+                    key: "red".into(),
+                    color: [255, 0, 0, 255],
+                    motion: Motion::Powder,
+                    blocks_actors: false,
+                    blocks_projectiles: true,
+                },
+                Material {
+                    key: "blue".into(),
+                    color: [0, 0, 255, 255],
+                    motion: Motion::Powder,
+                    blocks_actors: true,
+                    blocks_projectiles: false,
+                },
+            ],
+            1,
+            0,
+        )
+        .unwrap();
+        let mut parallel = SandWorld::with_materials(65, 66, 4, materials.clone()).unwrap();
+        for y in 20..24 {
+            parallel.cells[y * 65 + 4..y * 65 + 31].fill(2);
+            parallel.cells[y * 65 + 33..y * 65 + 61].fill(3);
+        }
+        let mut reference =
+            SandWorld::from_material_cells(65, 66, 1, parallel.cells.clone(), materials).unwrap();
+        parallel.sand = reference.sand;
+        reference.full_scan = true;
+        let counts = |w: &SandWorld| [2, 3].map(|id| w.cells.iter().filter(|&&c| c == id).count());
+        let original = counts(&parallel);
+        for _ in 0..140 {
+            parallel.step(vec![]);
+            reference.step(vec![]);
+            assert_eq!(parallel.cells, reference.cells);
+            assert_eq!(counts(&parallel), original);
+        }
+        let idle = parallel.step(vec![]);
+        reference.step(vec![]);
+        assert_eq!((idle.active_tiles, idle.converted_cells), (0, 0));
+        assert_eq!(idle.sand, original.iter().sum());
+        assert_image_matches_cells_custom(&parallel, &idle);
+        // Remove a settled grain at the tile boundary; all affected neighbors wake.
+        let edit = Command::Paint {
+            x: 32,
+            y: 61,
+            material: 1,
+        };
+        for tick in 0..40 {
+            let commands = if tick == 0 { vec![edit] } else { vec![] };
+            let frame = parallel.step(commands.clone());
+            reference.step(commands);
+            assert_eq!(parallel.cells, reference.cells);
+            assert_image_matches_cells_custom(&parallel, &frame);
+        }
+    }
+
+    fn assert_image_matches_cells_custom(world: &SandWorld, frame: &Frame) {
+        let pixels: Vec<_> = world
+            .cells
+            .iter()
+            .flat_map(|&id| world.materials.get(id).unwrap().color)
+            .collect();
+        assert_eq!(frame.image.to_rgba(), pixels);
     }
 
     #[test]

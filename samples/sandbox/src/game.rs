@@ -1,7 +1,8 @@
 //! Sample composition owns both plugins on the simulation thread.
+use crate::materials::{palette, AIR, SAND, WALL};
 use charon_platformer::Body;
 use charon_runtime::Simulation;
-use charon_sand::{Command as SandCommand, SandWorld, AIR, SAND, WALL};
+use charon_sand::{Command as SandCommand, SandWorld};
 #[derive(Clone, Copy, Debug)]
 pub enum Command {
     Terrain(SandCommand),
@@ -63,9 +64,9 @@ impl Game {
             for y in floor..floor + 4 {
                 cells[y * width + width / 8..y * width + width * 7 / 8].fill(WALL);
             }
-            SandWorld::from_cells(width, height, workers, cells)?
+            SandWorld::from_material_cells(width, height, workers, cells, palette())?
         } else {
-            SandWorld::new(width, height, workers)?
+            SandWorld::with_materials(width, height, workers, palette())?
         };
         Ok(Self {
             world,
@@ -91,8 +92,15 @@ impl Game {
             self.height,
             self.workers,
             self.player.is_some(),
+            self.material_fingerprint(),
         )?);
         Ok(())
+    }
+    pub fn material_fingerprint(&self) -> u64 {
+        self.world.materials().fingerprint()
+    }
+    pub fn has_material(&self, id: u8) -> bool {
+        self.world.materials().get(id).is_some()
     }
     pub fn signature(&self) -> u64 {
         let mut hash = self.world.checksum();
@@ -142,9 +150,11 @@ impl Game {
                 i8::from(self.right) - i8::from(self.left),
                 self.jump_pending,
                 |x, y| match world.material_at(x, y) {
-                    Some(AIR) => false,
-                    Some(SAND) => sand_solid,
-                    _ => true,
+                    Some(id) => {
+                        world.materials().get(id).is_some_and(|m| m.blocks_actors)
+                            && (id != SAND || sand_solid)
+                    }
+                    None => true,
                 },
             );
         }
@@ -228,6 +238,34 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn game_defined_powder_uses_its_own_actor_policy_and_render_color() {
+        use crate::materials::ASH;
+        let mut game = Game::new(160, 120, 4, true).unwrap();
+        let commands = vec![
+            Command::Pause,
+            Command::Terrain(SandCommand::Paint {
+                x: 43,
+                y: 77,
+                material: ASH,
+            }),
+        ];
+        let frame = game.step(commands);
+        let material = frame.terrain.materials.get(ASH).unwrap();
+        assert_eq!(material.key, "demo.ash");
+        assert!(!material.blocks_actors);
+        assert!(material.blocks_projectiles);
+        let pixels = frame.terrain.image.to_rgba();
+        assert_eq!(&pixels[(74 * 160 + 40) * 4..][..4], &material.color);
+        game.step(vec![Command::Step]);
+        assert!(
+            game.player.unwrap().y() > 62.0,
+            "actor did not pass through custom powder"
+        );
+        let reset = game.step(vec![Command::Terrain(SandCommand::Clear)]);
+        assert_eq!(reset.terrain.materials.id("demo.ash"), Some(ASH));
+    }
+
     #[test]
     fn pause_edits_inspection_and_each_step_preserve_the_physics_clock() {
         let mut game = Game::new(96, 96, 4, false).unwrap();

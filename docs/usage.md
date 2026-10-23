@@ -36,11 +36,17 @@ cargo run --locked --release -p charon-sandbox -- --workers 4 --record artifacts
 
 クラウドでは先に `source scripts/env.sh` を実行する。初回/依存更新時のみ `bash scripts/setup.sh` を使用する。
 
-ウィンドウの初期サイズは1920×1080。左ドラッグで砂、右で消去、中で壁、Rで初期化、Escで終了。表示サイズとセル数は独立している。端の壁と床は消去できない。
+ウィンドウの初期サイズは1920×1080。1で砂・2で紫色の灰を選び、左ドラッグで配置、右で消去、中で壁、Rで初期化、Escで終了。表示サイズとセル数は独立している。端の壁と床は消去できない。
 
 画面内にDRAW FPS・SIM Hz・GPU種別・ビルド種別を表示する。DRAWは描画送信回数を実時間で割った値、SIMは物質更新回数を実時間で割った値。最初の計測区間はWARMUPとなる。タイトルにはさらにtick処理時間・使用/設定ワーカー数・砂の数・フレーム間隔p99を表示する。休止時は使用ワーカー0になる。描画は最大144 FPSを狙い、シミュレーションは別スレッドの固定60 Hzで進む。
 
 PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョンを保存する。通常モードのCSVは1秒区間の値で、tick処理時間は直近tickの値。更新/画像生成の時間は直近tick、upload_enqueue_ms・upload_bytes・acquire_ms・encode_present_msは直近描画のCPU側呼び出し時間と転送要求量。converted_cellsは直近tickで画像へ変換したセル数。GPU実行時間や物理的な画面提示はまだ測定していない。VSyncやOSのスケジューリングも描画FPSへ影響する。
+
+## ゲーム側の素材定義
+
+[samples/sandbox/src/materials.rs](../samples/sandbox/src/materials.rs)で素材のキー・単色表示・動き・足場判定・弾の遮蔽を定義し、`SandWorld::with_materials` / `from_material_cells`へ渡す。`demo.ash`は落下・堆積し、足場にならず弾は遮る粉体。素材追加にCoreや砂plugin本体の編集は不要。表は起動時に検証され、世界作成後は不変。IDは表内の位置で、現在の上限256種を超える登録、重複キー、不正な境界はエラーになる。`Frame.sand`とCSVのsand列は互換名で、現在は全粉体のセル数を表す。
+
+現在の動きは空・静止・粉体。独自の液体/反応ルールの登録や汎用plugin依存解決はまだ実装していない。単色表示は最小実装で、PNG/JPG・PNG+JSONシートとアニメーションは共通アセット/描画機能として物理から分離して追加する。見た目だけのアニメーションは物質の休止を解除しない設計にする。
 
 ## Platformer
 
@@ -65,7 +71,7 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 
 記録は物質更新と同じスレッドでtickごとに保存する。再生はウィンドウ/GPUを起動せず、地形・位置・速度・判定/入力状態のchecksumを各tickで検証する。不一致は最初のtickを報告して失敗する。Rによる再開も記録される。保存先が既に存在すれば上書きせずエラーになる。記録のIO失敗でも動作を止める。
 
-入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。形式は開発中のv1で、物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
+入力記録はデバッグ用で、IOとchecksum計算の負荷を含む。性能確認では有効にしない。新規記録は素材定義の識別情報を含むv2で、定義の異なる版は再生前に拒否する。既存v1は従来の3素材だけを対象に再生できる。物理ルール変更後の同一結果を保証するゲームセーブ形式ではない。[動画と同時に記録した入力列](media/platformer-linux.trace)も同じコマンドで再生できる。Windowsの記録は `scripts/run.ps1 -Play -RecordInputs`。
 
 ## デバッグ操作
 

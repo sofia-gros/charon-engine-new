@@ -19,6 +19,7 @@ impl Recorder {
         height: usize,
         workers: usize,
         play: bool,
+        materials: u64,
     ) -> std::io::Result<Self> {
         if let Some(parent) = path.parent().filter(|p| !p.as_os_str().is_empty()) {
             std::fs::create_dir_all(parent)?;
@@ -27,7 +28,7 @@ impl Recorder {
             BufWriter::new(OpenOptions::new().write(true).create_new(true).open(path)?);
         writeln!(
             writer,
-            "charon-input-v1 {width} {height} {workers} {}",
+            "charon-input-v2 {width} {height} {workers} {} {materials:016x}",
             u8::from(play)
         )?;
         writer.flush()?;
@@ -93,12 +94,21 @@ pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
         .ok_or("missing input header")?
         .map_err(|e| e.to_string())?;
     let fields: Vec<_> = header.split_whitespace().collect();
-    if fields.len() != 5 || fields[0] != "charon-input-v1" || !["0", "1"].contains(&fields[4]) {
+    let legacy = fields.first() == Some(&"charon-input-v1");
+    if !(legacy && fields.len() == 5
+        || fields.first() == Some(&"charon-input-v2") && fields.len() == 6)
+        || !["0", "1"].contains(&fields[4])
+    {
         return Err("unsupported input header".into());
     }
     let width = fields[1].parse().map_err(|_| "invalid width")?;
     let height = fields[2].parse().map_err(|_| "invalid height")?;
     let mut game = Game::new(width, height, workers, fields[4] == "1")?;
+    if !legacy && u64::from_str_radix(fields[5], 16).ok() != Some(game.material_fingerprint()) {
+        return Err(
+            "material definitions differ from input trace; use the matching game version".into(),
+        );
+    }
     let mut ticks = 0;
     for line in lines {
         let line = line.map_err(|e| e.to_string())?;
@@ -113,6 +123,13 @@ pub fn replay(path: &Path, workers: usize) -> Result<u64, String> {
         } else {
             fields[2].split(';').map(decode).collect::<Result<_, _>>()?
         };
+        for command in &commands {
+            if let Command::Terrain(SandCommand::Paint { material, .. }) = command {
+                if !game.has_material(*material) || legacy && *material > 2 {
+                    return Err(format!("unknown material {material} at tick {ticks}"));
+                }
+            }
+        }
         game.step(commands);
         let actual = game.signature();
         if actual != expected {
@@ -145,6 +162,11 @@ mod tests {
                 38 => vec![Command::Jump],
                 40 => vec![Command::Step, Command::Step],
                 45 => vec![Command::Pause],
+                54 => vec![Command::Terrain(SandCommand::Paint {
+                    x: 100,
+                    y: 20,
+                    material: crate::materials::ASH,
+                })],
                 55 => vec![Command::Inspect(Some((20, 30)))],
                 56 => vec![Command::Inspect(None)],
                 50 => vec![Command::Dig(true)],
@@ -156,6 +178,18 @@ mod tests {
         drop(game);
         assert_eq!(replay(&path, 1).unwrap(), 120);
         let text = std::fs::read_to_string(&path).unwrap();
+        let invalid_palette = text.replacen(
+            &format!(
+                "{:016x}",
+                Game::new(160, 120, 1, true).unwrap().material_fingerprint()
+            ),
+            "0000000000000000",
+            1,
+        );
+        std::fs::write(&path, invalid_palette).unwrap();
+        assert!(replay(&path, 1)
+            .unwrap_err()
+            .contains("material definitions"));
         let mut lines: Vec<_> = text.lines().map(str::to_owned).collect();
         let parts: Vec<_> = lines[31].split('|').collect();
         lines[31] = format!("{}|0000000000000000|{}", parts[0], parts[2]);

@@ -195,7 +195,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play", "--input-log", str(trace_path)] if sample in ("platformer", "debugger") else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -232,7 +232,15 @@ EndSection
                 at(3.4)
                 inputs.drag(1, [(880 + (i % 20) * 8, 180) for i in range(65)])
                 at(7)
+                inputs.key(ord("2"))
+                inputs.key(ord("p"))
+                inputs.key(ord("i"))
+                inputs.move(1000, 240)
+                inputs.button(1, True)
+                at(7.5)
+                inputs.button(1, False)
                 at(8)
+                inputs.key(ord("p"))
                 inputs.drag(3, [(960, y) for y in range(660, 741, 5)])
                 at(11)
                 inputs.key(ord("r"))
@@ -310,8 +318,11 @@ EndSection
                 assert int(rows[-1]["active_tiles"]) == 0, "reset world did not sleep"
                 assert int(rows[-1]["converted_cells"]) == 0, "idle image was regenerated"
                 assert int(rows[-1]["upload_bytes"]) == 0, "idle image was uploaded"
-                checks = {"peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
-                          "checks": ["mouse painting", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
+                assert any(r["material"] == "3" and r["paused"] == "true" for r in rows), "game-defined ash not painted/inspected"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"replay": replay.stdout.strip(), "custom_material": "demo.ash", "peak_sand": peak, "final_sand": int(rows[-1]["sand"]),
+                          "checks": ["mouse painting", "game-defined ash selection/inspection", "authoritative replay with 1 worker", "keyboard reset", "sleep after reset", "zero idle pixel conversion/upload", "Escape shutdown"]}
             elif sample == "dialogue":
                 pages = [page for page, _ in itertools.groupby(row["page"] for row in rows)]
                 assert pages == ["Intro", "Choice", "River", "Intro", "Choice", "Hill"], pages

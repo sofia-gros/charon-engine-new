@@ -1,24 +1,24 @@
 {
-  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
+  "source_sha256": "3209808a3a96fc1f65a0222f7f02b64ad9f22772c5a7cfd0d0ccfe24e4b6e768",
   "sample": "sandbox",
-  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "base_revision": "b39b22ef080bb1284dc5c718941d09a516584c53",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.998,
-  "gif_encoded_frames": 112,
+  "observed_capture_fps": 7.999,
+  "gif_encoded_frames": 111,
   "draw_submission_fps_range": [
-    34.83,
-    44.6
+    26.59,
+    47.91
   ],
   "simulation_hz_range": [
-    59.07,
-    60.98
+    0.0,
+    65.16
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
   "captured_frames": 112,
-  "gif_duration_ms": 14020,
+  "gif_duration_ms": 13970,
   "source_size": [
     1920,
     1080
@@ -27,10 +27,14 @@
     960,
     540
   ],
-  "peak_sand": 1745,
+  "replay": "replay_ticks=901 checks=terrain,player,input_state workers=1",
+  "custom_material": "demo.ash",
+  "peak_sand": 1775,
   "final_sand": 0,
   "checks": [
     "mouse painting",
+    "game-defined ash selection/inspection",
+    "authoritative replay with 1 worker",
     "keyboard reset",
     "sleep after reset",
     "zero idle pixel conversion/upload",

@@ -1,11 +1,13 @@
 mod debug_view;
 mod game;
+mod materials;
 mod smoke;
 mod trace;
 use charon_render::{self as gpu, DebugPerformance, Gpu, Result, WindowRenderer};
 use charon_runtime::Runtime;
-use charon_sand::{Command, AIR, SAND, WALL};
+use charon_sand::Command;
 use game::{Command as GameCommand, Game};
+use materials::{AIR, ASH, SAND, WALL};
 use std::{
     fs::File,
     io::Write,
@@ -71,7 +73,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\nMouse: left sand, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -89,6 +91,7 @@ struct App {
     view: Option<WindowRenderer>,
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
+    brush: u8,
     inspect_enabled: bool,
     inspected: Option<(i32, i32)>,
     next_draw: Instant,
@@ -123,6 +126,7 @@ impl App {
             view: None,
             cursor: None,
             buttons: [false; 3],
+            brush: SAND,
             inspect_enabled: false,
             inspected: None,
             next_draw: now,
@@ -164,7 +168,7 @@ impl App {
         if let Some((x, y)) = self.cursor {
             let x = (x * self.options.width as f64 / size.width as f64) as usize;
             let y = (y * self.options.height as f64 / size.height as f64) as usize;
-            for (pressed, material) in self.buttons.into_iter().zip([SAND, AIR, WALL]) {
+            for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL]) {
                 if pressed {
                     self.runtime
                         .submit(GameCommand::Terrain(Command::Paint { x, y, material }))
@@ -329,6 +333,8 @@ impl ApplicationHandler for App {
                         self.game_command(GameCommand::Right(down))
                     }
                     PhysicalKey::Code(KeyCode::KeyF) => self.game_command(GameCommand::Dig(down)),
+                    PhysicalKey::Code(KeyCode::Digit1) if down => self.brush = SAND,
+                    PhysicalKey::Code(KeyCode::Digit2) if down => self.brush = ASH,
                     PhysicalKey::Code(KeyCode::KeyP) if down => {
                         self.game_command(GameCommand::Pause)
                     }

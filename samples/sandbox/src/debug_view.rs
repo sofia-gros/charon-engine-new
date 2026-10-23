@@ -3,7 +3,6 @@ use crate::game::Frame;
 use charon_render::{
     append_debug_text as text, append_performance_overlay, DebugPerformance, OverlayRect,
 };
-use charon_sand::{AIR, SAND, WALL};
 fn rect(x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) -> OverlayRect {
     OverlayRect {
         x,
@@ -79,14 +78,12 @@ pub fn overlays(
             accent,
         );
         let detail = frame.inspection.map_or_else(
-            || "P PAUSE N STEP I INSPECT".into(),
+            || "1 SAND 2 ASH P PAUSE I INSPECT".into(),
             |cell| {
-                let material = match cell.material {
-                    Some(AIR) => "AIR",
-                    Some(SAND) => "SAND",
-                    Some(WALL) => "WALL",
-                    _ => "OUTSIDE",
-                };
+                let material = cell
+                    .material
+                    .and_then(|id| frame.terrain.materials.get(id))
+                    .map_or("OUTSIDE", |m| m.key.as_str());
                 let awake = match cell.awake {
                     Some(true) => "AWAKE",
                     Some(false) => "SLEEP",
