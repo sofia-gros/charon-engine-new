@@ -30,6 +30,12 @@ A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。Qは照準�
 
 この例は探索と地形操作を接続した段階。敵との戦闘・ゲーム終了はまだ含まない。`python3 scripts/capture-linux.py --sample exploration`でLinux実入力・表示と別workerでの再生を確認できる。[記録条件](media/exploration-linux.json)・[入力列](media/exploration-linux.trace)を同梱する。GIFの収録fpsとエンジンの実測値は別。
 
+## 世界規模の基準
+
+探索世界はNoitaの規模・座標構成を基準にする。公開されている[Noita-mapcapの範囲定義](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/AREAS.md)では、通常の新規ゲームの基本配置は35,840×24,576ワールドピクセル、空・地下を含む撮影範囲は35,840×73,728。左右の平行世界は35,840間隔で配置される。[ツールのコード](https://github.com/Dadido3/noita-mapcap/blob/cf26be387cb39e64be1aabcea812dbe0efca1427/files/config.lua)は512単位で範囲を計算している。撮影範囲は世界全体の固定上限ではなく、これだけでNoita内部のシミュレーション方式や正確な読込半径を確認したことにはならない。
+
+`charon-world`は、ゲームが指定した生成関数とチャンク保存をつなぐ部品。全世界の配列を確保せず、読み込む数とIO待ち件数を制限する。生成/ディスク処理は専用スレッドで実行し、編集済みデータは保存成功まで退避できない。現在の探索サンプルは小さな地形で、大規模世界の移動・境界越しの砂/流体更新は接続中。
+
 ## 必要な環境
 
 - Rust stable、Git。

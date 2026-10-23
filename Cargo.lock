@@ -362,6 +362,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-world"
+version = "0.1.0"
+dependencies = [
+ "atomic-write-file",
+]
+
+[[package]]
 name = "codespan-reporting"
 version = "0.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
