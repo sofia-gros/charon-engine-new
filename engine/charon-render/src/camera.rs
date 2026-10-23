@@ -27,7 +27,11 @@ impl Camera2D {
             return None;
         }
         Some(std::array::from_fn(|i| {
-            self.origin[i] + point[i] / viewport[i] * self.size[i]
+            // Keep exact cell boundaries from rounding into the previous cell
+            // during intermediate normalization (e.g. 1000 px -> 250 cells).
+            (f64::from(self.origin[i])
+                + f64::from(point[i]) * f64::from(self.size[i]) / f64::from(viewport[i]))
+                as f32
         }))
     }
 }
@@ -49,5 +53,20 @@ mod tests {
         assert!(camera.view_to_world([0., 0.], [0., 1080.]).is_none());
         assert!(Camera2D::new([f32::NAN, 0.], [1., 1.]).is_err());
         assert!(Camera2D::new([0., 0.], [0., 1.]).is_err());
+    }
+
+    #[test]
+    fn exact_cell_boundaries_and_adjacent_pixels_map_to_the_intended_cell() {
+        let camera = Camera2D::new([0., 0.], [480., 270.]).unwrap();
+        for (pixel, expected) in [(999., 249.75), (1000., 250.), (1001., 250.25)] {
+            let world = camera.view_to_world([pixel, 240.], [1920., 1080.]).unwrap();
+            assert_eq!(world, [expected, 60.]);
+            assert_eq!(world[0].floor(), expected.floor());
+        }
+        let camera = Camera2D::new([12.5, 25.], [240., 135.]).unwrap();
+        assert_eq!(
+            camera.view_to_world([1000., 240.], [1920., 1080.]),
+            Some([137.5, 55.])
+        );
     }
 }

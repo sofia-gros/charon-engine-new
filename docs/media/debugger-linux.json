@@ -1,39 +1,44 @@
 {
-  "source_sha256": "0c23d459d7431143e545694a1a5576a80e5337138ea0507c7416ecbbbe552cb9",
+  "source_sha256": "c3e709fa2ae9f38f3c3c0dc99c6bfdf48a80c6608e72b32e384a5a5d7447dbec",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "debugger",
-  "base_revision": "6faeb6947f1966ebc7ff98449c445fa182241417",
+  "base_revision": "46af8a0e99ef26050d35083a0b7239632facad77",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.0,
-  "gif_encoded_frames": 104,
+  "observed_capture_fps": 8.004,
+  "gif_encoded_frames": 109,
   "draw_submission_fps_range": [
-    5.33,
-    48.64
+    3.48,
+    42.86
   ],
   "simulation_hz_range": [
     0.0,
-    73.55
+    78.23
   ],
-  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. GPU execution time and physical presentation are not measured.",
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
   "captured_frames": 112,
-  "gif_duration_ms": 14060,
-  "source_size": [
-    1920,
-    1080
-  ],
+  "gif_duration_ms": 14030,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
     960,
     540
   ],
-  "paused_step_ticks": [
-    88,
-    89,
-    90,
-    91
+  "fluid_backend": null,
+  "fluid_compute_adapter": null,
+  "simulation_grid": [
+    480,
+    270
   ],
-  "replay": "replay_ticks=854 checks=terrain,player,input_state workers=1",
+  "paused_step_ticks": [
+    93,
+    94,
+    95,
+    96
+  ],
+  "replay": "replay_ticks=859 checks=terrain,player,input_state workers=1",
   "checks": [
     "frozen terrain/actor",
     "display while paused",
@@ -42,6 +47,7 @@
     "reset preserves pause",
     "resume",
     "authoritative replay with 1 worker",
-    "Escape shutdown"
+    "Escape shutdown",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
   ]
 }
