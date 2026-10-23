@@ -1,0 +1,51 @@
+{
+  "source_sha256": "147590f11c1371bf7c31565c669fbfe4ff10eb5b9ed3bf6b1d8f4e8048b7cf1b",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "combat",
+  "base_revision": "b3c699f43ced4f6a1ddcef58e7a32475512cf5c7",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 8.001,
+  "gif_encoded_frames": 153,
+  "draw_submission_fps_range": [
+    3.4,
+    35.93
+  ],
+  "simulation_hz_range": [
+    0.0,
+    67.99
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
+  "captured_frames": 160,
+  "gif_duration_ms": 19990,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": null,
+  "fluid_compute_adapter": null,
+  "simulation_grid": [
+    480,
+    270
+  ],
+  "seed": 42,
+  "replay": "replay_ticks=1219 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "start screen",
+    "aimed ranged combat",
+    "enemy defeat",
+    "enemy fire and player damage",
+    "defeated game freezes",
+    "same-seed retry restores health and enemy",
+    "exploration",
+    "digging",
+    "grid placement/erasure",
+    "authoritative replay with 1 worker",
+    "Escape shutdown",
+    "PNG+JSON actor sprite rendered through shared GPU pipeline"
+  ]
+}

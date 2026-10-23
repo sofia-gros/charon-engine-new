@@ -149,7 +149,7 @@ def source_fingerprint():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
+    parser.add_argument("--sample", choices=("combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
     parser.add_argument("--fluid-backend", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--grid", default="480x270", help="simulation grid; client remains 1920x1080")
     args = parser.parse_args()
@@ -157,7 +157,7 @@ def main():
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}{'-gpu' if args.fluid_backend == 'gpu' else ''}-linux"
     local = LOCAL / sample
-    duration = 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
+    duration = 20 if sample == "combat" else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -221,7 +221,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample == "exploration" else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample == "exploration" else []), *(["--game", "42"] if sample == "combat" else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -475,6 +475,54 @@ EndSection
                 at(11)
                 inputs.key(ord("c"))
                 at(11.5)
+                inputs.key(ord("p"))
+            elif sample == "combat":
+                at(0.8)
+                inputs.key(0xff0d)
+                at(1.2)
+                inputs.key(ord("3"))
+                inputs.key(ord("i"))
+                inputs.move(480, 672)
+                inputs.button(1, True)
+                at(1.5)
+                inputs.button(1, False)
+                at(1.8)
+                inputs.button(3, True)
+                at(2.1)
+                inputs.button(3, False)
+                at(2.3)
+                inputs.key(ord("q"))
+                inputs.move(1166, 696)
+                for moment in (2.5, 3.2, 3.9):
+                    at(moment)
+                    inputs.button(1, True)
+                    at(moment + 0.12)
+                    inputs.button(1, False)
+                at(4.8)
+                inputs.hold(ord("d"), True)
+                at(5.3)
+                inputs.hold(ord("d"), False)
+                at(5.4)
+                inputs.hold(ord("f"), True)
+                at(5.9)
+                inputs.hold(ord("f"), False)
+                at(6.5)
+                inputs.key(ord("r"))
+                at(14)
+                inputs.key(ord("r"))
+                at(14.6)
+                inputs.hold(ord("d"), True)
+                at(15.2)
+                inputs.hold(ord("d"), False)
+                at(15.4)
+                inputs.hold(ord("f"), True)
+                at(16)
+                inputs.hold(ord("f"), False)
+                at(16.2)
+                inputs.key(ord("p"))
+                at(17)
+                inputs.key(ord("r"))
+                at(18)
                 inputs.key(ord("p"))
             elif sample == "exploration":
                 at(0.4)
@@ -780,6 +828,24 @@ EndSection
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "checks": ["camera follow", "zoom", "real window resize", "mouse paint/inspection in world coordinates", "interpolated player presentation", "exact pause/step/reset positions", "facing reset", "client-only capture during resize", "authoritative replay with 1 worker", "Escape shutdown"]}
+            elif sample == "combat":
+                assert {"Ready", "Playing", "Defeated"}.issubset({r["run_phase"] for r in rows}), "start/play/defeat flow missing"
+                assert all(r["simulation_tick"] == "0" for r in rows if r["run_phase"] == "Ready"), "title advanced simulation"
+                assert max(int(r["kills"] or 0) for r in rows) == 1, "aimed shots did not defeat enemy"
+                assert any(int(r["enemy_shots"] or 0) > 0 for r in rows), "enemy shots missing"
+                ended = [r for r in rows if r["run_phase"] == "Defeated"]
+                assert len(ended) >= 2 and len({r["simulation_tick"] for r in ended}) == 1, "defeated game did not freeze"
+                assert all(r["player_health"] == "0" for r in ended), "defeat without zero health"
+                last_defeat = max(i for i, r in enumerate(rows) if r["run_phase"] == "Defeated")
+                assert any(r["run_phase"] == "Playing" and r["player_health"] == "3" and r["enemies"] == "1" for r in rows[last_defeat + 1:]), "retry did not restore run"
+                inspected = [r for r in rows if r["inspect_x"] == "120" and r["inspect_y"] == "168"]
+                assert any(r["material"] == "2" for r in inspected) and any(r["material"] == "0" for r in inspected), "grid placement/erase missing"
+                assert max(float(r["player_x"]) for r in rows) > 90, "exploration missing"
+                assert max(float(r["player_y"]) for r in rows) > 180, "digging missing"
+                assert all(r["embedded"] == "false" for r in rows), "actor embedded"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"seed": 42, "replay": replay.stdout.strip(), "checks": ["start screen", "aimed ranged combat", "enemy defeat", "enemy fire and player damage", "defeated game freezes", "same-seed retry restores health and enemy", "exploration", "digging", "grid placement/erasure", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "exploration":
                 assert {"42", "43"}.issubset({r["exploration_seed"] for r in rows}), "seed generation/switch missing"
                 inspected = [r for r in rows if r["inspect_x"] == "120" and r["inspect_y"] == "160"]
@@ -828,7 +894,7 @@ EndSection
                 checks["paused_simulation_tick"] = int(paused[0]["simulation_tick"])
                 checks["texture_frames_while_paused"] = len(patches)
                 checks["checks"].append("material texture animation while physics tick stays fixed")
-            if sample in ("exploration", "platformer", "debugger", "projectiles", "camera", "placement"):
+            if sample in ("combat", "exploration", "platformer", "debugger", "projectiles", "camera", "placement"):
                 assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
                 assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"
                 checks["checks"].append("PNG+JSON actor sprite rendered through shared GPU pipeline")

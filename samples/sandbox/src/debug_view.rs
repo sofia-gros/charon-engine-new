@@ -56,6 +56,22 @@ pub fn overlays(
             rect(x + 0.8, y, 0.2, 1., accent),
         ]);
     }
+    if let Some(combat) = &frame.combat {
+        for enemy in &combat.enemies {
+            let [x, y, w, h] = enemy.rect;
+            result.push(rect(x, y, w, h, [0.9, 0.25, 0.25, 1.]));
+            result.push(rect(
+                x,
+                y - 2.,
+                w * f32::from(enemy.health) / 3.,
+                1.,
+                [1., 0.8, 0.2, 1.],
+            ));
+        }
+        for &[x, y] in &combat.shots {
+            result.push(rect(x - 1., y, 2., 1., [1., 0.4, 0.4, 1.]));
+        }
+    }
     for &[x, y] in &frame.shots {
         result.push(rect(x - 2., y, 3., 0.7, [1., 0.95, 0.3, 1.]));
     }
@@ -99,11 +115,7 @@ pub fn overlays(
             &mut result,
             4.,
             25.,
-            &format!(
-                "{} TICK {:06}",
-                if frame.paused { "PAUSED" } else { "RUNNING" },
-                frame.simulation_tick
-            ),
+            &format!("{} TICK {:06}", frame.state_label(), frame.simulation_tick),
             accent,
         );
         let detail = frame.inspection.map_or_else(
@@ -173,6 +185,20 @@ pub fn overlays(
         };
         result.push(rect(2., 69., 300., 11., [0.03, 0.06, 0.1, 1.]));
         text(&mut result, 4., 71., &label, [0.75, 0.9, 1., 1.]);
+    }
+    if let Some(combat) = &frame.combat {
+        result.push(rect(2., 81., 360., 11., [0.03, 0.06, 0.1, 1.]));
+        let label = match combat.phase {
+            crate::combat::Phase::Ready => "ENTER TO START - Q WAND 3 BUILD".into(),
+            crate::combat::Phase::Playing => format!(
+                "HP {} ENEMIES {} DEFEATED {}",
+                combat.health,
+                combat.enemies.len(),
+                combat.kills
+            ),
+            crate::combat::Phase::Defeated => "DEFEATED - R RETRY SAME MAP".into(),
+        };
+        text(&mut result, 4., 83., &label, [1., 0.8, 0.4, 1.]);
     }
     if let Some(error) = frame.image_error {
         result.push(rect(2., 69., 270., 11., [0.1, 0.03, 0.03, 1.]));

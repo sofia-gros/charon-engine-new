@@ -57,6 +57,8 @@ fn encode(command: &Command) -> String {
         Command::DamScene => "dam".into(),
         Command::AddOil => "oil".into(),
         Command::Explore(seed) => format!("explore:{seed}"),
+        Command::NewRun(seed) => format!("run:{seed}"),
+        Command::Begin => "begin".into(),
         Command::Terrain(SandCommand::Paint { x, y, material }) => {
             format!("paint:{x}:{y}:{material}")
         }
@@ -121,6 +123,8 @@ fn decode(text: &str) -> Result<Command, String> {
             }
         }
         ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
+        ["run", seed] => Command::NewRun(seed.parse().map_err(|_| bad())?),
+        ["begin"] => Command::Begin,
         ["cup"] => Command::CupScene,
         ["dam"] => Command::DamScene,
         ["oil"] => Command::AddOil,
@@ -365,6 +369,30 @@ mod tests {
         }
         drop(game);
         assert_eq!(replay(&path, 1).unwrap(), 100);
+        std::fs::remove_file(path).unwrap();
+    }
+    #[test]
+    fn combat_lifecycle_replays_death_and_retry_across_workers() {
+        use crate::combat::Phase;
+        let path =
+            std::env::temp_dir().join(format!("charon-combat-test-{}.trace", std::process::id()));
+        let mut game = Game::new(480, 270, 4, true).unwrap();
+        game.record_to(&path).unwrap();
+        let mut saw_defeat = false;
+        for tick in 0..430 {
+            let commands = match tick {
+                0 => vec![Command::NewRun(42)],
+                1 => vec![Command::Begin],
+                400 => vec![Command::Terrain(SandCommand::Clear)],
+                405 => vec![Command::FireAt([291.5, 174.])],
+                _ => vec![],
+            };
+            let frame = game.step(commands);
+            saw_defeat |= frame.combat.as_ref().unwrap().phase == Phase::Defeated;
+        }
+        assert!(saw_defeat);
+        drop(game);
+        assert_eq!(replay(&path, 1).unwrap(), 430);
         std::fs::remove_file(path).unwrap();
     }
 }

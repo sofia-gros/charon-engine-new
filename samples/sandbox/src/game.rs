@@ -11,6 +11,8 @@ pub enum Command {
     DamScene,
     AddOil,
     Explore(u64),
+    NewRun(u64),
+    Begin,
     PlaceImage([f32; 2]),
     EraseImage([f32; 2]),
     Left(bool),
@@ -47,6 +49,7 @@ pub struct Inspection {
     pub awake: Option<bool>,
 }
 pub struct Frame {
+    pub combat: Option<crate::combat::Frame>,
     pub exploration_seed: Option<u64>,
     pub cup: Option<crate::cup::Status>,
     pub terrain: charon_sand::Frame,
@@ -65,21 +68,38 @@ pub struct Frame {
     pub inspection: Option<Inspection>,
 }
 impl Frame {
+    pub fn state_label(&self) -> &'static str {
+        match self.combat.as_ref().map(|c| c.phase) {
+            Some(crate::combat::Phase::Ready) => "READY",
+            Some(crate::combat::Phase::Defeated) => "DEFEATED",
+            _ if self.paused => "PAUSED",
+            _ => "RUNNING",
+        }
+    }
     pub fn player_position(&self, elapsed: std::time::Duration) -> Option<[f32; 2]> {
         let body = self.player?;
         let current = [body.x(), body.y()];
-        Some(if self.paused || body.discontinuous || body.embedded {
-            current
-        } else {
-            self.previous_player.map_or(current, |previous| {
-                charon_runtime::interpolate(
-                    previous,
-                    current,
-                    elapsed,
-                    std::time::Duration::from_secs_f64(1. / 60.),
-                )
-            })
-        })
+        Some(
+            if self.paused
+                || body.discontinuous
+                || body.embedded
+                || self
+                    .combat
+                    .as_ref()
+                    .is_some_and(|c| c.phase != crate::combat::Phase::Playing)
+            {
+                current
+            } else {
+                self.previous_player.map_or(current, |previous| {
+                    charon_runtime::interpolate(
+                        previous,
+                        current,
+                        elapsed,
+                        std::time::Duration::from_secs_f64(1. / 60.),
+                    )
+                })
+            },
+        )
     }
 }
 struct Spark {
@@ -88,6 +108,7 @@ struct Spark {
     life: u8,
 }
 pub struct Game {
+    combat: Option<crate::combat::Combat>,
     exploration_seed: Option<u64>,
     cup: Option<crate::cup::Cup>,
     world: SandWorld,
@@ -148,6 +169,7 @@ impl Game {
             SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
+            combat: None,
             exploration_seed: None,
             cup: None,
             images: vec![],
@@ -196,6 +218,9 @@ impl Game {
             )?;
             next.player = Some(Body::new(spawn[0], spawn[1], 7., 12.));
             next.exploration_seed = Some(seed);
+            if self.combat.is_some() {
+                next.prepare_combat(false);
+            }
         }
         next.recorder = self.recorder.take();
         next.fluid_gpu = self.fluid_gpu.clone();
@@ -203,6 +228,17 @@ impl Game {
         next.inspection = self.inspection;
         *self = next;
         Ok(())
+    }
+    fn prepare_combat(&mut self, ready: bool) {
+        let x = self.width * 3 / 5;
+        self.world.apply_edits(vec![SandCommand::FillRect {
+            x: x - 2,
+            y: self.height * 2 / 3 - 16,
+            width: 12,
+            height: 16,
+            material: AIR,
+        }]);
+        self.combat = Some(crate::combat::Combat::new(self.width, self.height, ready));
     }
     pub fn use_fluid_gpu(&mut self, gpu: std::sync::Arc<charon_fluid::gpu::GpuContext>) {
         self.fluid_gpu = Some(gpu);
@@ -235,6 +271,12 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if let Some(combat) = &self.combat {
+            mix(0x636f6d626174);
+            for value in combat.signature() {
+                mix(value);
+            }
+        }
         if let Some(seed) = self.exploration_seed {
             mix(0x63617665);
             mix(seed);
@@ -379,23 +421,47 @@ impl Game {
             self.fire_target = None;
         }
         let world = &self.world;
+        let enemies = self
+            .combat
+            .as_ref()
+            .map_or_else(Vec::new, |c| c.colliders());
         let impacts = self.projectiles.step(|x, y| {
-            world.material_at(x, y).is_none_or(|id| {
-                world
-                    .materials()
-                    .get(id)
-                    .is_some_and(|m| m.blocks_projectiles)
-            })
+            enemies.iter().any(|&r| crate::combat::contains(r, x, y))
+                || world.material_at(x, y).is_none_or(|id| {
+                    world
+                        .materials()
+                        .get(id)
+                        .is_some_and(|m| m.blocks_projectiles)
+                })
         });
         if !impacts.is_empty() {
             let mut destruction = Vec::new();
             for impact in impacts {
                 self.impacts += 1;
-                destruction.push(SandCommand::Paint {
-                    x: impact.cell[0].max(0) as usize,
-                    y: impact.cell[1].max(0) as usize,
-                    material: AIR,
-                });
+                let terrain_hit = self
+                    .world
+                    .material_at(impact.cell[0], impact.cell[1])
+                    .is_none_or(|id| {
+                        self.world
+                            .materials()
+                            .get(id)
+                            .is_some_and(|m| m.blocks_projectiles)
+                    });
+                let enemy_hit = !terrain_hit
+                    && enemies
+                        .iter()
+                        .any(|&r| crate::combat::contains(r, impact.cell[0], impact.cell[1]));
+                if enemy_hit {
+                    if let Some(combat) = &mut self.combat {
+                        combat.hit_enemy(impact.cell);
+                    }
+                } else {
+                    destruction.push(SandCommand::Paint {
+                        x: impact.cell[0].max(0) as usize,
+                        y: impact.cell[1].max(0) as usize,
+                        material: AIR,
+                    });
+                }
                 // Sample visual effect, deliberately separate from physical cells.
                 for velocity in [[-0.5, -0.8], [0.4, -0.9], [-0.8, -0.3], [0.7, -0.2]] {
                     self.sparks.push(Spark {
@@ -430,6 +496,25 @@ impl Game {
                 },
             );
         }
+        if let (Some(combat), Some(player)) = (&mut self.combat, self.player) {
+            let world = &self.world;
+            combat.tick(
+                player,
+                |x, y| {
+                    world
+                        .material_at(x, y)
+                        .is_none_or(|id| world.materials().get(id).is_some_and(|m| m.blocks_actors))
+                },
+                |x, y| {
+                    world.material_at(x, y).is_none_or(|id| {
+                        world
+                            .materials()
+                            .get(id)
+                            .is_some_and(|m| m.blocks_projectiles)
+                    })
+                },
+            );
+        }
         self.jump_pending = false;
         frame
     }
@@ -442,6 +527,23 @@ impl Simulation for Game {
         let mut terrain = Vec::new();
         let mut steps = 0;
         for command in commands {
+            if self
+                .combat
+                .as_ref()
+                .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
+                && !matches!(
+                    command,
+                    Command::NewRun(_)
+                        | Command::Begin
+                        | Command::Explore(_)
+                        | Command::Terrain(SandCommand::Clear)
+                        | Command::Inspect(_)
+                        | Command::Pause
+                        | Command::Step
+                )
+            {
+                continue;
+            }
             match command {
                 Command::Terrain(SandCommand::Clear) if self.player.is_some() => {
                     self.restart(self.exploration_seed)
@@ -449,13 +551,29 @@ impl Simulation for Game {
                     terrain.clear();
                     steps = 0;
                 }
-                Command::Explore(seed) => match self.restart(Some(seed)) {
-                    Ok(()) => {
-                        terrain.clear();
-                        steps = 0;
+                Command::Begin => {
+                    if let Some(combat) = &mut self.combat {
+                        combat.begin();
                     }
-                    Err(_) => self.image_error = Some("EXPLORE NEEDS GRID 160X120 OR LARGER"),
-                },
+                }
+                command @ (Command::Explore(_) | Command::NewRun(_)) => {
+                    let (seed, run) = match command {
+                        Command::Explore(seed) => (seed, false),
+                        Command::NewRun(seed) => (seed, true),
+                        _ => unreachable!(),
+                    };
+                    match self.restart(Some(seed)) {
+                        Ok(()) => {
+                            self.combat = None;
+                            if run {
+                                self.prepare_combat(true);
+                            }
+                            terrain.clear();
+                            steps = 0;
+                        }
+                        Err(_) => self.image_error = Some("EXPLORE NEEDS GRID 160X120 OR LARGER"),
+                    }
+                }
                 command @ (Command::CupScene | Command::DamScene) => {
                     terrain.clear();
                     let create = if matches!(command, Command::CupScene) {
@@ -468,6 +586,7 @@ impl Simulation for Game {
                             if let Some(gpu) = &self.fluid_gpu {
                                 cup.use_gpu(gpu.clone());
                             }
+                            self.combat = None;
                             self.exploration_seed = None;
                             self.cup = Some(cup);
                             self.player = None;
@@ -552,7 +671,13 @@ impl Simulation for Game {
                 Command::Inspect(point) => self.inspection = point,
             }
         }
-        let advances = if steps > 0 {
+        let advances = if self
+            .combat
+            .as_ref()
+            .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
+        {
+            0
+        } else if steps > 0 {
             steps
         } else {
             usize::from(!self.paused)
@@ -562,6 +687,13 @@ impl Simulation for Game {
         } else {
             let mut frame = self.advance(terrain);
             for _ in 1..advances {
+                if self
+                    .combat
+                    .as_ref()
+                    .is_some_and(|c| c.phase() != crate::combat::Phase::Playing)
+                {
+                    break;
+                }
                 frame = self.advance(vec![]);
             }
             frame
@@ -579,6 +711,7 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            combat: self.combat.as_ref().map(|c| c.frame()),
             exploration_seed: self.exploration_seed,
             cup: self.cup.as_ref().map(|c| c.status(&self.world)),
             terrain: frame,
@@ -1298,5 +1431,138 @@ mod tests {
         let invalid = game.step(vec![Command::FireAt([f32::NAN, 0.])]);
         assert_eq!(invalid.image_error, Some("INVALID AIM POSITION"));
         assert!(!game.fire_pending);
+    }
+    #[test]
+    fn run_starts_ends_freezes_and_retries_the_same_map_and_health() {
+        use crate::combat::Phase;
+        let mut game = Game::new(480, 270, 4, true).unwrap();
+        let ready = game.step(vec![Command::NewRun(42)]);
+        assert_eq!(ready.state_label(), "READY");
+        assert_eq!(ready.combat.unwrap().phase, Phase::Ready);
+        for _ in 0..5 {
+            let frame = game.step(vec![Command::Right(true), Command::FireAt([290., 174.])]);
+            assert_eq!(frame.simulation_tick, 0);
+            assert!(frame.shots.is_empty());
+        }
+        let playing = game.step(vec![Command::Begin]);
+        assert_eq!(playing.combat.unwrap().phase, Phase::Playing);
+        let initial = game.signature();
+        let paused = game.step(vec![Command::Pause]);
+        let clock = paused.simulation_tick;
+        let signature = game.signature();
+        for _ in 0..10 {
+            assert_eq!(game.step(vec![]).simulation_tick, clock);
+        }
+        assert_eq!(game.signature(), signature, "combat advanced while paused");
+        game.step(vec![Command::Pause]);
+        let mut defeated = None;
+        for _ in 0..500 {
+            let frame = game.step(vec![]);
+            if frame.combat.as_ref().unwrap().phase == Phase::Defeated {
+                defeated = Some(frame);
+                break;
+            }
+        }
+        let end = defeated.expect("enemy fire never ended the run");
+        assert_eq!(end.state_label(), "DEFEATED");
+        assert_eq!(end.combat.unwrap().health, 0);
+        let end_signature = game.signature();
+        for _ in 0..20 {
+            let frame = game.step(vec![
+                Command::Right(true),
+                Command::FireAt([290., 174.]),
+                Command::Terrain(SandCommand::Paint {
+                    x: 60,
+                    y: 168,
+                    material: WALL,
+                }),
+            ]);
+            assert_eq!(frame.simulation_tick, end.simulation_tick);
+        }
+        assert_eq!(
+            game.signature(),
+            end_signature,
+            "defeated game still accepted play inputs"
+        );
+        let retry = game.step(vec![Command::Terrain(SandCommand::Clear)]);
+        assert_eq!(retry.combat.unwrap().health, 3);
+        assert_eq!(game.signature(), initial, "retry failed to restore the run");
+    }
+
+    #[test]
+    fn ranged_combat_respects_terrain_and_defeats_enemies() {
+        use crate::combat::Phase;
+        for blocked in [true, false] {
+            let mut game = Game::new(480, 270, 1, true).unwrap();
+            game.step(vec![Command::NewRun(42), Command::Begin]);
+            if blocked {
+                game.step(vec![Command::Terrain(SandCommand::FillRect {
+                    x: 120,
+                    y: 148,
+                    width: 8,
+                    height: 32,
+                    material: WALL,
+                })]);
+                game.step(vec![Command::FireAt([291., 174.])]);
+                for _ in 0..30 {
+                    game.step(vec![]);
+                }
+                assert_eq!(
+                    game.combat.as_ref().unwrap().frame().enemies[0].health,
+                    3,
+                    "player shot passed through cover"
+                );
+                // Restore the cover after the player's deliberate terrain damage.
+                game.step(vec![Command::Terrain(SandCommand::FillRect {
+                    x: 120,
+                    y: 148,
+                    width: 8,
+                    height: 32,
+                    material: WALL,
+                })]);
+                for _ in 0..400 {
+                    game.step(vec![]);
+                }
+                let combat = game.combat.as_ref().unwrap().frame();
+                assert_eq!(
+                    (combat.health, combat.phase),
+                    (3, Phase::Playing),
+                    "enemy shots passed through cover"
+                );
+            } else {
+                for _ in 0..3 {
+                    game.step(vec![Command::FireAt([291., 174.])]);
+                }
+                for _ in 0..40 {
+                    game.step(vec![]);
+                }
+                let combat = game.combat.as_ref().unwrap().frame();
+                assert!(combat.enemies.is_empty());
+                assert_eq!((combat.kills, combat.health), (1, 3));
+            }
+        }
+    }
+    #[test]
+    fn a_batch_of_single_steps_stops_at_the_defeat_boundary() {
+        let mut reference = Game::new(480, 270, 1, true).unwrap();
+        reference.step(vec![Command::NewRun(42), Command::Begin]);
+        let defeat_tick = loop {
+            let frame = reference.step(vec![]);
+            if frame.combat.unwrap().phase == crate::combat::Phase::Defeated {
+                break frame.simulation_tick;
+            }
+            assert!(frame.simulation_tick < 500);
+        };
+        let mut game = Game::new(480, 270, 4, true).unwrap();
+        game.step(vec![Command::NewRun(42), Command::Begin]);
+        while game.world.tick() < defeat_tick - 5 {
+            game.step(vec![]);
+        }
+        let frame = game.step(vec![Command::Step; 8]);
+        assert_eq!(frame.combat.unwrap().phase, crate::combat::Phase::Defeated);
+        assert_eq!(
+            frame.simulation_tick, defeat_tick,
+            "queued steps advanced past game end"
+        );
     }
 }

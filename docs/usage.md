@@ -1,12 +1,30 @@
 # 導入と使い方
 
+## 探索と戦闘
+
+```bash
+cargo run --locked -p charon-sandbox -- --game 42
+```
+
+Windowsでは計測CSVと入力記録をまとめて残せる。
+
+```powershell
+.\scripts\run.ps1 -Game -Seed 42 -RecordInputs
+```
+
+Enterで開始。A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。Qは杖モードで、マウスの位置を狙ってクリックで射撃する。3はブロック設置モード（左で設置、右で削除）。敵の赤い弾は地形で遮られる。体力がなくなるとプレイが止まり、Rで同じマップへ再挑戦できる。Pで停止/再開、Nでコマ送り、Escで終了する。
+
+![生成洞窟での探索・設置・射撃と再挑戦](media/combat-linux.gif)
+
+敵1体との撃ち合いを含む最小サンプル。体力や発射間隔、敵の見た目は仮のゲーム設定で、勝利条件は未決定。砂とGPU流体の連成や、大規模世界の読込/保存は含まない。`python3 scripts/capture-linux.py --sample combat`で開始・地形操作・撃破・敗北・再挑戦と別workerでの入力再生を確認する。[記録条件](media/combat-linux.json)・[入力列](media/combat-linux.trace)を同梱する。Windowsの実行と実機性能は未確認。
+
 ## 生成マップで探索する
 
 ```bash
 cargo run --locked -p charon-sandbox -- --explore 42
 ```
 
-A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。3を押すと左クリックでグリッド配置、右クリックで削除。Rは同じseedで再挑戦、Gは次のseedの洞窟を生成する。Pで停止/再開、Nでコマ送り。CPUの流体代替経路を選ぶ場合は`--fluid-backend cpu`を付ける。
+A/Dで移動、Spaceでジャンプ、F長押しで足元を掘る。Qは照準射撃。3を押すと左クリックでグリッド配置、右クリックで削除。Rは同じseedで再挑戦、Gは次のseedの洞窟を生成する。Pで停止/再開、Nでコマ送り。CPUの流体代替経路を選ぶ場合は`--fluid-backend cpu`を付ける。
 
 ![生成マップの探索・掘削・設置](media/exploration-linux.gif)
 

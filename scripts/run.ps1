@@ -5,6 +5,8 @@ param(
     [switch]$NoFluidTiming,
     [switch]$Smoke,
     [switch]$Play,
+    [switch]$Game,
+    [UInt64]$Seed = 42,
     [switch]$RecordInputs,
     [switch]$Software,
     [switch]$DebugBuild
@@ -12,6 +14,7 @@ param(
 $ErrorActionPreference = 'Stop'
 Push-Location (Split-Path $PSScriptRoot -Parent)
 try {
+    if ($Game -and $Smoke) { throw '-Game opens a start screen; use it without -Smoke.' }
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss-fff'
     $directory = 'artifacts/local'
     New-Item -ItemType Directory -Force $directory | Out-Null
@@ -24,7 +27,8 @@ try {
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }
-    if ($Play) { $cargoArgs += '--play' }
+    if ($Game) { $cargoArgs += @('--game', "$Seed") }
+    elseif ($Play) { $cargoArgs += '--play' }
     if ($Software) { $cargoArgs += '--software' }
     & cargo @cargoArgs
     if ($LASTEXITCODE -ne 0) { throw "Sandbox exited with code $LASTEXITCODE" }
