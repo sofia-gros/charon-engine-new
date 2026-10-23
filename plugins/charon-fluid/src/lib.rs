@@ -47,6 +47,9 @@ pub struct GpuStats {
     pub upload_bytes: u64,
     pub readback_bytes: u64,
     pub dispatches: u32,
+    /// Largest dispatch in this tick, not simultaneous hardware occupancy.
+    pub velocity_workgroups: u32,
+    pub pressure_workgroups: u32,
 }
 #[cfg(feature = "gpu")]
 impl GpuStats {
@@ -67,6 +70,12 @@ impl GpuStats {
         self.upload_bytes += work.upload_bytes;
         self.readback_bytes += work.readback_bytes;
         self.dispatches += work.dispatches;
+        let groups = if pressure {
+            &mut self.pressure_workgroups
+        } else {
+            &mut self.velocity_workgroups
+        };
+        *groups = (*groups).max(work.max_workgroups);
     }
 }
 #[derive(Clone, Copy, Debug, Default)]
@@ -330,6 +339,8 @@ impl Fluid {
                 gpu.upload_bytes = 0;
                 gpu.readback_bytes = 0;
                 gpu.dispatches = 0;
+                gpu.velocity_workgroups = 0;
+                gpu.pressure_workgroups = 0;
             }
             return Ok(self.stats);
         }

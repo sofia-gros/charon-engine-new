@@ -100,17 +100,21 @@ Kでコップと水を作り、A/Dまたは左右キーで並進、Oで油を追
 
 サンプルは`--fluid-backend gpu`が既定で、速度移流/粘性と圧力反復をwgpu computeで計算する。`--fluid-backend cpu`（Windows起動スクリプトでは`-FluidBackend cpu`）でCPU基準版を選べる。GPU初期化失敗時は理由と代替オプションを表示し、黙って経路を変えない。plugin単体は`gpu` featureを有効にし、共有する`GpuContext`を`Fluid::use_gpu`へ渡す。体積を所有する幾何VOF・境界係数生成・力/速度延長は現段階でCPU側に残る。
 
-CFDの`Stats.gpu`はGPU経路でのみ存在し、速度/圧力のcompute passをGPUタイムスタンプで計測する。CSVの`fluid_gpu_velocity_ms`/`fluid_gpu_pressure_ms`は全substepと再試行の合計。既存の`fluid_velocity_ms`/`fluid_pressure_ms`はCPU側の作業・転送・GPU待ちも含む経過時間なので、GPU時間と区別する。`fluid_gpu_upload_bytes`/`fluid_gpu_readback_bytes`は明示的なGPU入出力量、`fluid_gpu_dispatches`はそのtickのcompute実行回数。値は直近の物理tickについての値で、停止中はその値を保持し、休止tickでは0になる。
+CFDの`Stats.gpu`はGPU経路でのみ存在し、速度/圧力のcompute passをGPUタイムスタンプで計測する。CSVの`fluid_gpu_velocity_ms`/`fluid_gpu_pressure_ms`は全substepと再試行の合計。既存の`fluid_velocity_ms`/`fluid_pressure_ms`はCPU側の作業・転送・GPU待ちも含む経過時間なので、GPU時間と区別する。`fluid_gpu_upload_bytes`/`fluid_gpu_readback_bytes`は明示的なGPU入出力量、`fluid_gpu_dispatches`はそのtickのcompute実行回数。読み戻し量はタイムスタンプとアラインメント領域を含む要求範囲で、PCIe上の実トラフィックを測った値ではない。値は直近の物理tickについての値で、停止中はその値を保持し、休止tickでは0になる。
 
 タイムスタンプ非対応/無効時のGPU時間は`None`（CSVは空欄、HUDは`GPU TIMER N/A`）とし、CPU時間や0で代用しない。`GpuContext::with_timing(false)`、CLIの`--no-fluid-timing`、Windowsスクリプトの`-NoFluidTiming`で無効にできる。記録形式/物理状態へ影響させず、計測あり/なしで同一状態になることを検証する。タイムスタンプの読み出しは既存の物理結果の読み出しと同じ送信へまとめ、計測専用の追加待機を作らない。静止/休止時はcompute・転送も省く。描画GPU時間、実表示の到達時刻、ハードウェアGPUの性能達成とは別の測定。
 
-GPUの圧力は液体セルを圧縮した配列でJacobi前処理CGを実行し、反復中のCPU待ちを避ける。f32の解は元のf64作用素で残差を検査し、追加のGPU補正でCPU基準と同じ許容値へ収束させる。密閉した各連結領域は基準圧力を1点固定する。現在の圧力kernelは1 workgroupで協調する初期実装で、大領域でGPU全体を使う性能は保証しない。格子間転送/同期も含む実機測定を行い、圧力の分割・前処理を改善する。GPUの入力/作業/読戻しバッファは容量を拡張しながら再利用する。クラウドのSwiftShaderはGPU命令をCPUで代行するため、RTX 4060の性能指標には使わない。
+GPUの圧力は液体セルだけの連続配列でJacobi前処理CGを実行する。8,192自由度未満は1 workgroup内で協調し、それ以上は128セルずつ複数workgroupへ分散する。内積もGPUで集計し、16反復ずつまとめて実行して小さな収束状態だけを読み戻す。隣接セルの古い探索方向と新しい方向は別領域へ置き、書込中の値を他groupが読まない。分散経路の最後は圧力だけを1セル4バイトへ詰め、Krylov作業配列全体をCPUへ戻さない。
 
-`VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture`で実computeを検証する。既知解3サイズ、CPU版との全MAC速度面の比較、密閉容器/水と油/液滴の各90tickで体積保存・発散・CPUとの差を確認する。アダプター不在なら失敗し、成功扱いでスキップしない。Linux CIにもこの検証を追加している。
+f32の解は元のf64作用素で残差を検査し、追加のGPU補正でCPU基準と同じ許容値へ収束させる。小領域の密閉成分は1点の基準圧力を固定する。大領域は元のNeumann作用素で解き、成分ごとに丸めた右辺の整合性と補正後の圧力の定数分を扱い、一点固定による条件数の悪化を避ける。面ごとの差で作用素を評価するため、可変密度でも定数圧力が余計な力を生まない。GPUの入力/作業/読戻しバッファは拡張しながら再利用し、大領域から小領域へ戻す場合も実際の要素数だけをbindする。
+
+`Stats.gpu.velocity_workgroups`/`pressure_workgroups`とCSVの同名列は、そのtickで発行した各段階の最大workgroup数。休止/実行不要なら0になる。CPUワーカー数やGPUの同時実行占有率とは区別する。CloudのSwiftShaderはGPU命令をCPUで代行するため、分散処理の時間をRTX 4060の性能値にしない。ハードウェアGPUで転送/同期を含めた計測を行い、前処理と反復/転送をさらに改善する。
+
+`VK_DRIVER_FILES=/usr/lib/chromium/vk_swiftshader_icd.json cargo test --locked -p charon-fluid --features gpu gpu_compute -- --ignored --nocapture`で実computeを検証する。GPU検証2件で、既知解5サイズ（37/1,024/4,096/8,209/16,899自由度）、可変密度の閉/開境界の混在、全MAC速度面のCPU比較、密閉容器/水油/液滴の各90tickを確認する。さらに18,432液体セル・144 pressure workgroupの実際のMAC更新で体積/静水/発散、大領域から小領域へ戻すバッファ再利用を確認する。アダプター不在なら失敗し、成功扱いでスキップしない。Linux CIにもこの検証を追加している。
 
 ![GPU compute経路の慣性波と水・油（LinuxソフトウェアGPU）](media/fluid-wave-gpu-linux.gif)
 
-`python3 scripts/capture-linux.py --sample fluid-wave --fluid-backend gpu --grid 128x100`は短い慣性波の画面検証。[結果JSON](media/fluid-wave-gpu-linux.json)・[状態CSV](media/fluid-wave-gpu-linux.csv)・[GPU入力記録](media/fluid-wave-gpu-linux.trace)を同梱。往復移動、液面の両方向への傾き、水/油の表示、相別保存、一時停止、入力再生を確認する。静止後の層・深部の空洞・休止まで確認する上のCPUコップ受入例とは範囲を分ける。
+`python3 scripts/capture-linux.py --sample fluid-wave --fluid-backend gpu --grid 128x100`は短い慣性波の画面検証。[結果JSON](media/fluid-wave-gpu-linux.json)・[状態CSV](media/fluid-wave-gpu-linux.csv)・[GPU入力記録](media/fluid-wave-gpu-linux.trace)を同梱。GIFは小領域の協調kernelの記録で、分散kernelの確認は上記の大領域検証で行う。往復移動、液面の両方向への傾き、水/油の表示、相別保存、一時停止、入力再生を確認する。静止後の層・深部の空洞・休止まで確認する上のCPUコップ受入例とは範囲を分ける。
 
 ![GPU compute経路の水柱崩壊（LinuxソフトウェアGPU）](media/fluid-dam-gpu-linux.gif)
 

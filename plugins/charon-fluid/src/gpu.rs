@@ -6,6 +6,10 @@ use std::{
     time::Duration,
 };
 
+mod tiled;
+const TILED_THRESHOLD: usize = 8192;
+type Scratch = [Option<wgpu::Buffer>; 8];
+
 struct Timer {
     queries: wgpu::QuerySet,
     resolved: wgpu::Buffer,
@@ -16,6 +20,7 @@ pub(super) struct Work {
     pub upload_bytes: u64,
     pub readback_bytes: u64,
     pub dispatches: u32,
+    pub max_workgroups: u32,
 }
 impl Work {
     fn add(&mut self, other: Self) {
@@ -23,6 +28,7 @@ impl Work {
         self.upload_bytes += other.upload_bytes;
         self.readback_bytes += other.readback_bytes;
         self.dispatches += other.dispatches;
+        self.max_workgroups = self.max_workgroups.max(other.max_workgroups);
     }
 }
 pub(super) struct Velocity {
@@ -35,8 +41,9 @@ pub struct GpuContext {
     queue: wgpu::Queue,
     velocity: wgpu::ComputePipeline,
     pressure: wgpu::ComputePipeline,
+    tiled: tiled::TiledPressure,
     info: wgpu::AdapterInfo,
-    scratch: Mutex<[Option<wgpu::Buffer>; 6]>,
+    scratch: Mutex<Scratch>,
     timer: Option<Timer>,
 }
 impl GpuContext {
@@ -91,6 +98,7 @@ impl GpuContext {
         };
         let velocity = pipeline("MAC advection", include_str!("velocity.wgsl"));
         let pressure = pipeline("compact pressure CG", include_str!("pressure.wgsl"));
+        let tiled = tiled::TiledPressure::new(&device);
         if let Some(e) = scope.pop().await {
             return Err(e.to_string());
         }
@@ -113,6 +121,7 @@ impl GpuContext {
             queue,
             velocity,
             pressure,
+            tiled,
             info,
             scratch: Mutex::new(Default::default()),
         })
@@ -146,7 +155,7 @@ impl GpuContext {
     }
     fn buffer(
         &self,
-        cache: &mut [Option<wgpu::Buffer>; 6],
+        cache: &mut Scratch,
         slot: usize,
         label: &str,
         size: u64,
@@ -189,8 +198,23 @@ impl GpuContext {
             layout: &layout,
             entries: &entries,
         });
+        self.dispatch_read(output, size, readback, (1, groups), |pass| {
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, &bind, &[]);
+            pass.dispatch_workgroups(groups, 1, 1);
+        })
+    }
+    fn dispatch_read(
+        &self,
+        output: &wgpu::Buffer,
+        size: u64,
+        readback: &wgpu::Buffer,
+        execution: (u32, u32),
+        encode: impl FnOnce(&mut wgpu::ComputePass<'_>),
+    ) -> Result<(Vec<u8>, Work), Error> {
+        let (dispatches, max_workgroups) = execution;
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
+        if dispatches > 0 {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("fluid compute"),
                 timestamp_writes: self.timer.as_ref().map(|timer| {
@@ -201,13 +225,15 @@ impl GpuContext {
                     }
                 }),
             });
-            pass.set_pipeline(pipeline);
-            pass.set_bind_group(0, &bind, &[]);
-            pass.dispatch_workgroups(groups, 1, 1);
+            encode(&mut pass);
         }
         encoder.copy_buffer_to_buffer(output, 0, readback, 0, size);
-        let read_size = self.readback_size(size);
-        if let Some(timer) = &self.timer {
+        let read_size = if dispatches > 0 {
+            self.readback_size(size)
+        } else {
+            size
+        };
+        if let Some(timer) = self.timer.as_ref().filter(|_| dispatches > 0) {
             encoder.resolve_query_set(&timer.queries, 0..2, &timer.resolved, 0);
             encoder.copy_buffer_to_buffer(&timer.resolved, 0, readback, read_size - 16, 16);
         }
@@ -235,6 +261,9 @@ impl GpuContext {
                 .map_err(|_| Error::Backend)?
                 .to_vec();
             let kernel_ms = self.timer.as_ref().and_then(|_| {
+                if dispatches == 0 {
+                    return Some(0.);
+                }
                 let times = &bytes[read_size as usize - 16..];
                 let begin = u64::from_le_bytes(times[..8].try_into().unwrap());
                 let end = u64::from_le_bytes(times[8..].try_into().unwrap());
@@ -244,7 +273,8 @@ impl GpuContext {
             let work = Work {
                 kernel_ms,
                 readback_bytes: read_size,
-                dispatches: 1,
+                dispatches,
+                max_workgroups,
                 upload_bytes: 0,
             };
             Ok((bytes[..size as usize].to_vec(), work))
@@ -365,10 +395,11 @@ impl GpuContext {
                         .sum::<f64>();
             }
         };
-        // Anchor only components without a free-surface pressure reference.
-        // Keep the original operator for residual validation and physical faces.
+        // Identify closed components for gauge handling. Keep the original
+        // operator for f64 residual validation and physical face corrections.
         let mut anchors = vec![false; n];
         let mut visited = vec![false; n];
+        let mut closed_anchor = vec![usize::MAX; n];
         for start in 0..n {
             if visited[start] {
                 continue;
@@ -376,8 +407,11 @@ impl GpuContext {
             let mut stack = vec![start];
             visited[start] = true;
             let mut dirichlet = false;
+            let mut component = Vec::new();
             while let Some(i) = stack.pop() {
-                let (adj, a, _) = &rows[i];
+                component.push(i);
+                let (adj, a, diagonal) = &rows[i];
+                dirichlet |= *diagonal > a.iter().sum::<f64>() + 1e-12 * diagonal.abs().max(1e-20);
                 for k in 0..4 {
                     if adj[k] == usize::MAX {
                         dirichlet |= a[k] > 0.;
@@ -389,6 +423,13 @@ impl GpuContext {
             }
             if !dirichlet {
                 anchors[start] = true;
+                let gauge = p[start];
+                for i in component {
+                    if n >= TILED_THRESHOLD {
+                        p[i] -= gauge;
+                    }
+                    closed_anchor[i] = start;
+                }
             }
         }
         let tolerance = (rhs.iter().map(|v| v * v).sum::<f64>().sqrt() * 1e-8).max(1e-9);
@@ -406,10 +447,29 @@ impl GpuContext {
             if !scale.is_finite() || scale == 0. {
                 return Err(Error::Pressure);
             }
+            // A point-pinned Neumann system becomes unnecessarily ill
+            // conditioned at large sizes. Distributed CG keeps the compatible
+            // semidefinite operator; remove each component's arbitrary constant
+            // from the correction on readback. The f64 residual remains final.
+            let pin = n < TILED_THRESHOLD;
+            let mut right: Vec<f32> = residual.iter().map(|r| (r / scale) as f32).collect();
+            if !pin {
+                let mut sums = vec![0.; n];
+                for (i, &anchor) in closed_anchor.iter().enumerate() {
+                    if anchor != usize::MAX && i != anchor {
+                        sums[anchor] += f64::from(right[i]);
+                    }
+                }
+                for (i, &anchor) in anchors.iter().enumerate() {
+                    if anchor {
+                        right[i] = -sums[i] as f32;
+                    }
+                }
+            }
             let mut data = Vec::with_capacity(n * 48);
             for (i, (adj, a, diag)) in rows.iter().enumerate() {
                 for &j in adj {
-                    let j = if anchors[i] || j == usize::MAX || anchors[j] {
+                    let j = if pin && anchors[i] || j == usize::MAX || pin && anchors[j] {
                         u32::MAX
                     } else {
                         j as u32
@@ -417,20 +477,37 @@ impl GpuContext {
                     data.extend_from_slice(&j.to_le_bytes());
                 }
                 for &x in a {
-                    data.extend_from_slice(&(if anchors[i] { 0. } else { x as f32 }).to_le_bytes());
+                    data.extend_from_slice(
+                        &(if pin && anchors[i] { 0. } else { x as f32 }).to_le_bytes(),
+                    );
                 }
                 for x in [
-                    if anchors[i] { 1. } else { *diag as f32 },
-                    if anchors[i] {
+                    if pin && anchors[i] { 1. } else { *diag as f32 },
+                    if pin && anchors[i] { 0. } else { right[i] },
+                    if pin {
                         0.
                     } else {
-                        (residual[i] / scale) as f32
+                        (*diag - a.iter().sum::<f64>()) as f32
                     },
-                    0.,
                     0.,
                 ] {
                     data.extend_from_slice(&x.to_le_bytes());
                 }
+            }
+            if n >= TILED_THRESHOLD {
+                let (correction, count, work) = self.solve_tiled(&data, n)?;
+                for (i, value) in p.iter_mut().enumerate() {
+                    let anchor = closed_anchor[i];
+                    let gauge = if anchor == usize::MAX {
+                        0.
+                    } else {
+                        correction[anchor]
+                    };
+                    *value += (correction[i] - gauge) * scale;
+                }
+                iterations += count;
+                total_work.add(work);
+                continue;
             }
             let mut cache = self.scratch.lock().map_err(|_| Error::Backend)?;
             let data_buffer = self.buffer(

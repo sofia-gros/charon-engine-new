@@ -816,6 +816,8 @@ EndSection
                     "upload_bytes_per_tick_range": measured_range("fluid_gpu_upload_bytes",int),
                     "readback_bytes_per_tick_range": measured_range("fluid_gpu_readback_bytes",int),
                     "dispatches_per_tick_range": measured_range("fluid_gpu_dispatches",int),
+                    "velocity_workgroups_per_dispatch_range": measured_range("fluid_gpu_velocity_workgroups",int),
+                    "pressure_workgroups_per_dispatch_range": measured_range("fluid_gpu_pressure_workgroups",int),
                     "scope": "GPU queries time compute passes, excluding transfer and CPU wait. Host stage durations include CPU work, transfer and synchronization. Latest completed CFD tick per sample; repeated tick IDs deduplicated. Software-adapter times do not measure hardware GPU performance."
                 }
             (local / "result.json").write_text(json.dumps(report, indent=2) + "\n")

@@ -252,6 +252,7 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
         let (iterations, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
         assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
         assert!(work.dispatches > 0 && work.upload_bytes > 0 && work.readback_bytes > 0);
+        assert_eq!(work.max_workgroups, 1);
         assert_eq!(
             work.upload_bytes,
             (n * 48) as u64 * u64::from(work.dispatches)
@@ -350,6 +351,7 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
                     (work.upload_bytes, work.readback_bytes, work.dispatches),
                     (0, 0, 0)
                 );
+                assert_eq!((work.velocity_workgroups, work.pressure_workgroups), (0, 0));
                 assert!(
                     work.velocity_ms.is_none_or(|v| v == 0.)
                         && work.pressure_ms.is_none_or(|v| v == 0.)
@@ -395,5 +397,122 @@ fn gpu_compute_matches_reference_and_preserves_two_phase_volume() {
             "scene={scene} steps=90 gpu_kernel_ms={total_kernel_ms:.3} conserved={:?}",
             accelerated.volumes()
         );
+    }
+}
+
+#[cfg(feature = "gpu")]
+#[test]
+#[ignore = "requires compute adapter; run --features gpu -- --ignored"]
+fn gpu_compute_distributed_pressure_matches_known_solution_and_conserves_volume() {
+    let gpu = std::sync::Arc::new(gpu::GpuContext::new().unwrap());
+    for (w, h, sealed_left) in [(8209, 1, false), (131, 129, true)] {
+        let n = w * h;
+        let mut rows = Vec::with_capacity(n);
+        for i in 0..n {
+            let x = i % w;
+            let y = i / w;
+            let mut adj = [usize::MAX; 4];
+            let mut weights = [0.; 4];
+            let sealed = sealed_left && x < w / 2;
+            let mut diagonal = 0.;
+            for (side, (dx, dy)) in [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().enumerate() {
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                let inside = nx >= 0 && nx < w as i32 && ny >= 0 && ny < h as i32;
+                let connected = inside && (!sealed_left || sealed == ((nx as usize) < w / 2));
+                if connected {
+                    adj[side] = ny as usize * w + nx as usize;
+                    let density = |j: usize| {
+                        if sealed_left {
+                            0.8 + (j * 19 % 7) as f64 * 0.1
+                        } else {
+                            1.
+                        }
+                    };
+                    weights[side] = 2. / (density(i) + density(adj[side]));
+                    diagonal += weights[side];
+                } else if !sealed {
+                    weights[side] = if sealed_left {
+                        1. / (0.8 + (i * 19 % 7) as f64 * 0.1)
+                    } else {
+                        1.
+                    };
+                    diagonal += weights[side];
+                }
+            }
+            if !sealed_left {
+                diagonal += 0.125;
+            }
+            rows.push((adj, weights, diagonal));
+        }
+        let expected: Vec<_> = (0..n).map(|i| (i * 17 % 53) as f64 / 53.).collect();
+        let rhs: Vec<_> = rows
+            .iter()
+            .enumerate()
+            .map(|(i, (adj, a, d))| {
+                d * expected[i]
+                    - (0..4)
+                        .filter(|&k| adj[k] != usize::MAX)
+                        .map(|k| a[k] * expected[adj[k]])
+                        .sum::<f64>()
+            })
+            .collect();
+        let mut p = vec![0.; n];
+        let (iterations, work) = gpu.solve(&rows, &rhs, &mut p).unwrap();
+        let error = p
+            .iter()
+            .zip(expected)
+            .map(|(a, b)| (a - b).abs())
+            .fold(0., f64::max);
+        assert!(error < 5e-5, "n={n} error={error:e}");
+        assert_eq!(work.max_workgroups, (n as u32).div_ceil(128));
+        assert!(
+            work.dispatches > iterations as u32
+                && work.upload_bytes >= n as u64 * 48
+                && work.readback_bytes >= n as u64 * 4
+        );
+        assert_eq!(work.kernel_ms.is_some(), gpu.timing_available());
+        eprintln!("distributed n={n} mixed_boundaries={sealed_left} iterations={iterations} max_error={error:e} work={work:?}");
+    }
+    // A real MAC projection, not only a generated matrix. All 18,432 occupied
+    // cells must participate; the closed tank requires a pressure gauge.
+    let mut fluid = domain(130, 146, 4);
+    for y in 1..145 {
+        for x in 1..129 {
+            fluid.add(x, y, usize::from(y < 9), 1.).unwrap();
+        }
+    }
+    fluid.use_gpu(gpu.clone());
+    let initial = fluid.volumes();
+    for tick in 0..3 {
+        let stats = fluid
+            .step(1. / 60., [0., 120.])
+            .unwrap_or_else(|e| panic!("distributed tank tick={tick} {e:?}"));
+        conserved(&fluid, initial);
+        if stats.pressure_iterations > 0 {
+            assert_eq!(stats.gpu.unwrap().pressure_workgroups, 144);
+        }
+        assert!(
+            stats.max_divergence < 1e-3 && stats.max_mass_speed < 0.05,
+            "{stats:?}"
+        );
+        eprintln!(
+            "distributed tank tick={tick} steps={} iterations={} gpu={:?}",
+            stats.substeps, stats.pressure_iterations, stats.gpu
+        );
+    }
+    // The larger reusable work allocation must also support the original
+    // small-domain stride after returning from the distributed solver.
+    let mut small = domain(26, 30, 2);
+    small.use_gpu(gpu);
+    for y in 4..8 {
+        for x in 8..12 {
+            small.add(x, y, 0, 1.).unwrap();
+        }
+    }
+    for _ in 0..2 {
+        let s = small.step(1. / 60., [0., 120.]).unwrap();
+        assert!(s.max_divergence < 1e-3);
+        conserved(&small, [16., 0.]);
     }
 }
