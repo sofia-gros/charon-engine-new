@@ -1,4 +1,6 @@
+mod camera;
 mod debug_text;
+pub use camera::Camera2D;
 mod indexed;
 mod sprites;
 pub use charon_image::IndexedImage;
@@ -71,6 +73,8 @@ pub struct Gpu {
     sprites: sprites::SpriteLayer,
     indexed: Option<indexed::IndexedLayer>,
     indexed_active: bool,
+    camera: Camera2D,
+    camera_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
     texture: wgpu::Texture,
     bind: wgpu::BindGroup,
@@ -179,18 +183,38 @@ impl Gpu {
             usage: wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
             view_formats: &[],
         });
+        let camera_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("camera"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
         let bind = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("cells"),
             layout: &pipeline.get_bind_group_layout(0),
-            entries: &[wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(
-                    &texture.create_view(&Default::default()),
-                ),
-            }],
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(
+                        &texture.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: camera_buffer.as_entire_binding(),
+                },
+            ],
         });
         let sprites = sprites::SpriteLayer::new(&device, format);
+        let camera = Camera2D::new([0., 0.], [width as f32, height as f32])?;
+        let initial_camera: Vec<_> = [0., 0., width as f32, height as f32]
+            .into_iter()
+            .flat_map(f32::to_ne_bytes)
+            .collect();
+        queue.write_buffer(&camera_buffer, 0, &initial_camera);
         Ok(Self {
+            camera,
+            camera_buffer,
             sprites,
             indexed: None,
             indexed_active: false,
@@ -208,6 +232,18 @@ impl Gpu {
         })
     }
 
+    pub fn set_camera(&mut self, camera: Camera2D) {
+        if self.camera != camera {
+            let data: Vec<_> = camera
+                .origin()
+                .into_iter()
+                .chain(camera.size())
+                .flat_map(f32::to_ne_bytes)
+                .collect();
+            self.queue.write_buffer(&self.camera_buffer, 0, &data);
+            self.camera = camera;
+        }
+    }
     pub fn upload_sprite_texture(&self, texture: &charon_assets::Texture) -> SpriteTexture {
         self.sprites
             .upload_texture(&self.device, &self.queue, texture)
@@ -297,6 +333,7 @@ impl Gpu {
                 self.format,
                 self.texture.width(),
                 self.texture.height(),
+                &self.camera_buffer,
             )
         });
         let bytes = layer.upload(&self.device, &self.queue, image, looks, atlas)?;
@@ -438,8 +475,7 @@ impl Gpu {
                         destination: [2., 2., 4., 4.],
                         flip_x,
                     }],
-                    image.width() as u32,
-                    image.height() as u32,
+                    self.camera,
                 )?;
                 let mut rgba = image.to_rgba();
                 for y in 0..4 {
@@ -462,12 +498,7 @@ impl Gpu {
                 })?;
             }
         }
-        self.sprites.set(
-            &self.queue,
-            &[],
-            image.width() as u32,
-            image.height() as u32,
-        )?;
+        self.sprites.set(&self.queue, &[], self.camera)?;
         Ok(())
     }
 
@@ -560,11 +591,21 @@ impl Gpu {
         }
         for y in 0..HEIGHT as usize {
             for x in 0..WIDTH as usize {
-                let source = (((2 * y + 1) * frame.height / (2 * HEIGHT as usize)) * frame.width
-                    + (2 * x + 1) * frame.width / (2 * WIDTH as usize))
-                    * 4;
+                let origin = self.camera.origin();
+                let size = self.camera.size();
+                let wx = (origin[0] as f64 + (x as f64 + 0.5) * size[0] as f64 / WIDTH as f64)
+                    .floor() as i64;
+                let wy = (origin[1] as f64 + (y as f64 + 0.5) * size[1] as f64 / HEIGHT as f64)
+                    .floor() as i64;
+                let expected =
+                    if wx < 0 || wy < 0 || wx >= frame.width as i64 || wy >= frame.height as i64 {
+                        &[0, 0, 0, 255][..]
+                    } else {
+                        let source = (wy as usize * frame.width + wx as usize) * 4;
+                        &frame.rgba[source..source + 4]
+                    };
                 let destination = (y * WIDTH as usize + x) * 4;
-                if rgba[destination..destination + 4] != frame.rgba[source..source + 4] {
+                if rgba[destination..destination + 4] != *expected {
                     return Err(format!("shader output mismatch at ({x},{y})").into());
                 }
             }
@@ -628,6 +669,9 @@ impl WindowRenderer {
             config,
             gpu,
         })
+    }
+    pub fn set_camera(&mut self, camera: Camera2D) {
+        self.gpu.set_camera(camera);
     }
     pub fn resize(&mut self, size: PhysicalSize<u32>) {
         if size.width > 0 && size.height > 0 {
@@ -739,12 +783,10 @@ impl WindowRenderer {
             None => 0,
         };
         let overlay_upload_bytes = self.gpu.set_overlays(overlays);
-        let sprite_upload_bytes = self.gpu.sprites.set(
-            &self.gpu.queue,
-            sprites,
-            self.gpu.texture.width(),
-            self.gpu.texture.height(),
-        )?;
+        let sprite_upload_bytes =
+            self.gpu
+                .sprites
+                .set(&self.gpu.queue, sprites, self.gpu.camera)?;
         let upload_enqueue_ms = upload_start.elapsed().as_secs_f64() * 1000.0;
         let encode_start = std::time::Instant::now();
         let mut encoder = self.gpu.device.create_command_encoder(&Default::default());

@@ -1,4 +1,5 @@
 @group(0) @binding(0) var cells: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> camera: vec4<f32>;
 
 struct VertexOutput {
     @builtin(position) position: vec4<f32>,
@@ -16,6 +17,7 @@ struct VertexOutput {
 
 @fragment fn fs_main(in: VertexOutput) -> @location(0) vec4<f32> {
     let size = textureDimensions(cells);
-    let pixel = clamp(vec2<i32>(in.uv * vec2<f32>(size)), vec2(0), vec2<i32>(size) - vec2(1));
+    let pixel = vec2<i32>(floor(camera.xy+in.uv*camera.zw));
+    if any(pixel < vec2(0)) || any(pixel >= vec2<i32>(size)) { return vec4(0.,0.,0.,1.); }
     return textureLoad(cells, pixel, 0);
 }

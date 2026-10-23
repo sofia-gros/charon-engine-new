@@ -8,6 +8,7 @@ import itertools
 import ctypes as C
 import ctypes.util
 import json
+import math
 import os
 from pathlib import Path
 import secrets
@@ -43,6 +44,7 @@ class Input:
             "XFetchName": ([C.c_void_p, C.c_ulong, C.POINTER(C.c_void_p)], C.c_int),
             "XFree": ([C.c_void_p], C.c_int),
             "XSetInputFocus": ([C.c_void_p, C.c_ulong, C.c_int, C.c_ulong], C.c_int),
+            "XResizeWindow": ([C.c_void_p, C.c_ulong, C.c_uint, C.c_uint], C.c_int),
             "XFlush": ([C.c_void_p], C.c_int),
             "XKeysymToKeycode": ([C.c_void_p, C.c_ulong], C.c_uint),
             "XCloseDisplay": ([C.c_void_p], C.c_int),
@@ -77,7 +79,12 @@ class Input:
                 self.x.XFree(children)
         if found is None:
             raise RuntimeError("sandbox window not found")
+        self.window = found
         self.x.XSetInputFocus(self.display, found, 2, 0)
+        self.x.XFlush(self.display)
+
+    def resize(self, width, height):
+        self.x.XResizeWindow(self.display, self.window, width, height)
         self.x.XFlush(self.display)
 
     def move(self, x, y):
@@ -132,7 +139,7 @@ def check_debugger_rows(rows):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles"), default="sandbox")
+    parser.add_argument("--sample", choices=("sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera"), default="sandbox")
     sample = parser.parse_args().sample
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}-linux"
@@ -195,7 +202,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger", "projectiles") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4"] if sample != "dialogue" else []), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", "25", "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -271,6 +278,46 @@ EndSection
                 at(9)
                 at(10)
                 inputs.key(ord("r"))
+            elif sample == "camera":
+                at(0.5)
+                inputs.key(ord("c"))
+                at(1)
+                inputs.hold(ord("d"), True)
+                at(2.8)
+                inputs.hold(ord("d"), False)
+                at(3)
+                inputs.key(ord("p"))
+                inputs.key(ord("i"))
+                at(3.4)
+                inputs.move(1440,540)
+                inputs.button(2, True)
+                at(3.7)
+                inputs.button(2, False)
+                at(4.5)
+                inputs.key(ord("="))
+                at(5.5)
+                inputs.key(ord("-"))
+                at(6)
+                inputs.key(ord("p"))
+                inputs.hold(ord("a"), True)
+                at(6.5)
+                inputs.resize(1280,720)
+                inputs.move(960,360)
+                at(7.2)
+                inputs.resize(1920,1080)
+                inputs.move(1440,540)
+                at(8)
+                inputs.hold(ord("a"), False)
+                at(8.5)
+                inputs.key(ord("p"))
+                at(9)
+                inputs.key(ord("n"))
+                at(10)
+                inputs.key(ord("r"))
+                at(11)
+                inputs.key(ord("c"))
+                at(11.5)
+                inputs.key(ord("p"))
             elif sample == "projectiles":
                 at(0.5)
                 inputs.key(ord("p"))
@@ -360,6 +407,19 @@ EndSection
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
                 checks = {"replay": replay.stdout.strip(), "player_x_range": [min(xs), max(xs)], "player_y_range": [min(ys), max(ys)],
                           "checks": ["movement", "jump", "sand/wall collision policy", "support destruction", "reset", "Escape shutdown", "authoritative input replay with 1 worker"]}
+            elif sample == "camera":
+                assert any(float(r["camera_x"]) > 60 for r in rows), "camera did not follow moving actor"
+                assert any(abs(float(r["camera_width"])-192) < 0.01 for r in rows), "zoom did not change view extent"
+                assert any(r["window_width"] == "1280" and r["window_height"] == "720" for r in rows), "real window resize missing"
+                inspected = [r for r in rows if r["paused"] == "true" and r["material"] == "2" and abs(float(r["camera_width"])-240)<0.01]
+                assert any(int(r["inspect_x"]) == math.floor(float(r["camera_x"])+180) and int(r["inspect_y"]) == math.floor(float(r["camera_y"])+67.5) for r in inspected), "zoomed mouse paint/inspection coordinates disagree"
+                paused = [r for r in rows if r["paused"] == "true"]
+                assert all(abs(float(r["display_player_x"])-float(r["player_x"]))<0.001 and abs(float(r["display_player_y"])-float(r["player_y"]))<0.001 for r in paused), "paused/stepped display interpolated away from exact state"
+                assert any(0.001 < abs(float(r["display_player_x"])-float(r["player_x"])) < 1.51 for r in rows if r["paused"] == "false"), "no interpolated render positions observed"
+                assert float(rows[-1]["camera_width"]) == 480, "full world view not restored"
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"replay": replay.stdout.strip(), "checks": ["camera follow", "zoom", "real window resize", "mouse paint/inspection in world coordinates", "interpolated player presentation", "exact pause/step/reset positions", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "projectiles":
                 assert max(int(r["impacts"]) for r in rows) >= 2, "shots did not hit terrain"
                 assert any(int(r["sparks"]) > 0 for r in rows), "impact particles missing"
@@ -393,7 +453,7 @@ EndSection
                 checks["paused_simulation_tick"] = int(paused[0]["simulation_tick"])
                 checks["texture_frames_while_paused"] = len(patches)
                 checks["checks"].append("material texture animation while physics tick stays fixed")
-            if sample in ("platformer", "debugger", "projectiles"):
+            if sample in ("platformer", "debugger", "projectiles", "camera"):
                 assert any(int(row.get("sprite_upload_bytes") or 0) > 0 for row in rows), "actor sprites not submitted"
                 assert any(any(color == (36,198,225) for _,color in (image.getcolors(maxcolors=100000) or [])) for image in images), "PNG actor pixels missing from real window"
                 checks["checks"].append("PNG+JSON actor sprite rendered through shared GPU pipeline")

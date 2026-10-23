@@ -48,6 +48,9 @@ fn glyph(c: char) -> [u8; 7] {
         '8' => [14, 17, 17, 14, 17, 17, 14],
         '9' => [14, 17, 17, 15, 1, 1, 14],
         '-' => [0, 0, 0, 31, 0, 0, 0],
+        '.' => [0, 0, 0, 0, 0, 6, 6],
+        ':' => [0, 6, 6, 0, 6, 6, 0],
+        '_' => [0, 0, 0, 0, 0, 0, 31],
         _ => [0; 7],
     }
 }
@@ -59,7 +62,7 @@ pub fn append_debug_text(
     color: [f32; 4],
 ) {
     for (i, c) in value.chars().enumerate() {
-        for (row, bits) in glyph(c).into_iter().enumerate() {
+        for (row, bits) in glyph(c.to_ascii_uppercase()).into_iter().enumerate() {
             let mut col = 0;
             while col < 5 {
                 if bits & (1 << (4 - col)) == 0 {
@@ -110,4 +113,21 @@ pub fn append_performance_overlay(
         }
     );
     append_debug_text(rects, 4., 14., &environment, [0.65, 0.75, 0.9, 1.]);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn material_keys_with_lowercase_letters_are_visible() {
+        let mut lowercase = vec![];
+        let mut uppercase = vec![];
+        append_debug_text(&mut lowercase, 0., 0., "demo.ash", [1.; 4]);
+        append_debug_text(&mut uppercase, 0., 0., "DEMO.ASH", [1.; 4]);
+        assert!(
+            !lowercase.is_empty(),
+            "material inspection label disappeared"
+        );
+        assert!(lowercase == uppercase);
+    }
 }

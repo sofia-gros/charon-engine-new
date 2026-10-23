@@ -5,7 +5,7 @@ mod material_view;
 mod materials;
 mod smoke;
 mod trace;
-use charon_render::{self as gpu, DebugPerformance, Gpu, Result, WindowRenderer};
+use charon_render::{self as gpu, Camera2D, DebugPerformance, Gpu, Result, WindowRenderer};
 use charon_runtime::Runtime;
 use charon_sand::Command;
 use game::{Command as GameCommand, Game};
@@ -75,7 +75,7 @@ impl Options {
                 "--record" => options.record = Some(value()?.into()),
                 "--seconds" => options.seconds = Some(value()?.parse()?),
                 "--help" => {
-                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nP pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
+                    println!("Charon sandbox\n--play: A/D move, Space jump, hold F dig, B toggle sand collision, J fires right\n--input-log FILE records authoritative inputs; --replay FILE validates without a window\n--workers 1..32 --grid WIDTHxHEIGHT --record FILE --seconds N\n--smoke --software --ticks N\nC toggles follow camera; =/- zoom. P pauses/resumes; N pauses and advances one tick; I toggles cell inspection.\n1 sand / 2 ash selects the left brush. Mouse: left paint, right erase, middle wall. R clears; Esc exits.");
                     std::process::exit(0);
                 }
                 _ => return Err(format!("unknown option: {argument}").into()),
@@ -96,6 +96,8 @@ struct App {
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
     brush: u8,
+    follow_camera: bool,
+    zoom: f32,
     inspect_enabled: bool,
     inspected: Option<(i32, i32)>,
     next_draw: Instant,
@@ -121,7 +123,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height")?;
         }
         let now = Instant::now();
         let actor = if options.play {
@@ -138,6 +140,8 @@ impl App {
             cursor: None,
             buttons: [false; 3],
             brush: SAND,
+            follow_camera: false,
+            zoom: 1.,
             inspect_enabled: false,
             inspected: None,
             next_draw: now,
@@ -176,43 +180,63 @@ impl App {
         if size.width == 0 || size.height == 0 {
             return Ok(());
         }
-        if let Some((x, y)) = self.cursor {
-            let x = (x * self.options.width as f64 / size.width as f64) as usize;
-            let y = (y * self.options.height as f64 / size.height as f64) as usize;
+        let Some(snapshot) = self.runtime.latest() else {
+            return Ok(());
+        };
+        let sampled_at = Instant::now();
+        let displayed_player = snapshot
+            .frame
+            .player_position(sampled_at.saturating_duration_since(snapshot.published_at));
+        let world_size = [self.options.width as f32, self.options.height as f32];
+        let visible = world_size.map(|v| v / self.zoom);
+        let focus = if self.follow_camera {
+            displayed_player.map_or(world_size.map(|v| v / 2.), |p| [p[0] + 3.5, p[1] + 6.])
+        } else {
+            world_size.map(|v| v / 2.)
+        };
+        let origin = std::array::from_fn(|i| {
+            (focus[i] - visible[i] / 2.).clamp(0., world_size[i] - visible[i])
+        });
+        let camera = Camera2D::new(origin, visible)?;
+        view.set_camera(camera);
+        let pointer = self.cursor.and_then(|(x, y)| {
+            camera.view_to_world(
+                [x as f32, y as f32],
+                [size.width as f32, size.height as f32],
+            )
+        });
+        if let Some([x, y]) = pointer {
             for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL]) {
                 if pressed {
                     self.runtime
-                        .submit(GameCommand::Terrain(Command::Paint { x, y, material }))
+                        .submit(GameCommand::Terrain(Command::Paint {
+                            x: x.floor() as usize,
+                            y: y.floor() as usize,
+                            material,
+                        }))
                         .map_err(|e| format!("input queue: {e}"))?;
                 }
             }
         }
-        let inspection = self.cursor.filter(|_| self.inspect_enabled).map(|(x, y)| {
-            (
-                (x * self.options.width as f64 / size.width as f64).floor() as i32,
-                (y * self.options.height as f64 / size.height as f64).floor() as i32,
-            )
-        });
+        let inspection = pointer
+            .filter(|_| self.inspect_enabled)
+            .map(|[x, y]| (x.floor() as i32, y.floor() as i32));
         if inspection != self.inspected {
             self.runtime
                 .submit(GameCommand::Inspect(inspection))
                 .map_err(|e| format!("inspection queue: {e}"))?;
             self.inspected = inspection;
         }
-        let Some(snapshot) = self.runtime.latest() else {
-            return Ok(());
-        };
-        let sampled_at = Instant::now();
         let overlays = debug_view::overlays(
             &snapshot.frame,
             self.inspect_enabled,
             self.performance,
             view.software_adapter,
+            camera,
         );
-        let sprites = self
-            .actor
-            .as_mut()
-            .map_or_else(Vec::new, |actor| actor.sprites(&snapshot.frame));
+        let sprites = self.actor.as_mut().map_or_else(Vec::new, |actor| {
+            actor.sprites(&snapshot.frame, displayed_player)
+        });
         self.material_visual.update(self.started.elapsed());
         let Some(render) = view.present_indexed_with_sprites(
             &snapshot.frame.terrain.indices,
@@ -295,6 +319,16 @@ impl App {
                 render.appearance_upload_bytes,
                 render.atlas_upload_bytes
             ));
+            row.push_str(&format!(
+                ",{:.4},{:.4},{:.4},{:.4},{:.4},{:.4}",
+                origin[0],
+                origin[1],
+                visible[0],
+                visible[1],
+                displayed_player.map_or(0., |p| p[0]),
+                displayed_player.map_or(0., |p| p[1])
+            ));
+            row.push_str(&format!(",{},{}", size.width, size.height));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -384,6 +418,16 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::Space) if down => {
                         self.game_command(GameCommand::Jump)
+                    }
+                    PhysicalKey::Code(KeyCode::KeyC) if down => {
+                        self.follow_camera = !self.follow_camera;
+                        self.zoom = if self.follow_camera { 2. } else { 1. };
+                    }
+                    PhysicalKey::Code(KeyCode::Equal) if down => {
+                        self.zoom = (self.zoom * 1.25).min(4.)
+                    }
+                    PhysicalKey::Code(KeyCode::Minus) if down => {
+                        self.zoom = (self.zoom / 1.25).max(1.)
                     }
                     PhysicalKey::Code(KeyCode::KeyJ) if down => {
                         self.game_command(GameCommand::Fire)

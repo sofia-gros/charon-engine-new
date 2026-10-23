@@ -73,6 +73,22 @@ pub fn verify_updates(gpu: &mut Gpu, width: usize, height: usize) -> Result<()> 
     }]);
     let skipped = world.step(vec![]);
     assert!(gpu.smoke_indexed(&skipped.indices, &looks, &atlas)?[0] > 0);
+    // Pan, zoom and out-of-world sampling must agree on RGBA and indexed paths.
+    for origin in [[1., 2.], [-4., -3.]] {
+        gpu.set_camera(charon_render::Camera2D::new(
+            origin,
+            [width as f32 / 2., height as f32 / 2.],
+        )?);
+        gpu.smoke_tiled(&skipped.image)?;
+        gpu.smoke_indexed(&skipped.indices, &looks, &atlas)?;
+        if origin[0] > 0. {
+            gpu.smoke_sprites(&skipped.image)?;
+        }
+    }
+    gpu.set_camera(charon_render::Camera2D::new(
+        [0., 0.],
+        [width as f32, height as f32],
+    )?);
     println!("partial_upload_checks=idle,skipped_snapshots,edge_tiles,clear");
     Ok(())
 }

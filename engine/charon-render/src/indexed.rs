@@ -18,6 +18,7 @@ pub(crate) struct IndexedLayer {
     image: Option<IndexedImage>,
     atlas: Option<Arc<Texture>>,
     appearances: Vec<TileAppearance>,
+    camera: wgpu::Buffer,
 }
 impl IndexedLayer {
     pub fn new(
@@ -25,6 +26,7 @@ impl IndexedLayer {
         format: wgpu::TextureFormat,
         width: u32,
         height: u32,
+        camera: &wgpu::Buffer,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("indexed terrain"),
@@ -75,8 +77,9 @@ impl IndexedLayer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind = Self::bind(device, &pipeline, &cells, &palette, &atlas);
+        let bind = Self::bind(device, &pipeline, &cells, &palette, &atlas, camera);
         Self {
+            camera: camera.clone(),
             pipeline,
             cells,
             palette,
@@ -92,11 +95,16 @@ impl IndexedLayer {
         cells: &wgpu::Texture,
         palette: &wgpu::Buffer,
         atlas: &wgpu::Texture,
+        camera: &wgpu::Buffer,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("indexed terrain"),
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 3,
+                    resource: camera.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 0,
                     resource: wgpu::BindingResource::TextureView(
@@ -174,7 +182,14 @@ impl IndexedLayer {
                 },
                 texture.size(),
             );
-            self.bind = Self::bind(device, &self.pipeline, &self.cells, &self.palette, &texture);
+            self.bind = Self::bind(
+                device,
+                &self.pipeline,
+                &self.cells,
+                &self.palette,
+                &texture,
+                &self.camera,
+            );
             self.atlas = Some(Arc::clone(atlas));
             bytes[2] = atlas.rgba().len();
         }

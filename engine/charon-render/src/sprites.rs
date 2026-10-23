@@ -129,8 +129,7 @@ impl SpriteLayer {
         &mut self,
         queue: &wgpu::Queue,
         sprites: &[Sprite<'_>],
-        width: u32,
-        height: u32,
+        camera: crate::Camera2D,
     ) -> Result<usize> {
         if sprites.len() > 1024 {
             return Err("initial sprite batch supports at most 1024 sprites".into());
@@ -153,8 +152,8 @@ impl SpriteLayer {
             for (dx, dy) in [(0., 0.), (1., 0.), (0., 1.), (0., 1.), (1., 0.), (1., 1.)] {
                 let u = if sprite.flip_x { 1. - dx } else { dx };
                 for value in [
-                    (x + dx * w) / width as f32 * 2. - 1.,
-                    1. - (y + dy * h) / height as f32 * 2.,
+                    (x + dx * w - camera.origin()[0]) / camera.size()[0] * 2. - 1.,
+                    1. - (y + dy * h - camera.origin()[1]) / camera.size()[1] * 2.,
                     sx as f32 + u * sw as f32,
                     sy as f32 + dy * sh as f32,
                 ] {

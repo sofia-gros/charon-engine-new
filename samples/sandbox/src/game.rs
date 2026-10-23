@@ -30,11 +30,30 @@ pub struct Frame {
     pub sparks: Vec<[f32; 2]>,
     pub impacts: u64,
     pub player: Option<Body>,
+    pub previous_player: Option<[f32; 2]>,
     pub direction: i8,
     pub sand_solid: bool,
     pub paused: bool,
     pub simulation_tick: u64,
     pub inspection: Option<Inspection>,
+}
+impl Frame {
+    pub fn player_position(&self, elapsed: std::time::Duration) -> Option<[f32; 2]> {
+        let body = self.player?;
+        let current = [body.x(), body.y()];
+        Some(if self.paused || body.discontinuous || body.embedded {
+            current
+        } else {
+            self.previous_player.map_or(current, |previous| {
+                charon_runtime::interpolate(
+                    previous,
+                    current,
+                    elapsed,
+                    std::time::Duration::from_secs_f64(1. / 60.),
+                )
+            })
+        })
+    }
 }
 struct Spark {
     position: [f32; 2],
@@ -48,6 +67,7 @@ pub struct Game {
     fire_pending: bool,
     impacts: u64,
     player: Option<Body>,
+    previous_player: Option<[f32; 2]>,
     sand_solid: bool,
     left: bool,
     right: bool,
@@ -84,6 +104,7 @@ impl Game {
             SandWorld::with_materials(width, height, workers, palette())?
         };
         Ok(Self {
+            previous_player: None,
             world,
             projectiles: Projectiles::default(),
             sparks: vec![],
@@ -160,6 +181,7 @@ impl Game {
         hash
     }
     fn advance(&mut self, mut terrain: Vec<SandCommand>) -> charon_sand::Frame {
+        self.previous_player = self.player.map(|p| [p.x(), p.y()]);
         if self.dig {
             if let Some(player) = self.player {
                 for x in [
@@ -324,6 +346,7 @@ impl Simulation for Game {
             sparks: self.sparks.iter().map(|s| s.position).collect(),
             impacts: self.impacts,
             player: self.player,
+            previous_player: self.previous_player,
             direction: i8::from(self.right) - i8::from(self.left),
             sand_solid: self.sand_solid,
             paused: self.paused,
@@ -340,6 +363,36 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn presentation_interpolates_only_between_physics_states_and_snaps_debug_actions() {
+        use std::time::Duration;
+        let mut game = Game::new(160, 120, 2, true).unwrap();
+        game.step(vec![]);
+        let start = game.player.unwrap().x();
+        let moving = game.step(vec![Command::Right(true)]);
+        let current = moving.player.unwrap().x();
+        assert!(current > start);
+        let shown = moving
+            .player_position(Duration::from_secs_f64(1. / 120.))
+            .unwrap()[0];
+        assert!(shown > start && shown < current);
+        let authoritative = game.signature();
+        assert_eq!(
+            moving.player_position(Duration::from_secs(3)).unwrap()[0],
+            current
+        );
+        assert_eq!(game.signature(), authoritative);
+        let paused = game.step(vec![Command::Pause]);
+        assert_eq!(paused.player_position(Duration::ZERO).unwrap()[0], current);
+        let stepped = game.step(vec![Command::Step]);
+        assert_eq!(
+            stepped.player_position(Duration::ZERO).unwrap()[0],
+            stepped.player.unwrap().x()
+        );
+        let reset = game.step(vec![Command::Terrain(SandCommand::Clear)]);
+        assert_eq!(reset.player_position(Duration::ZERO).unwrap()[0], 40.);
+    }
+
     #[test]
     fn bullets_query_material_policy_destroy_on_hit_and_keep_effects_out_of_physics() {
         let mut game = Game::new(160, 120, 4, true).unwrap();

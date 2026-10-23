@@ -20,6 +20,8 @@ pub struct Snapshot<F> {
     pub work_ms: f64,
     pub late_ms: f64,
     pub frame: F,
+    /// Wall-clock publication time for bounded presentation interpolation.
+    pub published_at: Instant,
 }
 
 type FrameMailbox<F> = Arc<Mutex<Option<Arc<Snapshot<F>>>>>;
@@ -60,6 +62,7 @@ impl<S: Simulation> Runtime<S> {
                         work_ms: start.elapsed().as_secs_f64() * 1000.0,
                         late_ms: start.saturating_duration_since(deadline).as_secs_f64() * 1000.0,
                         frame,
+                        published_at: Instant::now(),
                     });
                     *output.lock().expect("snapshot lock poisoned") = Some(snapshot);
                     tick += 1;
@@ -101,10 +104,46 @@ impl<S: Simulation> Drop for Runtime<S> {
     }
 }
 
+/// Interpolate completed states with one tick of presentation delay. Never
+/// extrapolate when rendering or simulation stalls. Does not mutate game state.
+pub fn interpolate<const N: usize>(
+    previous: [f32; N],
+    current: [f32; N],
+    elapsed: Duration,
+    period: Duration,
+) -> [f32; N] {
+    let alpha = if period.is_zero() {
+        1.
+    } else {
+        (elapsed.as_secs_f32() / period.as_secs_f32()).min(1.)
+    };
+    std::array::from_fn(|i| previous[i] + (current[i] - previous[i]) * alpha)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[test]
+    fn interpolation_is_bounded_without_changing_authoritative_positions() {
+        let before = [2., 4.];
+        let after = [8., 10.];
+        let period = Duration::from_millis(16);
+        assert_eq!(interpolate(before, after, Duration::ZERO, period), before);
+        assert_eq!(
+            interpolate(before, after, Duration::from_millis(8), period),
+            [5., 7.]
+        );
+        assert_eq!(
+            interpolate(before, after, Duration::from_secs(2), period),
+            after
+        );
+        assert_eq!(
+            interpolate(before, after, Duration::ZERO, Duration::ZERO),
+            after
+        );
+        assert_eq!(after, [8., 10.]);
+    }
     struct Counter(u64);
     impl Simulation for Counter {
         type Command = u64;

@@ -79,9 +79,21 @@ cargo run --locked -p charon-sandbox -- --replay artifacts/local/session.trace -
 
 `Clip::new(atlas, &["walk0", "walk1"], true)`のようにゲーム側で待機/歩行/走行/攻撃などを組み立てる。複数クリップで同じ画像を共有し、`frame_at(Duration)`で表示フレームを得る。末尾で止まるクリップも作れる。時刻は呼出側から渡すため、物理時計と見た目の時計を分離できる。読込は開始前に行い、フレームごとにファイルを開かない。
 
-[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。回転/トリミング取込、補間・カメラ・汎用UIは今後の工程。
+[samples/sandbox/src/actor_view.rs](../samples/sandbox/src/actor_view.rs)は待機/歩行と左右反転の例。`WindowRenderer::upload_sprite_texture`で画像を一度GPUへ送り、`present_tiled_with_sprites`で地形→画像→デバッグ表示の順に描画する。現在の初期上限は1フレーム1024スプライト。回転/トリミング取込と汎用UIは今後の工程。
 
 素材の画像には`present_indexed_with_sprites`を使う。1セル1バイトの素材IDを不変タイルで渡し、GPUが素材の色またはアトラス矩形を選ぶ。現在は共有アトラス1枚・256項目の表示表・画像の繰り返し配置に対応し、透過部分には素材の単色を使う。アニメーションは表示表だけを更新し、静止セルや画像本体を再転送しない。`upload_bytes`はセル、`appearance_upload_bytes`は表示表、`atlas_upload_bytes`は画像本体。CPU側には画素照合用のRGBAスナップショットも保持している。大量画像の自動パックや多アトラスの管理は未実装。
+
+## カメラと描画補間
+
+Cでプレイヤー追従/全体表示を切り替え、=で拡大、-で縮小する。追従へ切り替えると2倍、全体表示に戻すと1倍になる。ズーム範囲は1〜4倍。カメラは描画側だけが所有し、地形・スプライト・世界内の検査枠へ同じ変換を適用する。HUDは画面に固定する。マウスの配置/消去/調査はウィンドウ座標から世界座標へ逆変換するため、追従・ズーム・サイズ変更後も指したセルを操作できる。
+
+共通APIは`Camera2D::new(origin, visible_size)`と`WindowRenderer::set_camera`。RGBA画像/素材ID画像の両方に対応し、世界外は黒で表示する。カメラの変更だけでは地形を再転送しない。`world_to_view` / `view_to_world`でゲーム側の入力と表示を合わせられる。サンプルではカメラを世界の範囲内に制限する。
+
+プレイヤーの表示位置は、物理が渡す直前/現在の位置とSnapshotの`published_at`から補間する。60 Hzの物理に最大1 tick（約16.7 ms）の表示遅延を加え、実行が遅れた場合も現在位置を越えて予測しない。物理位置・当たり判定・入力再生は変更しない。停止/コマ送り/リセット/地形からの強制脱出では正確な位置へ合わせる。現状はプレイヤー位置が対象で、セルや弾・火花の補間は行わない。
+
+![追従・ズーム・画面サイズ変更と地形操作](media/camera-linux.gif)
+
+`python3 scripts/capture-linux.py --sample camera`で実操作と入力再生を検証する。[入力列](media/camera-linux.trace)はカメラ変換後の世界座標を保存し、描画なしで再生できる。カメラ操作自体の映像再生形式ではない。CSVの`camera_x/y/width/height`は世界内の表示範囲、`display_player_x/y`は表示位置、`player_x/y`は物理位置、`window_width/height`は実ウィンドウの大きさを表す。GIFの収録速度は補間の滑らかさを評価できる速度ではなく、操作と表示の証跡として扱う。
 
 ## 弾と破壊
 

@@ -31,7 +31,7 @@ impl ActorVisual {
     pub fn upload(&mut self, renderer: &WindowRenderer) {
         self.texture = Some(renderer.upload_sprite_texture(self.atlas.texture()));
     }
-    pub fn sprites(&mut self, frame: &Frame) -> Vec<Sprite<'_>> {
+    pub fn sprites(&mut self, frame: &Frame, position: Option<[f32; 2]>) -> Vec<Sprite<'_>> {
         let Some(body) = frame.player.filter(|body| !body.embedded) else {
             return vec![];
         };
@@ -45,10 +45,11 @@ impl ActorVisual {
         };
         let elapsed = Duration::from_secs_f64(frame.simulation_tick as f64 / 60.);
         let selected = clip.frame_at(elapsed);
+        let [x, y] = position.unwrap_or([body.x(), body.y()]);
         vec![Sprite {
             texture: self.texture.as_ref().expect("upload before drawing"),
             source: selected.rect,
-            destination: [body.x() - 0.5, body.y() - 2., 8., 14.],
+            destination: [x - 0.5, y - 2., 8., 14.],
             flip_x: self.facing_left,
         }]
     }

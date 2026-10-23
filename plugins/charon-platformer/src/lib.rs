@@ -10,6 +10,8 @@ pub struct Body {
     pub grounded: bool,
     /// New terrain could not be escaped within 16 cells. Editing terrain can free it.
     pub embedded: bool,
+    /// Presentation must snap when recovery moves the body out of terrain.
+    pub discontinuous: bool,
 }
 impl Body {
     pub fn new(x: f32, y: f32, width: f32, height: f32) -> Self {
@@ -24,6 +26,7 @@ impl Body {
             vy: 0.0,
             grounded: false,
             embedded: false,
+            discontinuous: true,
         }
     }
     pub fn x(&self) -> f32 {
@@ -88,6 +91,7 @@ impl Body {
     }
     pub fn step(&mut self, horizontal: i8, jump: bool, solid: impl Fn(i32, i32) -> bool) {
         self.embedded = false;
+        self.discontinuous = false;
         if self.collision(self.x, self.y, &solid).is_some() {
             // Explicit recovery policy for newly painted/fallen terrain. Never delete material.
             let mut free = None;
@@ -109,6 +113,7 @@ impl Body {
                 self.x = x;
                 self.y = y;
                 self.vy = 0.0;
+                self.discontinuous = true;
             } else {
                 self.embedded = true;
                 self.grounded = false;
@@ -170,6 +175,11 @@ mod tests {
         body.step(0, false, |_, y| y >= 100);
         assert!(!body.embedded);
         assert!(body.grounded);
+        let mut escaped = Body::new(2., 0., 2., 4.);
+        escaped.step(0, false, |_, y| y == 0);
+        assert!(escaped.discontinuous);
+        escaped.step(0, false, |_, _| false);
+        assert!(!escaped.discontinuous);
         // A low ceiling stops upward motion without moving through it.
         let mut body = Body::new(2.0, 6.0, 2.0, 4.0);
         for _ in 0..10 {

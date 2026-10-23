@@ -17,6 +17,7 @@ pub fn overlays(
     inspect_enabled: bool,
     metrics: Option<DebugPerformance>,
     software: bool,
+    camera: charon_render::Camera2D,
 ) -> Vec<OverlayRect> {
     let mut result = Vec::new();
     if let Some(body) = frame.player.filter(|body| body.embedded) {
@@ -58,6 +59,15 @@ pub fn overlays(
     }
     for &[x, y] in &frame.sparks {
         result.push(rect(x, y, 0.8, 0.8, [1., 0.5, 0.15, 1.]));
+    }
+    // World geometry follows the camera; the HUD appended below remains fixed.
+    for rect in &mut result {
+        let viewport = [frame.terrain.width as f32, frame.terrain.height as f32];
+        let point = camera.world_to_view([rect.x, rect.y], viewport);
+        rect.x = point[0];
+        rect.y = point[1];
+        rect.width *= viewport[0] / camera.size()[0];
+        rect.height *= viewport[1] / camera.size()[1];
     }
     append_performance_overlay(&mut result, metrics, software);
     {
