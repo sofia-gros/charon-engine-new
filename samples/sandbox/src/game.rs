@@ -31,6 +31,7 @@ pub fn submit_input<S: Simulation<Command = Command>>(
         Command::Left(_) => runtime.submit_state(0, command),
         Command::Right(_) => runtime.submit_state(1, command),
         Command::Dig(_) => runtime.submit_state(2, command),
+        Command::Pause | Command::Step => runtime.submit_control(command),
         _ => runtime.submit(command),
     }
 }
@@ -1039,6 +1040,92 @@ mod tests {
                     "controls did not resume after saturation"
                 );
                 std::thread::sleep(Duration::from_millis(1));
+            }
+        }
+    }
+    #[test]
+    fn pause_and_step_survive_a_saturated_queue_without_coalescing() {
+        use std::{sync::mpsc, time::Duration};
+        struct GatedGame {
+            game: Game,
+            gate: Option<(mpsc::SyncSender<()>, mpsc::Receiver<()>)>,
+            observed: mpsc::Sender<(bool, u64, Vec<&'static str>)>,
+        }
+        impl Simulation for GatedGame {
+            type Command = Command;
+            type Frame = ();
+            fn step(&mut self, commands: Vec<Command>) {
+                if let Some((entered, resume)) = self.gate.take() {
+                    entered.send(()).unwrap();
+                    resume.recv_timeout(Duration::from_secs(2)).unwrap();
+                }
+                let order: Vec<_> = commands
+                    .iter()
+                    .map(|c| match c {
+                        Command::Pause => "pause",
+                        Command::Step => "step",
+                        Command::Right(_) => "right",
+                        _ => "inspect",
+                    })
+                    .collect();
+                let frame = self.game.step(commands);
+                if !order.is_empty() {
+                    let _ = self
+                        .observed
+                        .send((frame.paused, frame.simulation_tick, order));
+                }
+            }
+        }
+        for (controls, paused, tick) in [
+            (vec![Command::Pause], true, 1),
+            (vec![Command::Pause, Command::Pause], false, 2),
+            (
+                vec![Command::Pause, Command::Step, Command::Pause],
+                false,
+                2,
+            ),
+        ] {
+            let (entered_tx, entered) = mpsc::sync_channel(1);
+            let (resume, resume_rx) = mpsc::sync_channel(1);
+            let (observed_tx, observed) = mpsc::channel();
+            let runtime = charon_runtime::Runtime::start(GatedGame {
+                game: Game::new(160, 120, 1, true).unwrap(),
+                gate: Some((entered_tx, resume_rx)),
+                observed: observed_tx,
+            })
+            .unwrap();
+            entered.recv_timeout(Duration::from_secs(2)).unwrap();
+            for _ in 0..128 {
+                runtime.submit(Command::Inspect(None)).unwrap();
+            }
+            assert!(matches!(
+                runtime.submit(Command::Inspect(None)),
+                Err(mpsc::TrySendError::Full(_))
+            ));
+            let mut expected = vec!["inspect"; 128];
+            for command in controls {
+                expected.push(match command {
+                    Command::Pause => "pause",
+                    _ => "step",
+                });
+                // The window routes P/N through this helper. Do not hide Full.
+                let _ = submit_input(&runtime, command);
+                submit_input(&runtime, Command::Right(false)).unwrap();
+            }
+            // Latest held-state coalesces, but each control must remain ordered.
+            expected.push("right");
+            resume.send(()).unwrap();
+            let actual = observed.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(
+                actual,
+                (paused, tick, expected),
+                "pause/step was lost or reordered"
+            );
+            submit_input(&runtime, Command::Pause).unwrap();
+            let next = observed.recv_timeout(Duration::from_secs(2)).unwrap();
+            assert_eq!(next.0, !paused, "pause/resume did not recover");
+            if paused {
+                assert!(next.1 > tick);
             }
         }
     }

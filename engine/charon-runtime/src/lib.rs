@@ -30,6 +30,7 @@ type FrameMailbox<F> = Arc<Mutex<Option<Arc<Snapshot<F>>>>>;
 struct PendingInput<C> {
     sequence: u64,
     states: BTreeMap<u8, (u64, C)>,
+    controls: Vec<(u64, C)>,
 }
 
 /// A bounded command queue and a latest-completed-frame mailbox.
@@ -48,6 +49,7 @@ impl<S: Simulation> Runtime<S> {
         let pending = Arc::new(Mutex::new(PendingInput {
             sequence: 0,
             states: BTreeMap::new(),
+            controls: Vec::new(),
         }));
         let inputs = pending.clone();
         let latest = Arc::new(Mutex::new(None));
@@ -77,6 +79,7 @@ impl<S: Simulation> Runtime<S> {
                             .try_iter()
                             .take(128)
                             .chain(std::mem::take(&mut pending.states).into_values())
+                            .chain(std::mem::take(&mut pending.controls))
                             .collect()
                     };
                     commands.sort_unstable_by_key(|(sequence, _)| *sequence);
@@ -117,6 +120,25 @@ impl<S: Simulation> Runtime<S> {
                 TrySendError::Full((_, c)) => TrySendError::Full(c),
                 TrySendError::Disconnected((_, c)) => TrySendError::Disconnected(c),
             })
+    }
+
+    /// Reserved queue for infrequent controls such as pause and single-step.
+    /// Preserves every accepted event and arrival order across all input paths.
+    /// Independent of the 128 ordinary events; bounded to 32 controls per drain.
+    /// Full returns ownership to the caller for explicit handling, never coalesces.
+    /// Commands apply only after the current simulation step returns.
+    pub fn submit_control(&self, command: S::Command) -> Result<(), TrySendError<S::Command>> {
+        let mut pending = self.pending.lock().expect("input lock poisoned");
+        if self.is_finished() {
+            return Err(TrySendError::Disconnected(command));
+        }
+        if pending.controls.len() == 32 {
+            return Err(TrySendError::Full(command));
+        }
+        let sequence = pending.sequence;
+        pending.sequence += 1;
+        pending.controls.push((sequence, command));
+        Ok(())
     }
 
     /// Latest value for one held-input slot, independent of the event queue.
@@ -266,6 +288,13 @@ mod tests {
         runtime.submit_state(1, 999).unwrap();
         runtime.submit(0).unwrap();
         runtime.submit_state(2, 1000).unwrap();
+        for control in 12000..12032 {
+            runtime.submit_control(control).unwrap();
+        }
+        assert!(matches!(
+            runtime.submit_control(12032),
+            Err(TrySendError::Full(12032))
+        ));
         for event in 1..128 {
             runtime.submit(event).unwrap();
         }
@@ -274,7 +303,12 @@ mod tests {
             runtime.submit_state(1, value).unwrap();
         }
         resume.send(()).unwrap();
-        let expected: Vec<_> = [0, 1000].into_iter().chain(1..128).chain([11999]).collect();
+        let expected: Vec<_> = [0, 1000]
+            .into_iter()
+            .chain(12000..12032)
+            .chain(1..128)
+            .chain([11999])
+            .collect();
         let deadline = Instant::now() + Duration::from_secs(2);
         loop {
             if let Some(snapshot) = runtime.latest() {
