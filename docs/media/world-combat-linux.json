@@ -1,25 +1,25 @@
 {
-  "source_sha256": "58b8f55cc03b491be7fac1c56bd7995e03547ab8afff2035117f7162a21c2f81",
+  "source_sha256": "f895a0e4dca73894c66a8f436e4ed822ce86c5def37ca5ade1e5dde1bf885874",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "world-combat",
-  "base_revision": "8670095c3b7d52e39d423ad1c52bc7f7eb86af5f",
+  "base_revision": "74b3a55d420e4e79bb594a5ba7a6f2a6c6aebe02",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 8.004,
-  "gif_encoded_frames": 205,
+  "observed_capture_fps": 7.721,
+  "gif_encoded_frames": 233,
   "draw_submission_fps_range": [
-    1.7,
-    37.83
+    1.91,
+    44.04
   ],
   "simulation_hz_range": [
     0.0,
-    168.09
+    151.56
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
-  "captured_frames": 208,
-  "gif_duration_ms": 25950,
+  "captured_frames": 240,
+  "gif_duration_ms": 31050,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -32,8 +32,20 @@
     1920,
     1080
   ],
+  "restart": {
+    "restored_tick": 1330,
+    "enemy_id": "1",
+    "enemy_health": "2",
+    "replay": "replay_ticks=292 checks=terrain,player,input_state workers=1",
+    "checks": [
+      "normal shutdown publishes checkpoint",
+      "new process restores player/enemy/tick/pause",
+      "real keyboard resumes movement",
+      "restored snapshot replay with 1 worker"
+    ]
+  },
   "resident_peak": 16,
-  "replay": "replay_ticks=1637 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1630 checks=terrain,player,input_state workers=1",
   "checks": [
     "start screen",
     "aimed hit wounds a turret",

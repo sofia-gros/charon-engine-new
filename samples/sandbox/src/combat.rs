@@ -157,6 +157,107 @@ impl Combat {
         });
         self.region = Some((origin, size));
     }
+    pub fn save_state(&self) -> Option<crate::world_save::CombatState> {
+        use crate::world_save::{BodyState, CombatState, EnemyState, ShotState};
+        let (origin, size) = self.region?;
+        Some(CombatState {
+            origin,
+            size,
+            phase: self.phase as u8,
+            health: self.health,
+            invulnerable: self.invulnerable,
+            kills: self.kills,
+            rejected: self.rejected_shots,
+            enemies: self
+                .enemies
+                .iter()
+                .map(|e| EnemyState {
+                    origin: e.origin,
+                    active: e.active,
+                    chase: e.behavior == Behavior::Chase,
+                    body: BodyState::capture(e.body),
+                    health: e.health,
+                    cooldown: e.cooldown,
+                })
+                .collect(),
+            shots: self
+                .shots
+                .shots()
+                .iter()
+                .copied()
+                .map(ShotState::capture)
+                .collect(),
+            parked: self
+                .parked_shots
+                .iter()
+                .map(|(o, s)| (*o, ShotState::capture(*s)))
+                .collect(),
+        })
+    }
+    pub fn restore_state(state: &crate::world_save::CombatState) -> Result<Self, String> {
+        if state.health > 3
+            || state.invulnerable > 30
+            || state.enemies.len() != 2
+            || state.shots.len() + state.parked.len() > 1024
+            || state.kills != state.enemies.iter().filter(|e| e.health == 0).count() as u32
+        {
+            return Err("invalid saved combat counts".into());
+        }
+        let phase = match state.phase {
+            0 => Phase::Ready,
+            1 => Phase::Playing,
+            2 => Phase::Defeated,
+            _ => return Err("invalid combat phase".into()),
+        };
+        if (phase == Phase::Defeated) != (state.health == 0) {
+            return Err("combat phase and health disagree".into());
+        }
+        let mut enemies = Vec::new();
+        for e in &state.enemies {
+            if e.health > 3 || e.cooldown > 90 || (e.active && e.origin != state.origin) {
+                return Err("invalid saved enemy".into());
+            }
+            let body = e.body.restore()?;
+            if e.active
+                && !Self::inside(
+                    [body.x(), body.y()],
+                    [body.width(), body.height()],
+                    state.size,
+                    95.,
+                )
+            {
+                return Err("active enemy outside saved region".into());
+            }
+            enemies.push(Enemy {
+                origin: e.origin,
+                active: e.active,
+                behavior: if e.chase {
+                    Behavior::Chase
+                } else {
+                    Behavior::Turret
+                },
+                body,
+                health: e.health,
+                cooldown: e.cooldown,
+            });
+        }
+        let shots = crate::world_save::shots(&state.shots)?;
+        let mut parked_shots = Vec::new();
+        for (origin, shot) in &state.parked {
+            parked_shots.push((*origin, shot.restore()?));
+        }
+        Ok(Self {
+            region: Some((state.origin, state.size)),
+            parked_shots,
+            rejected_shots: state.rejected,
+            phase,
+            health: state.health,
+            enemies,
+            shots,
+            invulnerable: state.invulnerable,
+            kills: state.kills,
+        })
+    }
     pub fn set_behavior(&mut self, behavior: Behavior) {
         for enemy in &mut self.enemies {
             enemy.behavior = behavior;

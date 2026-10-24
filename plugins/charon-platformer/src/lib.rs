@@ -29,6 +29,23 @@ impl Body {
             discontinuous: true,
         }
     }
+    /// Restore a completed fixed-step motion state. The caller supplies the
+    /// position/size through `new`; invalid velocity never mutates this body.
+    pub fn restore_motion(
+        &mut self,
+        velocity: f32,
+        grounded: bool,
+        embedded: bool,
+    ) -> Result<(), &'static str> {
+        if !velocity.is_finite() || velocity.abs() > 240. {
+            return Err("invalid body velocity");
+        }
+        self.vy = velocity;
+        self.grounded = grounded;
+        self.embedded = embedded;
+        self.discontinuous = true;
+        Ok(())
+    }
     pub fn translate(&mut self, offset: [f32; 2]) {
         assert!(offset.into_iter().all(f32::is_finite));
         self.x += offset[0];
@@ -144,6 +161,18 @@ impl Body {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn restored_motion_preserves_velocity_and_rejects_invalid_state_without_mutation() {
+        let mut body = Body::new(10., 20., 7., 12.);
+        body.restore_motion(-123.5, true, false).unwrap();
+        for value in [f32::NAN, f32::INFINITY, 241.] {
+            assert!(body.restore_motion(value, false, true).is_err());
+            assert_eq!(body.vertical_velocity(), -123.5);
+            assert!(body.grounded);
+            assert!(!body.embedded);
+        }
+        assert!(body.discontinuous);
+    }
     #[test]
     fn landing_walls_jump_and_removed_support() {
         let mut body = Body::new(5.0, 0.0, 3.0, 6.0);

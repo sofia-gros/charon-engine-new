@@ -14,6 +14,10 @@ pub enum Command {
     NewRun(u64),
     StartWorld(u64),
     StartWorldGame(u64),
+    RestoreCheckpoint {
+        state: std::sync::Arc<crate::world_save::Snapshot>,
+        cells: std::sync::Arc<[u8]>,
+    },
     LoadRegion {
         origin: [i64; 2],
         cells: std::sync::Arc<[u8]>,
@@ -63,6 +67,7 @@ pub struct StreamFrame {
     pub seed: u64,
 }
 pub struct Frame {
+    pub checkpoint: Option<std::sync::Arc<crate::world_save::Snapshot>>,
     pub stream: Option<StreamFrame>,
     pub combat: Option<crate::combat::Frame>,
     pub exploration_seed: Option<u64>,
@@ -288,6 +293,123 @@ impl Game {
     }
     pub fn material_fingerprint(&self) -> u64 {
         self.world.materials().fingerprint()
+    }
+    pub fn checkpoint(&self) -> Option<crate::world_save::Snapshot> {
+        use crate::world_save::{BodyState, ShotState, Snapshot};
+        let stream = self.stream.filter(|s| s.loaded)?;
+        Some(Snapshot {
+            version: 1,
+            seed: stream.seed,
+            materials: self.material_fingerprint(),
+            size: [self.width, self.height],
+            origin: stream.origin,
+            waiting: stream.waiting,
+            tick: self.world.tick(),
+            player: BodyState::capture(self.player?),
+            combat: self.combat.as_ref()?.save_state()?,
+            shots: self
+                .projectiles
+                .shots()
+                .iter()
+                .copied()
+                .map(ShotState::capture)
+                .collect(),
+            images: self.images.iter().map(|p| p.map(f32::to_bits)).collect(),
+            fire: self.fire_pending,
+            target: self.fire_target.map(|p| p.map(f32::to_bits)),
+            acceleration: self.fire_acceleration.map(f32::to_bits),
+            impacts: self.impacts,
+            facing: self.facing,
+            sand_solid: self.sand_solid,
+            paused: self.paused,
+            jump: self.jump_pending,
+        })
+    }
+    pub fn validate_checkpoint(state: &crate::world_save::Snapshot) -> Result<(), String> {
+        if state.version != 1
+            || !(160..=1920).contains(&state.size[0])
+            || !(120..=1080).contains(&state.size[1])
+            || state.combat.size != state.size
+            || state.combat.origin != state.origin
+            || state.tick > u64::MAX - 3600
+            || ![-1, 1].contains(&state.facing)
+            || state.images.len() > 256
+        {
+            return Err("invalid saved world identity or bounds".into());
+        }
+        for i in 0..2 {
+            state.origin[i]
+                .checked_add(state.size[i] as i64)
+                .ok_or("saved world coordinates overflow")?;
+        }
+        let body = state.player.restore()?;
+        if body.x() < 0.
+            || body.y() < 0.
+            || body.x() + body.width() >= state.size[0] as f32
+            || body.y() + body.height() >= state.size[1] as f32
+        {
+            return Err("saved player outside region".into());
+        }
+        crate::combat::Combat::restore_state(&state.combat)?;
+        crate::world_save::shots(&state.shots)?;
+        if state.images.iter().chain(state.target.iter()).any(|p| {
+            p.iter()
+                .any(|v| !f32::from_bits(*v).is_finite() || f32::from_bits(*v).abs() > 1_000_000.)
+        }) || ![[0., 0.], [0., 0.18]].contains(&state.acceleration.map(f32::from_bits))
+        {
+            return Err("invalid saved placement or attack".into());
+        }
+        Ok(())
+    }
+    fn restore_checkpoint(
+        &mut self,
+        state: &crate::world_save::Snapshot,
+        cells: &[u8],
+    ) -> Result<(), String> {
+        Self::validate_checkpoint(state)?;
+        if state.materials != self.material_fingerprint() || state.size != [self.width, self.height]
+        {
+            return Err("incompatible saved world".into());
+        }
+        let world = SandWorld::from_region(
+            self.width,
+            self.height,
+            self.workers,
+            cells.to_vec(),
+            self.world.materials().clone(),
+            state.origin,
+            state.tick,
+        )?;
+        let combat = crate::combat::Combat::restore_state(&state.combat)?;
+        let player = state.player.restore()?;
+        let shots = crate::world_save::shots(&state.shots)?;
+        self.world = world;
+        self.combat = Some(combat);
+        self.player = Some(player);
+        self.projectiles = shots;
+        self.images = state.images.iter().map(|p| p.map(f32::from_bits)).collect();
+        self.fire_pending = state.fire;
+        self.fire_target = state.target.map(|p| p.map(f32::from_bits));
+        self.fire_acceleration = state.acceleration.map(f32::from_bits);
+        self.impacts = state.impacts;
+        self.facing = state.facing;
+        self.sand_solid = state.sand_solid;
+        self.paused = state.paused;
+        self.jump_pending = state.jump;
+        self.left = false;
+        self.right = false;
+        self.dig = false;
+        self.previous_player = None;
+        self.presentation_direction = 0;
+        self.sparks.clear();
+        self.image_error = None;
+        self.stream = Some(StreamFrame {
+            origin: state.origin,
+            waiting: state.waiting,
+            loaded: true,
+            seed: state.seed,
+        });
+        Ok(())
     }
     pub fn has_material(&self, id: u8) -> bool {
         self.world.materials().get(id).is_some()
@@ -584,6 +706,7 @@ impl Simulation for Game {
         let recorded = self.recorder.as_ref().map(|_| commands.clone());
         let mut terrain = Vec::new();
         let mut steps = 0;
+        let mut restored = false;
         for command in commands {
             if self.stream.is_some()
                 && matches!(
@@ -603,6 +726,7 @@ impl Simulation for Game {
                     command,
                     Command::StartWorld(_)
                         | Command::StartWorldGame(_)
+                        | Command::RestoreCheckpoint { .. }
                         | Command::LoadRegion { .. }
                         | Command::Left(_)
                         | Command::Right(_)
@@ -624,6 +748,7 @@ impl Simulation for Game {
                     Command::NewRun(_)
                         | Command::StartWorld(_)
                         | Command::StartWorldGame(_)
+                        | Command::RestoreCheckpoint { .. }
                         | Command::LoadRegion { .. }
                         | Command::Begin
                         | Command::Explore(_)
@@ -676,6 +801,16 @@ impl Simulation for Game {
                     }
                     terrain.clear();
                     steps = 0;
+                }
+                Command::RestoreCheckpoint { state, cells } => {
+                    match self.restore_checkpoint(&state, &cells) {
+                        Ok(()) => {
+                            restored = true;
+                            terrain.clear();
+                            steps = 0;
+                        }
+                        Err(_) => self.image_error = Some("INVALID WORLD CHECKPOINT"),
+                    }
                 }
                 Command::LoadRegion { origin, cells } => {
                     if let Some(old) = self.stream {
@@ -875,7 +1010,8 @@ impl Simulation for Game {
                 Command::Inspect(point) => self.inspection = point,
             }
         }
-        let advances = if self.stream.is_some_and(|s| s.waiting)
+        let advances = if restored
+            || self.stream.is_some_and(|s| s.waiting)
             || self
                 .combat
                 .as_ref()
@@ -917,6 +1053,7 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            checkpoint: self.checkpoint().map(std::sync::Arc::new),
             stream: self.stream,
             combat: self.combat.as_ref().map(|c| c.frame()),
             exploration_seed: self.exploration_seed,

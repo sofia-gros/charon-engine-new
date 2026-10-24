@@ -58,6 +58,17 @@ fn encode(command: &Command) -> String {
         Command::AddOil => "oil".into(),
         Command::Explore(seed) => format!("explore:{seed}"),
         Command::NewRun(seed) => format!("run:{seed}"),
+        Command::RestoreCheckpoint { state, cells } => {
+            let bytes = serde_json::to_vec(state.as_ref()).expect("serializable checkpoint");
+            let hex: String = bytes.iter().map(|b| format!("{b:02x}")).collect();
+            format!(
+                "restore:{hex}:{}",
+                encode(&Command::LoadRegion {
+                    origin: state.origin,
+                    cells: cells.clone()
+                })
+            )
+        }
         Command::StartWorldGame(seed) => format!("world-game:{seed}"),
         Command::StartWorld(seed) => format!("world:{seed}"),
         Command::LoadRegion { origin, cells } => {
@@ -165,6 +176,30 @@ fn decode(text: &str) -> Result<Command, String> {
         }
         ["explore", seed] => Command::Explore(seed.parse().map_err(|_| bad())?),
         ["run", seed] => Command::NewRun(seed.parse().map_err(|_| bad())?),
+        ["restore", state, kind @ ("region" | "region-rle"), x, y, cells] => {
+            if !state.is_ascii() || state.len() > charon_save::MAX_BYTES * 2 || state.len() % 2 != 0
+            {
+                return Err(bad());
+            }
+            let bytes: Result<Vec<u8>, _> = (0..state.len())
+                .step_by(2)
+                .map(|i| u8::from_str_radix(&state[i..i + 2], 16))
+                .collect();
+            let state: crate::world_save::Snapshot =
+                serde_json::from_slice(&bytes.map_err(|_| bad())?).map_err(|_| bad())?;
+            crate::game::Game::validate_checkpoint(&state)?;
+            let Command::LoadRegion { origin, cells } = decode(&format!("{kind}:{x}:{y}:{cells}"))?
+            else {
+                return Err(bad());
+            };
+            if origin != state.origin {
+                return Err(bad());
+            }
+            Command::RestoreCheckpoint {
+                state: std::sync::Arc::new(state),
+                cells,
+            }
+        }
         ["world-game", seed] => Command::StartWorldGame(seed.parse().map_err(|_| bad())?),
         ["world", seed] => Command::StartWorld(seed.parse().map_err(|_| bad())?),
         [kind @ ("region" | "region-rle"), x, y, hex] => {

@@ -719,6 +719,49 @@ EndSection
             inputs.key(0xff1b)  # Escape verifies normal application shutdown.
             if client.wait(timeout=5) != 0:
                 raise RuntimeError(f"{sample} exited with an error")
+            resume_evidence = None
+            if sample == "world-combat":
+                before = list(csv.DictReader((local / "metrics.csv").open()))[-1]
+                resume_csv = local / "resume.csv"
+                resume_trace = local / f"resume-{time.time_ns()}.trace"
+                with open(local / "resume.log", "w") as log:
+                    client = subprocess.Popen([str(ROOT / "target/debug" / package), "--world-game", "42", "--world-dir", str(temporary / "world"), "--workers", "4", "--fluid-backend", "cpu", "--input-log", str(resume_trace), "--record", str(resume_csv), "--seconds", "20"], env=env, stdout=log, stderr=subprocess.STDOUT)
+                    processes.append(client)
+                def restored_ready():
+                    if not resume_csv.exists(): return False
+                    observed=list(csv.DictReader(resume_csv.open()))
+                    return any(r["world_waiting"]=="false" and r["simulation_tick"]==before["simulation_tick"] for r in observed)
+                wait_for(restored_ready)
+                inputs.focus()
+                first = list(csv.DictReader(resume_csv.open()))[-1]
+                assert float(first["sim_hz"]) == 0, "restored history was counted as live simulation work"
+                for key in ("simulation_tick", "world_x", "world_y", "player_x", "player_y", "player_health", "enemy_id", "enemy_health", "kills", "paused"):
+                    assert first[key] == before[key], f"restart did not restore {key}: {before[key]} -> {first[key]}"
+                # Both sides of the process restart are real client captures.
+                # The timestamp gap includes shutdown/startup; it is not extra simulation.
+                resumed_at = time.monotonic()
+                for index in range(32):
+                    time.sleep(max(0, resumed_at + index / 8 - time.monotonic()))
+                    if index == 8:
+                        inputs.key(ord("p"))
+                        inputs.hold(ord("d"), True)
+                    if index == 20:
+                        inputs.hold(ord("d"), False)
+                        inputs.key(ord("p"))
+                    path = temporary / f"resume-frame-{index:04}.ppm"
+                    timestamp = time.monotonic()
+                    subprocess.run(["import", "-window", str(inputs.window), "-filter", "point", "-resize", "960x540!", "-depth", "8", str(path)], env=env, check=True, capture_output=True, timeout=5)
+                    frames.append((timestamp, path))
+                inputs.key(0xff1b)
+                assert client.wait(timeout=5)==0, "resumed process failed"
+                resumed = list(csv.DictReader(resume_csv.open()))
+                assert max(float(r["world_x"]) for r in resumed if r["world_x"]) > float(before["world_x"]) + 30, "resumed controls did not move the player"
+                assert max(int(r["simulation_tick"]) for r in resumed) > int(before["simulation_tick"]), "resumed simulation never advanced"
+                assert all(r["embedded"] == "false" for r in resumed)
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(resume_trace), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=60)
+                shutil.copyfile(resume_trace, MEDIA / "world-combat-resume-linux.trace")
+                shutil.copyfile(resume_csv, MEDIA / "world-combat-resume-linux.csv")
+                resume_evidence = {"restored_tick":int(before["simulation_tick"]), "enemy_id":first["enemy_id"], "enemy_health":first["enemy_health"], "replay":replay.stdout.strip(), "checks":["normal shutdown publishes checkpoint", "new process restores player/enemy/tick/pause", "real keyboard resumes movement", "restored snapshot replay with 1 worker"]}
             # Retain a private GIF even when acceptance fails, so visual bugs can
             # be inspected immediately. Published media still requires all checks.
             preview=[]
@@ -942,7 +985,7 @@ EndSection
                 assert len(paused) >= 2 and len(set(paused)) == 1
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=60)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
-                checks = {"resident_peak": max(int(r["resident_chunks"]) for r in live), "replay": replay.stdout.strip(), "checks": ["start screen", "aimed hit wounds a turret", "two region boundaries and return", "dormant enemy keeps global position and health", "chasing encounter and kill", "pause freezes combat", "bounded resident chunks", "authoritative replay with 1 worker", "Escape shutdown"]}
+                checks = {"restart": resume_evidence, "resident_peak": max(int(r["resident_chunks"]) for r in live), "replay": replay.stdout.strip(), "checks": ["start screen", "aimed hit wounds a turret", "two region boundaries and return", "dormant enemy keeps global position and health", "chasing encounter and kill", "pause freezes combat", "bounded resident chunks", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "world":
                 live=[r for r in rows if r["world_x"]]
                 assert live, "no world coordinates"

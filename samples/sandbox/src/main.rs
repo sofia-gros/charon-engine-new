@@ -8,6 +8,7 @@ mod materials;
 mod scenes;
 mod smoke;
 mod trace;
+mod world_save;
 mod world_view;
 use charon_render::{
     self as gpu, Camera2D, DebugPerformance, Gpu, Placement, Result, WindowRenderer,
@@ -172,6 +173,8 @@ impl Options {
     }
 }
 struct App {
+    checkpoint: Option<world_save::Checkpoint>,
+    restore_sent: bool,
     world_session: Option<world_view::Session>,
     world_target: Option<[i64; 2]>,
     world_payload: Option<std::sync::Arc<[u8]>>,
@@ -220,9 +223,30 @@ impl App {
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
         let streaming = options.world.is_some();
+        let checkpoint = if options.world_game {
+            let checkpoint = world_save::Checkpoint::open(
+                options.world_dir.join(options.world.unwrap().to_string()),
+                options.world.unwrap(),
+                materials::palette().fingerprint(),
+                [options.width, options.height],
+            )?;
+            if let Some(state) = &checkpoint.saved {
+                Game::validate_checkpoint(state)?;
+            }
+            Some(checkpoint)
+        } else {
+            None
+        };
+        let saved_origin = checkpoint
+            .as_ref()
+            .and_then(|c| c.saved.as_ref())
+            .map(|s| s.origin);
         let world_session = if let Some(seed) = options.world {
             Some(world_view::Session::new(
-                options.world_dir.join(seed.to_string()),
+                checkpoint.as_ref().map_or_else(
+                    || options.world_dir.join(seed.to_string()),
+                    |c| c.directory.clone(),
+                ),
                 seed,
                 materials::palette().fingerprint(),
                 options.width,
@@ -237,8 +261,10 @@ impl App {
             Tool::Brush
         };
         Ok(Self {
+            checkpoint,
+            restore_sent: false,
             world_session,
-            world_target: None,
+            world_target: saved_origin,
             world_payload: None,
             world_sent: false,
             world_captured: None,
@@ -297,6 +323,19 @@ impl App {
             return Ok(());
         };
         if let (Some(session), Some(stream)) = (&mut self.world_session, snapshot.frame.stream) {
+            if self.restore_sent
+                && stream.loaded
+                && self.checkpoint.as_ref().is_some_and(|c| c.saved.is_some())
+            {
+                self.checkpoint.as_mut().unwrap().saved = None;
+                // Loaded world ticks are history, not work performed this process.
+                self.last_tick = snapshot.frame.simulation_tick;
+                self.last_sim_sample = now;
+                self.performance = None;
+                self.world_target = None;
+                self.world_payload = None;
+                self.world_sent = false;
+            }
             if !stream.waiting {
                 self.world_target = None;
                 self.world_payload = None;
@@ -335,11 +374,26 @@ impl App {
                         session.prepare(self.world_target.unwrap())?.map(Into::into);
                 }
                 if let Some(cells) = &self.world_payload {
-                    match self.runtime.submit(GameCommand::LoadRegion {
-                        origin: self.world_target.unwrap(),
-                        cells: cells.clone(),
-                    }) {
-                        Ok(()) => self.world_sent = true,
+                    let command = if let Some(saved) =
+                        self.checkpoint.as_ref().and_then(|c| c.saved.as_ref())
+                    {
+                        self.checkpoint.as_ref().unwrap().verify_terrain(cells)?;
+                        GameCommand::RestoreCheckpoint {
+                            state: std::sync::Arc::new(saved.clone()),
+                            cells: cells.clone(),
+                        }
+                    } else {
+                        GameCommand::LoadRegion {
+                            origin: self.world_target.unwrap(),
+                            cells: cells.clone(),
+                        }
+                    };
+                    match self.runtime.submit(command) {
+                        Ok(()) => {
+                            self.world_sent = true;
+                            self.restore_sent =
+                                self.checkpoint.as_ref().is_some_and(|c| c.saved.is_some());
+                        }
                         Err(std::sync::mpsc::TrySendError::Full(_)) => {}
                         Err(error) => return Err(format!("world handoff: {error}").into()),
                     }
@@ -1057,6 +1111,17 @@ fn main() -> Result<()> {
             }
         }
         session.flush()?;
+        if app.error.is_none() {
+            if let (Some(checkpoint), Some(snapshot)) = (&app.checkpoint, app.runtime.latest()) {
+                if let Some(state) = &snapshot.frame.checkpoint {
+                    checkpoint.commit(state, &snapshot.frame.terrain.indices.to_bytes())?;
+                    println!(
+                        "world_checkpoint_saved tick={} origin={:?}",
+                        state.tick, state.origin
+                    );
+                }
+            }
+        }
     }
     if let Some(error) = app.error {
         return Err(error.into());
