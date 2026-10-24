@@ -1,25 +1,25 @@
 {
-  "source_sha256": "f895a0e4dca73894c66a8f436e4ed822ce86c5def37ca5ade1e5dde1bf885874",
+  "source_sha256": "133db16d2cfbff4f5a9b5fa3de9ae794aed461a3248580cf8637d02b9ef4714d",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "world-combat",
-  "base_revision": "74b3a55d420e4e79bb594a5ba7a6f2a6c6aebe02",
+  "base_revision": "4ff98cccb7ae2abd0f8cdd7e87715bc2e43bb700",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.721,
-  "gif_encoded_frames": 233,
+  "observed_capture_fps": 7.487,
+  "gif_encoded_frames": 256,
   "draw_submission_fps_range": [
-    1.91,
-    44.04
+    2.08,
+    45.33
   ],
   "simulation_hz_range": [
     0.0,
-    151.56
+    160.23
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
-  "captured_frames": 240,
-  "gif_duration_ms": 31050,
+  "captured_frames": 264,
+  "gif_duration_ms": 35230,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -33,19 +33,22 @@
     1080
   ],
   "restart": {
-    "restored_tick": 1330,
+    "restored_tick": 1333,
     "enemy_id": "1",
     "enemy_health": "2",
-    "replay": "replay_ticks=292 checks=terrain,player,input_state workers=1",
+    "replay": "replay_ticks=544 checks=terrain,player,input_state workers=1",
     "checks": [
       "normal shutdown publishes checkpoint",
       "new process restores player/enemy/tick/pause",
       "real keyboard resumes movement",
-      "restored snapshot replay with 1 worker"
+      "restored snapshot replay with 1 worker",
+      "R saves previous run and resets same-seed world",
+      "retry retains pause and restores health/enemies",
+      "new run accepts start and movement"
     ]
   },
   "resident_peak": 16,
-  "replay": "replay_ticks=1630 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=1628 checks=terrain,player,input_state workers=1",
   "checks": [
     "start screen",
     "aimed hit wounds a turret",

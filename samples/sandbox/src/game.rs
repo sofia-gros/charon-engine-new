@@ -61,6 +61,7 @@ pub struct Inspection {
 }
 #[derive(Clone, Copy, Debug)]
 pub struct StreamFrame {
+    pub retry: bool,
     pub origin: [i64; 2],
     pub waiting: bool,
     pub loaded: bool,
@@ -404,6 +405,7 @@ impl Game {
         self.sparks.clear();
         self.image_error = None;
         self.stream = Some(StreamFrame {
+            retry: false,
             origin: state.origin,
             waiting: state.waiting,
             loaded: true,
@@ -422,6 +424,9 @@ impl Game {
         if let Some(stream) = self.stream {
             mix(0x776f726c64);
             mix(stream.seed);
+            if stream.retry {
+                mix(0x7265747279);
+            }
             mix(stream.origin[0] as u64);
             mix(stream.origin[1] as u64);
             mix(u64::from(stream.waiting));
@@ -727,6 +732,7 @@ impl Simulation for Game {
                     Command::StartWorld(_)
                         | Command::StartWorldGame(_)
                         | Command::RestoreCheckpoint { .. }
+                        | Command::Terrain(SandCommand::Clear)
                         | Command::LoadRegion { .. }
                         | Command::Left(_)
                         | Command::Right(_)
@@ -767,6 +773,7 @@ impl Simulation for Game {
                         Command::StartWorldGame(seed) => (seed, true),
                         _ => unreachable!(),
                     };
+                    let retry_pause = self.stream.is_some_and(|s| s.retry) && self.paused;
                     let recorder = self.recorder.take();
                     let gpu = self.fluid_gpu.clone();
                     *self = Self::with_materials(
@@ -777,6 +784,7 @@ impl Simulation for Game {
                         self.world.materials().clone(),
                     )
                     .expect("validated scene");
+                    self.paused = retry_pause;
                     self.world.apply_edits(vec![SandCommand::Clear]);
                     self.recorder = recorder;
                     self.fluid_gpu = gpu;
@@ -787,6 +795,7 @@ impl Simulation for Game {
                         12.,
                     ));
                     self.stream = Some(StreamFrame {
+                        retry: false,
                         origin: [-(self.width as i64) / 2, -(self.height as i64) / 2],
                         waiting: true,
                         loaded: false,
@@ -872,6 +881,19 @@ impl Simulation for Game {
                             Err(_) => self.image_error = Some("INVALID WORLD REGION"),
                         }
                     }
+                }
+                Command::Terrain(SandCommand::Clear)
+                    if self.stream.is_some_and(|s| s.loaded) && self.combat.is_some() =>
+                {
+                    let stream = self.stream.as_mut().unwrap();
+                    stream.retry = true;
+                    stream.waiting = true;
+                    self.left = false;
+                    self.right = false;
+                    self.dig = false;
+                    self.jump_pending = false;
+                    terrain.clear();
+                    steps = 0;
                 }
                 Command::Terrain(SandCommand::Clear) if self.stream.is_some() => {
                     self.image_error = Some("WORLD MODE: EXIT SAVES TERRAIN");

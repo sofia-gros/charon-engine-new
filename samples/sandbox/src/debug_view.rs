@@ -214,7 +214,7 @@ pub fn overlays(
                 combat.kills
             ),
             crate::combat::Phase::Defeated if frame.stream.is_some() => {
-                "DEFEATED - ESC SAVE TERRAIN AND EXIT".into()
+                "DEFEATED - R RETRY SAME SEED ESC SAVE".into()
             }
             crate::combat::Phase::Defeated => "DEFEATED - R RETRY SAME MAP".into(),
         };

@@ -294,6 +294,30 @@ impl Checkpoint {
             generation,
         })
     }
+    /// Start a clean same-seed world without deleting any committed generation.
+    /// Called by the retry worker, not the render thread.
+    pub fn fresh(&self) -> io::Result<Self> {
+        let generation = format!(
+            "g{}-{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map_err(invalid)?
+                .as_nanos(),
+            std::process::id()
+        );
+        let directory = self.root.join("checkpoints").join(&generation);
+        fs::create_dir(&directory)?;
+        Ok(Self {
+            root: self.root.clone(),
+            directory,
+            saved: None,
+            terrain_hash: None,
+            seed: self.seed,
+            materials: self.materials,
+            size: self.size,
+            generation,
+        })
+    }
     pub fn verify_terrain(&self, cells: &[u8]) -> io::Result<()> {
         if self
             .terrain_hash
@@ -357,6 +381,83 @@ mod tests {
                 .unwrap()
                 .as_nanos()
         ))
+    }
+    #[test]
+    fn retry_starts_fresh_same_seed_after_defeat_and_keeps_previous_checkpoint_and_pause() {
+        let root = root("retry");
+        let mut game = Game::new(640, 360, 4, true).unwrap();
+        let materials = game.material_fingerprint();
+        let checkpoint = Checkpoint::open(root.clone(), 42, materials, [640, 360]).unwrap();
+        let mut session =
+            Session::new(checkpoint.directory.clone(), 42, materials, 640, 360).unwrap();
+        let origin = game
+            .step(vec![Command::StartWorldGame(42)])
+            .stream
+            .unwrap()
+            .origin;
+        let original = region(&mut session, origin);
+        game.step(vec![Command::LoadRegion {
+            origin,
+            cells: original.clone().into(),
+        }]);
+        let frame = game.step(vec![
+            Command::Begin,
+            Command::Pause,
+            Command::Terrain(charon_sand::Command::Paint {
+                x: 330,
+                y: 180,
+                material: crate::materials::WALL,
+            }),
+        ]);
+        let edited = frame.terrain.indices.to_bytes();
+        assert_ne!(edited, original);
+        let mut dead = frame.checkpoint.unwrap().as_ref().clone();
+        dead.combat.phase = 2;
+        dead.combat.health = 0;
+        game.step(vec![Command::RestoreCheckpoint {
+            state: std::sync::Arc::new(dead),
+            cells: edited.clone().into(),
+        }]);
+        let frozen = game.step(vec![Command::Terrain(charon_sand::Command::Clear)]);
+        assert!(frozen.stream.unwrap().retry && frozen.stream.unwrap().waiting);
+        for _ in 0..5 {
+            assert_eq!(
+                game.step(vec![Command::Step]).simulation_tick,
+                frozen.simulation_tick
+            );
+        }
+        session.capture(origin, &edited).unwrap();
+        session.flush().unwrap();
+        checkpoint
+            .commit(&frozen.checkpoint.unwrap(), &edited)
+            .unwrap();
+        let head = fs::read(root.join("checkpoint.json")).unwrap();
+        let fresh = checkpoint.fresh().unwrap();
+        let mut next_session =
+            Session::new(fresh.directory.clone(), 42, materials, 640, 360).unwrap();
+        let initial = region(&mut next_session, origin);
+        assert_eq!(initial, original);
+        assert_eq!(fs::read(root.join("checkpoint.json")).unwrap(), head);
+        let reset = game.step(vec![Command::StartWorldGame(42)]);
+        assert!(reset.paused);
+        assert!(!reset.stream.unwrap().retry);
+        let ready = game.step(vec![Command::LoadRegion {
+            origin,
+            cells: initial.into(),
+        }]);
+        let combat = ready.combat.unwrap();
+        assert_eq!(
+            (ready.simulation_tick, combat.health, combat.kills),
+            (0, 3, 0)
+        );
+        assert_eq!((combat.enemies.len(), combat.sleeping), (1, 1));
+        assert_eq!(combat.enemies[0].health, 3);
+        assert_eq!(ready.terrain.indices.to_bytes(), original);
+        game.step(vec![Command::Begin]);
+        assert_eq!(game.step(vec![Command::Step]).simulation_tick, 1);
+        drop(session);
+        drop(next_session);
+        fs::remove_dir_all(root).unwrap();
     }
     #[test]
     fn checkpoint_roundtrip_preserves_live_attacks_and_future_simulation_and_survives_failed_publication(

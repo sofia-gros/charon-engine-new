@@ -725,7 +725,7 @@ EndSection
                 resume_csv = local / "resume.csv"
                 resume_trace = local / f"resume-{time.time_ns()}.trace"
                 with open(local / "resume.log", "w") as log:
-                    client = subprocess.Popen([str(ROOT / "target/debug" / package), "--world-game", "42", "--world-dir", str(temporary / "world"), "--workers", "4", "--fluid-backend", "cpu", "--input-log", str(resume_trace), "--record", str(resume_csv), "--seconds", "20"], env=env, stdout=log, stderr=subprocess.STDOUT)
+                    client = subprocess.Popen([str(ROOT / "target/debug" / package), "--world-game", "42", "--world-dir", str(temporary / "world"), "--workers", "4", "--fluid-backend", "cpu", "--input-log", str(resume_trace), "--record", str(resume_csv), "--seconds", "30"], env=env, stdout=log, stderr=subprocess.STDOUT)
                     processes.append(client)
                 def restored_ready():
                     if not resume_csv.exists(): return False
@@ -752,6 +752,31 @@ EndSection
                     timestamp = time.monotonic()
                     subprocess.run(["import", "-window", str(inputs.window), "-filter", "point", "-resize", "960x540!", "-depth", "8", str(path)], env=env, check=True, capture_output=True, timeout=5)
                     frames.append((timestamp, path))
+                head_path = temporary / "world" / "42" / "checkpoint.json"
+                head_before_retry = json.loads(head_path.read_text())["generation"]
+                inputs.key(ord("r"))
+                def retry_ready():
+                    observed=list(csv.DictReader(resume_csv.open()))
+                    return any(r["run_phase"]=="Ready" and r["simulation_tick"]=="0" and r["world_waiting"]=="false" for r in observed)
+                wait_for(retry_ready)
+                ready = list(csv.DictReader(resume_csv.open()))[-1]
+                assert (ready["player_health"], ready["enemy_health"], ready["kills"], ready["paused"]) == ("3", "3", "0", "true"), "retry did not reset combat and retain debug pause"
+                assert json.loads(head_path.read_text())["generation"] != head_before_retry, "old run was not saved before retry"
+                # Show the restored title, then start and operate the fresh world.
+                retry_at=time.monotonic()
+                for index in range(24):
+                    time.sleep(max(0,retry_at+index/8-time.monotonic()))
+                    if index==8:
+                        inputs.key(0xff0d)
+                        inputs.key(ord("p"))
+                        inputs.hold(ord("d"),True)
+                    if index==18:
+                        inputs.hold(ord("d"),False)
+                        inputs.key(ord("p"))
+                    path=temporary/f"retry-frame-{index:04}.ppm"
+                    timestamp=time.monotonic()
+                    subprocess.run(["import","-window",str(inputs.window),"-filter","point","-resize","960x540!","-depth","8",str(path)],env=env,check=True,capture_output=True,timeout=5)
+                    frames.append((timestamp,path))
                 inputs.key(0xff1b)
                 assert client.wait(timeout=5)==0, "resumed process failed"
                 resumed = list(csv.DictReader(resume_csv.open()))
@@ -761,7 +786,7 @@ EndSection
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(resume_trace), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=60)
                 shutil.copyfile(resume_trace, MEDIA / "world-combat-resume-linux.trace")
                 shutil.copyfile(resume_csv, MEDIA / "world-combat-resume-linux.csv")
-                resume_evidence = {"restored_tick":int(before["simulation_tick"]), "enemy_id":first["enemy_id"], "enemy_health":first["enemy_health"], "replay":replay.stdout.strip(), "checks":["normal shutdown publishes checkpoint", "new process restores player/enemy/tick/pause", "real keyboard resumes movement", "restored snapshot replay with 1 worker"]}
+                resume_evidence = {"restored_tick":int(before["simulation_tick"]), "enemy_id":first["enemy_id"], "enemy_health":first["enemy_health"], "replay":replay.stdout.strip(), "checks":["normal shutdown publishes checkpoint", "new process restores player/enemy/tick/pause", "real keyboard resumes movement", "restored snapshot replay with 1 worker", "R saves previous run and resets same-seed world", "retry retains pause and restores health/enemies", "new run accepts start and movement"]}
             # Retain a private GIF even when acceptance fails, so visual bugs can
             # be inspected immediately. Published media still requires all checks.
             preview=[]

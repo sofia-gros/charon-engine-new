@@ -172,7 +172,13 @@ impl Options {
         Ok(options)
     }
 }
+type RetryWorker = std::thread::JoinHandle<
+    std::result::Result<(world_save::Checkpoint, world_view::Session), String>,
+>;
 struct App {
+    retry_worker: Option<RetryWorker>,
+    retry_started: bool,
+    retry_reset_sent: bool,
     checkpoint: Option<world_save::Checkpoint>,
     restore_sent: bool,
     world_session: Option<world_view::Session>,
@@ -261,6 +267,9 @@ impl App {
             Tool::Brush
         };
         Ok(Self {
+            retry_worker: None,
+            retry_started: false,
+            retry_reset_sent: false,
             checkpoint,
             restore_sent: false,
             world_session,
@@ -322,7 +331,85 @@ impl App {
         let Some(snapshot) = self.runtime.latest() else {
             return Ok(());
         };
-        if let (Some(session), Some(stream)) = (&mut self.world_session, snapshot.frame.stream) {
+        if let Some(stream) = snapshot.frame.stream {
+            if stream.retry {
+                if !self.retry_started {
+                    let mut session = self
+                        .world_session
+                        .take()
+                        .ok_or("missing world during retry")?;
+                    let checkpoint = self
+                        .checkpoint
+                        .take()
+                        .ok_or("missing checkpoint during retry")?;
+                    let state = snapshot
+                        .frame
+                        .checkpoint
+                        .clone()
+                        .ok_or("retry before world loaded")?;
+                    let cells = snapshot.frame.terrain.indices.to_bytes();
+                    let captured = self.world_captured == Some(stream.origin);
+                    self.retry_worker = Some(
+                        std::thread::Builder::new()
+                            .name("charon-world-retry".into())
+                            .spawn(move || {
+                                let mut run = || -> std::io::Result<_> {
+                                    if !captured {
+                                        session.capture(stream.origin, &cells)?;
+                                    }
+                                    session.flush()?;
+                                    checkpoint.commit(&state, &cells)?;
+                                    let next = checkpoint.fresh()?;
+                                    let next_session = world_view::Session::new(
+                                        next.directory.clone(),
+                                        state.seed,
+                                        state.materials,
+                                        state.size[0],
+                                        state.size[1],
+                                    )?;
+                                    Ok((next, next_session))
+                                };
+                                run().map_err(|e| e.to_string())
+                            })?,
+                    );
+                    self.retry_started = true;
+                    self.world_target = None;
+                    self.world_payload = None;
+                    self.world_sent = false;
+                    self.world_captured = None;
+                }
+                if self.retry_worker.as_ref().is_some_and(|w| w.is_finished()) {
+                    let (checkpoint, session) = self
+                        .retry_worker
+                        .take()
+                        .unwrap()
+                        .join()
+                        .map_err(|_| "world retry worker failed")??;
+                    self.checkpoint = Some(checkpoint);
+                    self.world_session = Some(session);
+                }
+                if self.retry_worker.is_none() && !self.retry_reset_sent {
+                    match self
+                        .runtime
+                        .submit(GameCommand::StartWorldGame(stream.seed))
+                    {
+                        Ok(()) => self.retry_reset_sent = true,
+                        Err(std::sync::mpsc::TrySendError::Full(_)) => {}
+                        Err(error) => return Err(format!("world retry: {error}").into()),
+                    }
+                }
+            } else if self.retry_started {
+                self.retry_started = false;
+                self.retry_reset_sent = false;
+                self.last_tick = snapshot.frame.simulation_tick;
+                self.last_sim_sample = now;
+                self.performance = None;
+            }
+        }
+        if let (Some(session), Some(stream)) = (
+            &mut self.world_session,
+            snapshot.frame.stream.filter(|s| !s.retry),
+        ) {
             if self.restore_sent
                 && stream.loaded
                 && self.checkpoint.as_ref().is_some_and(|c| c.saved.is_some())
@@ -1102,7 +1189,26 @@ fn main() -> Result<()> {
     app.runtime
         .finish()
         .map_err(|_| "simulation worker failed during shutdown")?;
+    if let Some(worker) = app.retry_worker.take() {
+        worker
+            .join()
+            .map_err(|_| "world retry worker failed during shutdown")?
+            .map_err(|e| format!("world retry save failed: {e}"))?;
+    }
     if let Some(session) = &mut app.world_session {
+        // If reset was queued but not accepted before exit, the retry worker
+        // already committed the old run. Never capture it into the fresh session.
+        if app
+            .runtime
+            .latest()
+            .is_some_and(|s| s.frame.stream.is_some_and(|s| s.retry))
+        {
+            session.flush()?;
+            if let Some(error) = app.error {
+                return Err(error.into());
+            }
+            return Ok(());
+        }
         if let Some(snapshot) = app.runtime.latest() {
             if let Some(stream) = snapshot.frame.stream.filter(|s| s.loaded) {
                 if !stream.waiting || app.world_captured != Some(stream.origin) {
