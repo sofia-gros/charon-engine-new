@@ -31,6 +31,19 @@ pub enum Command {
     Fire,
     FireAt([f32; 2]),
     LobAt([f32; 2]),
+    BrushAt {
+        position: [f32; 2],
+        diameter: u8,
+        material: u8,
+    },
+    MineAt {
+        position: [f32; 2],
+        size: u8,
+    },
+    ExplodeAt {
+        position: [f32; 2],
+        radius: u8,
+    },
     Dig(bool),
     ToggleSand,
     Pause,
@@ -68,6 +81,11 @@ pub struct StreamFrame {
     pub seed: u64,
 }
 pub struct Frame {
+    pub rubble_pixels: usize,
+    pub block_items: usize,
+    pub block_pixels: usize,
+    pub inventory: u32,
+    pub block_drops: u64,
     pub checkpoint: Option<std::sync::Arc<crate::world_save::Snapshot>>,
     pub stream: Option<StreamFrame>,
     pub combat: Option<crate::combat::Frame>,
@@ -134,6 +152,9 @@ struct Spark {
     life: u8,
 }
 pub struct Game {
+    inventory: u32,
+    block_drops: u64,
+    last_mine_tick: Option<u64>,
     stream: Option<StreamFrame>,
     combat: Option<crate::combat::Combat>,
     exploration_seed: Option<u64>,
@@ -197,6 +218,9 @@ impl Game {
             SandWorld::with_materials(width, height, workers, materials)?
         };
         Ok(Self {
+            inventory: 32,
+            block_drops: 0,
+            last_mine_tick: None,
             stream: None,
             combat: None,
             exploration_seed: None,
@@ -295,11 +319,110 @@ impl Game {
     pub fn material_fingerprint(&self) -> u64 {
         self.world.materials().fingerprint()
     }
+    fn mining_edits(&mut self, terrain: Vec<SandCommand>) -> Vec<SandCommand> {
+        if self.player.is_none()
+            || self.cup.is_some()
+            || self
+                .world
+                .materials()
+                .get(crate::materials::RUBBLE)
+                .is_none_or(|m| m.key != "game.wall_rubble")
+        {
+            return terrain;
+        }
+        let mut pixels = Vec::new();
+        for command in &terrain {
+            let (x, y, w, h, material) = match *command {
+                SandCommand::Paint { x, y, material } => (
+                    x.saturating_sub(3),
+                    y.saturating_sub(3),
+                    x.saturating_add(4) - x.saturating_sub(3),
+                    y.saturating_add(4) - y.saturating_sub(3),
+                    material,
+                ),
+                SandCommand::FillRect {
+                    x,
+                    y,
+                    width,
+                    height,
+                    material,
+                } => (x, y, width, height, material),
+                SandCommand::Clear => return terrain,
+            };
+            for y in y.max(1)..y.saturating_add(h).min(self.height - 1) {
+                for x in x.max(1)..x.saturating_add(w).min(self.width - 1) {
+                    pixels.push(charon_mining::PixelEdit { x, y, material });
+                }
+            }
+        }
+        let rules = charon_mining::Rules::new(4, 8, AIR).unwrap();
+        let result = rules.resolve(
+            pixels,
+            |x, y| {
+                if x == 0 || y == 0 || x >= self.width - 1 || y >= self.height - 1 {
+                    u8::MAX
+                } else {
+                    self.world
+                        .material_at(x as i32, y as i32)
+                        .unwrap_or(u8::MAX)
+                }
+            },
+            crate::materials::mining_products,
+        );
+        self.block_drops += result.drops as u64;
+        result
+            .edits
+            .into_iter()
+            .map(|p| SandCommand::FillRect {
+                x: p.x,
+                y: p.y,
+                width: 1,
+                height: 1,
+                material: p.material,
+            })
+            .collect()
+    }
+    fn cut(&self, position: [f32; 2], size: u8, circle: bool) -> Vec<SandCommand> {
+        let width = if circle {
+            usize::from(size) * 2 + 1
+        } else {
+            usize::from(size)
+        };
+        let half = width as i32 / 2;
+        let start = [
+            position[0].floor() as i32 - half,
+            position[1].floor() as i32 - half,
+        ];
+        let mut edits = Vec::new();
+        for (dx, dy) in charon_mining::disk(width).unwrap() {
+            let (x, y) = (start[0] + dx, start[1] + dy);
+            if x <= 0 || y <= 0 || x >= self.width as i32 - 1 || y >= self.height as i32 - 1 {
+                continue;
+            }
+            if self
+                .world
+                .material_at(x, y)
+                .is_some_and(|id| id != AIR && id != crate::materials::BLOCK_ITEM)
+            {
+                edits.push(SandCommand::FillRect {
+                    x: x as usize,
+                    y: y as usize,
+                    width: 1,
+                    height: 1,
+                    material: AIR,
+                });
+            }
+        }
+        edits
+    }
     pub fn checkpoint(&self) -> Option<crate::world_save::Snapshot> {
         use crate::world_save::{BodyState, ShotState, Snapshot};
         let stream = self.stream.filter(|s| s.loaded)?;
         Some(Snapshot {
-            version: 1,
+            version: 3,
+            inventory: self.inventory,
+            block_drops: self.block_drops,
+            last_mine_tick: self.last_mine_tick,
             seed: stream.seed,
             materials: self.material_fingerprint(),
             size: [self.width, self.height],
@@ -327,7 +450,7 @@ impl Game {
         })
     }
     pub fn validate_checkpoint(state: &crate::world_save::Snapshot) -> Result<(), String> {
-        if state.version != 1
+        if state.version != 3
             || !(160..=1920).contains(&state.size[0])
             || !(120..=1080).contains(&state.size[1])
             || state.combat.size != state.size
@@ -392,6 +515,9 @@ impl Game {
         self.fire_pending = state.fire;
         self.fire_target = state.target.map(|p| p.map(f32::from_bits));
         self.fire_acceleration = state.acceleration.map(f32::from_bits);
+        self.inventory = state.inventory;
+        self.block_drops = state.block_drops;
+        self.last_mine_tick = state.last_mine_tick;
         self.impacts = state.impacts;
         self.facing = state.facing;
         self.sand_solid = state.sand_solid;
@@ -421,6 +547,12 @@ impl Game {
         let mut mix = |value: u64| {
             hash = (hash ^ value).wrapping_mul(0x100000001b3);
         };
+        if self.block_drops != 0 || self.inventory != 32 || self.last_mine_tick.is_some() {
+            mix(0x6d696e696e67);
+            mix(u64::from(self.inventory));
+            mix(self.block_drops);
+            mix(self.last_mine_tick.unwrap_or(u64::MAX));
+        }
         if let Some(stream) = self.stream {
             mix(0x776f726c64);
             mix(stream.seed);
@@ -517,18 +649,20 @@ impl Game {
         }
         if self.dig {
             if let Some(player) = self.player {
-                for x in [
-                    player.x().floor() as usize + 3,
-                    (player.x() + player.width()).ceil() as usize - 4,
-                ] {
-                    terrain.push(SandCommand::Paint {
-                        x,
-                        y: (player.y() + player.height()).floor() as usize + 3,
-                        material: AIR,
-                    });
+                // A fractional 7px body can overlap eight pixel columns.
+                for offset in [0., 2., 4., 6.] {
+                    terrain.extend(self.cut(
+                        [
+                            player.x().floor() + offset + 1.,
+                            (player.y() + player.height()).floor() + 1.,
+                        ],
+                        2,
+                        false,
+                    ));
                 }
             }
         }
+        let terrain = self.mining_edits(terrain);
         let mut frame = if let Some(cup) = &mut self.cup {
             let start = std::time::Instant::now();
             self.world.apply_edits(terrain);
@@ -634,9 +768,11 @@ impl Game {
                         combat.hit_enemy(impact.cell);
                     }
                 } else {
-                    destruction.push(SandCommand::Paint {
+                    destruction.push(SandCommand::FillRect {
                         x: impact.cell[0].max(0) as usize,
                         y: impact.cell[1].max(0) as usize,
+                        width: 1,
+                        height: 1,
                         material: AIR,
                     });
                 }
@@ -651,6 +787,7 @@ impl Game {
             }
             // Render destruction immediately without an extra physics tick. Preserve
             // the physics counters from the same step in the newly published frame.
+            let destruction = self.mining_edits(destruction);
             let edited = self.world.edit(destruction);
             frame.image = edited.image;
             frame.indices = edited.indices;
@@ -673,6 +810,38 @@ impl Game {
                     None => true,
                 },
             );
+        }
+        if let Some(player) = self.player {
+            let mut collected = Vec::new();
+            for y in (player.y().floor() as i32 - 4).max(1)
+                ..(player.y() + player.height() + 4.).ceil() as i32
+            {
+                for x in (player.x().floor() as i32 - 4).max(1)
+                    ..(player.x() + player.width() + 4.).ceil() as i32
+                {
+                    if self.world.material_at(x, y) == Some(crate::materials::BLOCK_ITEM)
+                        && self.inventory < u32::MAX
+                    {
+                        self.inventory += 1;
+                        collected.push(SandCommand::FillRect {
+                            x: x as usize,
+                            y: y as usize,
+                            width: 1,
+                            height: 1,
+                            material: AIR,
+                        });
+                    }
+                }
+            }
+            if !collected.is_empty() {
+                let edited = self.world.edit(collected);
+                frame.image = edited.image;
+                frame.indices = edited.indices;
+                frame.sand = edited.sand;
+                frame.converted_cells += edited.converted_cells;
+                frame.update_ms += edited.update_ms;
+                frame.snapshot_ms += edited.snapshot_ms;
+            }
         }
         if let (Some(combat), Some(player)) = (&mut self.combat, self.player) {
             let world = &self.world;
@@ -806,6 +975,7 @@ impl Simulation for Game {
                             self.width,
                             self.height,
                             self.stream.unwrap().origin,
+                            seed,
                         ));
                     }
                     terrain.clear();
@@ -854,6 +1024,12 @@ impl Simulation for Game {
                                     player.translate(offset);
                                 }
                                 self.projectiles.translate(offset);
+                                self.projectiles.retain(|s| {
+                                    s.position[0] >= 2.
+                                        && s.position[1] >= 2.
+                                        && s.position[0] < (self.width - 2) as f32
+                                        && s.position[1] < (self.height - 2) as f32
+                                });
                                 if let Some(combat) = &mut self.combat {
                                     combat.rebase(origin);
                                 }
@@ -1022,6 +1198,64 @@ impl Simulation for Game {
                         self.image_error = Some("INVALID AIM POSITION");
                     }
                 }
+                Command::BrushAt {
+                    position,
+                    diameter,
+                    material,
+                } => {
+                    if (1..=16).contains(&diameter)
+                        && self.has_material(material)
+                        && position
+                            .iter()
+                            .all(|v| v.is_finite() && v.abs() < 1_000_000.)
+                    {
+                        for (dx, dy) in charon_mining::disk(usize::from(diameter)).unwrap() {
+                            let x = position[0].floor() as i32 - i32::from(diameter) / 2 + dx;
+                            let y = position[1].floor() as i32 - i32::from(diameter) / 2 + dy;
+                            if x > 0
+                                && y >= 0
+                                && x < self.width as i32 - 1
+                                && y < self.height as i32 - 1
+                            {
+                                terrain.push(SandCommand::FillRect {
+                                    x: x as usize,
+                                    y: y as usize,
+                                    width: 1,
+                                    height: 1,
+                                    material,
+                                });
+                            }
+                        }
+                    }
+                }
+                command @ (Command::MineAt { .. } | Command::ExplodeAt { .. }) => {
+                    let (position, size, circle) = match command {
+                        Command::MineAt { position, size } => (position, size, false),
+                        Command::ExplodeAt { position, radius } => (position, radius, true),
+                        _ => unreachable!(),
+                    };
+                    let valid = position
+                        .iter()
+                        .all(|v| v.is_finite() && v.abs() <= 1_000_000.)
+                        && (1..=if circle { 24 } else { 16 }).contains(&size);
+                    let reachable = self.player.is_some_and(|p| {
+                        (position[0] - p.x() - p.width() / 2.)
+                            .hypot(position[1] - p.y() - p.height() / 2.)
+                            <= if circle { 96. } else { 48. }
+                    });
+                    if valid
+                        && reachable
+                        && (circle
+                            || self
+                                .last_mine_tick
+                                .is_none_or(|t| self.world.tick().saturating_sub(t) >= 6))
+                    {
+                        terrain.extend(self.cut(position, size, circle));
+                        if !circle {
+                            self.last_mine_tick = Some(self.world.tick());
+                        }
+                    }
+                }
                 Command::Dig(down) => self.dig = down,
                 Command::ToggleSand => self.sand_solid = !self.sand_solid,
                 Command::Pause => self.paused = !self.paused,
@@ -1046,6 +1280,7 @@ impl Simulation for Game {
             usize::from(!self.paused)
         };
         let mut frame = if advances == 0 {
+            let terrain = self.mining_edits(terrain);
             self.world.edit(terrain)
         } else {
             let mut frame = self.advance(terrain);
@@ -1075,6 +1310,27 @@ impl Simulation for Game {
                 .expect("input trace write failed");
         }
         Frame {
+            block_pixels: [
+                WALL,
+                crate::materials::DIRT,
+                crate::materials::STONE,
+                crate::materials::ORE,
+            ]
+            .into_iter()
+            .map(|id| self.world.material_count(id))
+            .sum(),
+            rubble_pixels: [
+                crate::materials::RUBBLE,
+                crate::materials::DIRT_RUBBLE,
+                crate::materials::STONE_RUBBLE,
+                crate::materials::ORE_RUBBLE,
+            ]
+            .into_iter()
+            .map(|id| self.world.material_count(id))
+            .sum(),
+            block_items: self.world.material_count(crate::materials::BLOCK_ITEM),
+            inventory: self.inventory,
+            block_drops: self.block_drops,
             checkpoint: self.checkpoint().map(std::sync::Arc::new),
             stream: self.stream,
             combat: self.combat.as_ref().map(|c| c.frame()),
@@ -1120,6 +1376,129 @@ impl Simulation for Game {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn brush_and_pickaxe_use_the_same_circular_pixel_footprint_for_all_sizes() {
+        let mut game = Game::new(160, 120, 1, false).unwrap();
+        game.step(vec![Command::Pause]);
+        for diameter in 1..=16_u8 {
+            game.world.edit(vec![SandCommand::FillRect {
+                x: 40,
+                y: 32,
+                width: 32,
+                height: 32,
+                material: WALL,
+            }]);
+            let edits = game.cut([56.75, 48.75], diameter, false);
+            let origin = [
+                56 - usize::from(diameter / 2),
+                48 - usize::from(diameter / 2),
+            ];
+            let disk = charon_mining::disk(usize::from(diameter)).unwrap();
+            assert_eq!(edits.len(), disk.len());
+            game.step(vec![Command::BrushAt {
+                position: [56.75, 48.75],
+                diameter,
+                material: AIR,
+            }]);
+            for y in 32..64 {
+                for x in 40..72 {
+                    let inside = disk.contains(&(x - origin[0] as i32, y - origin[1] as i32));
+                    assert_eq!(
+                        game.world.material_at(x, y),
+                        Some(if inside { AIR } else { WALL }),
+                        "diameter={diameter}, ({x}, {y})"
+                    );
+                }
+            }
+            for edit in edits {
+                let SandCommand::FillRect {
+                    x,
+                    y,
+                    width: 1,
+                    height: 1,
+                    material: AIR,
+                } = edit
+                else {
+                    panic!("pickaxe expanded a pixel into a brush");
+                };
+                assert!(disk.contains(&(x as i32 - origin[0] as i32, y as i32 - origin[1] as i32)));
+            }
+        }
+        let before = game.world.checksum();
+        for diameter in [0, 17] {
+            game.step(vec![Command::BrushAt {
+                position: [56., 48.],
+                diameter,
+                material: AIR,
+            }]);
+            assert_eq!(game.world.checksum(), before);
+        }
+    }
+    #[test]
+    fn pickaxe_cuts_pixels_yields_once_and_remaining_pixels_fall_as_debris() {
+        use crate::materials::{BLOCK_ITEM, RUBBLE};
+        let mut game = Game::new(160, 120, 4, true).unwrap();
+        game.step(vec![Command::Explore(42), Command::Pause]);
+        game.world.apply_edits(vec![
+            SandCommand::FillRect {
+                x: 40,
+                y: 32,
+                width: 40,
+                height: 48,
+                material: AIR,
+            },
+            SandCommand::FillRect {
+                x: 48,
+                y: 40,
+                width: 4,
+                height: 4,
+                material: WALL,
+            },
+        ]);
+        game.step(vec![Command::MineAt {
+            position: [49., 41.],
+            size: 2,
+        }]);
+        assert_eq!(game.block_drops, 0);
+        assert_eq!(
+            (40..44)
+                .flat_map(|y| (48..52).map(move |x| (x, y)))
+                .filter(|&(x, y)| game.world.material_at(x, y) == Some(WALL))
+                .count(),
+            12
+        );
+        for _ in 0..6 {
+            game.step(vec![Command::Step]);
+        }
+        let cut = game.step(vec![Command::MineAt {
+            position: [51., 41.],
+            size: 2,
+        }]);
+        assert_eq!(cut.block_drops, 1);
+        assert_eq!(game.world.material_count(RUBBLE), 8);
+        assert_eq!(game.world.material_count(BLOCK_ITEM), 1);
+        let before: Vec<_> = (40..44)
+            .flat_map(|y| (48..52).map(move |x| (x, y)))
+            .filter(|&(x, y)| game.world.material_at(x, y) == Some(RUBBLE))
+            .collect();
+        assert_eq!(before.len(), 8);
+        for _ in 0..15 {
+            game.step(vec![Command::Step]);
+        }
+        assert_eq!(game.world.material_count(RUBBLE), 8);
+        assert!(
+            before
+                .iter()
+                .any(|&(x, y)| game.world.material_at(x, y) != Some(RUBBLE)),
+            "remaining block stayed suspended in air"
+        );
+        assert_eq!(game.block_drops, 1);
+        game.step(vec![Command::ExplodeAt {
+            position: [50., 62.],
+            radius: 12,
+        }]);
+        assert_eq!(game.block_drops, 1, "debris yielded another block item");
+    }
     #[test]
     fn cfd_view_matches_both_image_planes_and_rejects_uncoupled_terrain_edits() {
         let mut game = Game::new(160, 120, 2, false).unwrap();
@@ -1488,6 +1867,10 @@ mod tests {
         let frame = game.step(vec![Command::Step]);
         assert_ne!(game.world.checksum(), original);
         assert_eq!(frame.simulation_tick, 1);
+        let mut frame = frame;
+        for _ in 0..4 {
+            frame = game.step(vec![Command::Step]);
+        }
         assert!(frame.player.unwrap().y() > reset.player.unwrap().y());
     }
 
@@ -1739,7 +2122,10 @@ mod tests {
                 height: 8,
                 material: AIR,
             })]);
-            assert_eq!(game.world.material_at(80, 160), Some(AIR));
+            assert_eq!(
+                game.world.material_at(80, 160),
+                Some(crate::materials::BLOCK_ITEM)
+            );
             let mut frame = game.step(vec![Command::Pause, Command::Right(true)]);
             for _ in 0..16 {
                 frame = game.step(vec![]);
@@ -1751,7 +2137,8 @@ mod tests {
             }
             assert!(
                 frame.player.unwrap().y() > spawn.y() + 5.,
-                "dig did not open ground below actor"
+                "dig did not open ground below actor: spawn={spawn:?}, now={:?}",
+                frame.player
             );
             assert!(!frame.player.unwrap().embedded);
             let retried = game.step(vec![Command::Pause, Command::Terrain(SandCommand::Clear)]);
@@ -1795,7 +2182,8 @@ mod tests {
         let hit = game.step(vec![Command::FireAt([25., 105.])]);
         assert_eq!(hit.impacts, 1);
         assert!(hit.shots.is_empty());
-        assert_eq!(game.world.material_at(26, 80), Some(AIR));
+        assert_eq!(game.world.material_at(27, 80), Some(AIR));
+        assert_eq!(game.world.material_at(26, 80), Some(WALL));
         let invalid = game.step(vec![Command::FireAt([f32::NAN, 0.])]);
         assert_eq!(invalid.image_error, Some("INVALID AIM POSITION"));
         assert!(!game.fire_pending);

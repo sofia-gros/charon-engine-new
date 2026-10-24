@@ -91,6 +91,11 @@ pub fn shots(values: &[ShotState]) -> Result<Projectiles, String> {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EnemyState {
+    pub steer: i8,
+    pub jump_next: bool,
+    pub steer_ticks: u8,
+    pub id: u64,
+    pub spawn: u8,
     pub origin: [i64; 2],
     pub active: bool,
     pub chase: bool,
@@ -101,6 +106,8 @@ pub struct EnemyState {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct CombatState {
+    pub planner_cursor: usize,
+    pub seed: u64,
     pub origin: [i64; 2],
     pub size: [usize; 2],
     pub phase: u8,
@@ -110,11 +117,16 @@ pub struct CombatState {
     pub rejected: u64,
     pub enemies: Vec<EnemyState>,
     pub shots: Vec<ShotState>,
-    pub parked: Vec<([i64; 2], ShotState)>,
+    pub next_id: u64,
+    pub despawned: u64,
+    pub despawned_shots: u64,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Snapshot {
+    pub inventory: u32,
+    pub block_drops: u64,
+    pub last_mine_tick: Option<u64>,
     pub version: u32,
     pub seed: u64,
     pub materials: u64,
@@ -240,7 +252,7 @@ impl Checkpoint {
                 return Err(invalid("world state checksum mismatch"));
             }
             let state: Snapshot = serde_json::from_slice(&bytes).map_err(invalid)?;
-            if state.version != 1
+            if state.version != 3
                 || state.seed != seed
                 || state.materials != materials
                 || state.size != size
@@ -450,7 +462,7 @@ mod tests {
             (ready.simulation_tick, combat.health, combat.kills),
             (0, 3, 0)
         );
-        assert_eq!((combat.enemies.len(), combat.sleeping), (1, 1));
+        assert_eq!(combat.enemies.len(), 1);
         assert_eq!(combat.enemies[0].health, 3);
         assert_eq!(ready.terrain.indices.to_bytes(), original);
         game.step(vec![Command::Begin]);
@@ -471,24 +483,45 @@ mod tests {
         let start = game.step(vec![Command::StartWorldGame(42)]);
         let origin = start.stream.unwrap().origin;
         let cells = region(&mut session, origin);
-        game.step(vec![
+        let loaded = game.step(vec![
             Command::LoadRegion {
                 origin,
                 cells: cells.into(),
             },
             Command::Begin,
             Command::Pause,
-            Command::FireAt([143.5, 186.]),
         ]);
+        assert!(loaded.paused);
+        // Checkpoint persistence needs a known line of sight, independent of
+        // generated hills that may legitimately intercept the aimed shot.
+        game.step(vec![Command::Terrain(charon_sand::Command::FillRect {
+            x: 128,
+            y: 176,
+            width: 204,
+            height: 48,
+            material: crate::materials::AIR,
+        })]);
+        let mut settled = game.step(vec![]);
+        for _ in 0..40 {
+            settled = game.step(vec![Command::Step]);
+        }
+        let enemy = settled.combat.unwrap().enemies[0].rect;
+        game.step(vec![Command::FireAt([enemy[0] + 3.5, enemy[1] + 6.])]);
         for _ in 0..16 {
             game.step(vec![Command::Step]);
         }
         game.step(vec![
             Command::PlaceImage([340.25, 150.5]),
-            Command::LobAt([500., 170.]),
+            Command::LobAt([200., 180.]),
         ]);
         let frame = game.step(vec![Command::Step]);
-        assert_eq!(frame.combat.as_ref().unwrap().enemies[0].health, 2);
+        assert_eq!(
+            frame.combat.as_ref().unwrap().enemies[0].health,
+            2,
+            "enemy={enemy:?}, current={:?}, player={:?}",
+            frame.combat.as_ref().unwrap().enemies[0].rect,
+            frame.player
+        );
         assert!(!frame.shots.is_empty());
         let state = frame.checkpoint.unwrap();
         let cells = frame.terrain.indices.to_bytes();
@@ -525,8 +558,13 @@ mod tests {
         // Abandon a modified working generation: a restart must still load the
         // previous complete terrain and metadata, not this partial save.
         let mut changed = cells.clone();
-        changed[220 * 640 + 320] = crate::materials::AIR;
-        assert_ne!(changed, cells);
+        let index = 220 * 640 + 320;
+        changed[index] = if cells[index] == crate::materials::AIR {
+            crate::materials::WALL
+        } else {
+            crate::materials::AIR
+        };
+        assert_ne!(changed[index], cells[index]);
         session.capture(origin, &changed).unwrap();
         session.flush().unwrap();
         fs::create_dir(next.directory.join("state.json")).unwrap();

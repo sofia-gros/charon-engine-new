@@ -121,6 +121,23 @@ fn encode(command: &Command) -> String {
         }
         Command::Left(down) => format!("left:{}", u8::from(*down)),
         Command::Right(down) => format!("right:{}", u8::from(*down)),
+        Command::BrushAt {
+            position: [x, y],
+            diameter,
+            material,
+        } => format!(
+            "brush:{:08x}:{:08x}:{diameter}:{material}",
+            x.to_bits(),
+            y.to_bits()
+        ),
+        Command::MineAt {
+            position: [x, y],
+            size,
+        } => format!("mine:{:08x}:{:08x}:{size}", x.to_bits(), y.to_bits()),
+        Command::ExplodeAt {
+            position: [x, y],
+            radius,
+        } => format!("blast:{:08x}:{:08x}:{radius}", x.to_bits(), y.to_bits()),
         Command::Dig(down) => format!("dig:{}", u8::from(*down)),
         Command::Jump => "jump".into(),
         Command::Fire => "fire".into(),
@@ -198,6 +215,37 @@ fn decode(text: &str) -> Result<Command, String> {
             Command::RestoreCheckpoint {
                 state: std::sync::Arc::new(state),
                 cells,
+            }
+        }
+        ["brush", x, y, size, material] => {
+            let x = f32::from_bits(u32::from_str_radix(x, 16).map_err(|_| bad())?);
+            let y = f32::from_bits(u32::from_str_radix(y, 16).map_err(|_| bad())?);
+            if !x.is_finite() || !y.is_finite() {
+                return Err(bad());
+            }
+            Command::BrushAt {
+                position: [x, y],
+                diameter: size.parse().map_err(|_| bad())?,
+                material: material.parse().map_err(|_| bad())?,
+            }
+        }
+        [kind @ ("mine" | "blast"), x, y, size] => {
+            let x = f32::from_bits(u32::from_str_radix(x, 16).map_err(|_| bad())?);
+            let y = f32::from_bits(u32::from_str_radix(y, 16).map_err(|_| bad())?);
+            if !x.is_finite() || !y.is_finite() {
+                return Err(bad());
+            }
+            let size = size.parse().map_err(|_| bad())?;
+            if *kind == "mine" {
+                Command::MineAt {
+                    position: [x, y],
+                    size,
+                }
+            } else {
+                Command::ExplodeAt {
+                    position: [x, y],
+                    radius: size,
+                }
             }
         }
         ["world-game", seed] => Command::StartWorldGame(seed.parse().map_err(|_| bad())?),
@@ -293,6 +341,10 @@ fn replay_game(path: &Path, workers: usize) -> Result<(Game, u64), String> {
     let old = legacy || fields[0] == "charon-input-v2";
     let materials = if old {
         crate::materials::legacy_palette()
+    } else if u64::from_str_radix(fields[5], 16).ok()
+        == Some(crate::materials::fluid_palette().fingerprint())
+    {
+        crate::materials::fluid_palette()
     } else {
         crate::materials::palette()
     };

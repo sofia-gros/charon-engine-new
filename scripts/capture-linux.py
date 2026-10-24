@@ -149,7 +149,7 @@ def source_fingerprint():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("world-combat", "world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
+    parser.add_argument("--sample", choices=("mining", "world-combat", "world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
     parser.add_argument("--fluid-backend", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--grid", default="480x270", help="simulation grid; client remains 1920x1080")
     args = parser.parse_args()
@@ -158,7 +158,7 @@ def main():
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}{'-gpu' if args.fluid_backend == 'gpu' else ''}-linux"
     local = LOCAL / sample
-    duration = 26 if sample == "world-combat" else 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
+    duration = 22 if sample == "mining" else 50 if sample == "world-combat" else 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -222,7 +222,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample == "exploration" else []), *(["--game", "42"] if sample == "combat" else []), *(["--world-game" if sample == "world-combat" else "--world", "42", "--world-dir", str(temporary / "world")] if sample in ("world", "world-combat") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample in ("exploration", "mining") else []), *(["--game", "42"] if sample == "combat" else []), *(["--world-game" if sample == "world-combat" else "--world", "42", "--world-dir", str(temporary / "world")] if sample in ("world", "world-combat") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -254,7 +254,42 @@ EndSection
             capture_thread.start()
             def at(seconds):
                 time.sleep(max(0, start + seconds - time.monotonic()))
-            if sample == "sandbox":
+            if sample == "mining":
+                stages = []
+                def latest():
+                    return list(csv.DictReader((local / "metrics.csv").open()))[-1]
+                def stage(predicate):
+                    wait_for(lambda: predicate(latest()), timeout=4)
+                    row = latest()
+                    stages.append({key: row[key] for key in ("simulation_tick", "block_pixels", "block_drops", "rubble_pixels", "block_items", "inventory_blocks")})
+                def click_cell(x, y):
+                    inputs.move(x * 4 + 1, y * 4 + 1)
+                    inputs.button(1, True); time.sleep(.12); inputs.button(1, False)
+                def six_ticks():
+                    for _ in range(6):
+                        inputs.key(0x6e); time.sleep(.1)
+                at(.3); inputs.key(0x70)
+                stage(lambda r: r["paused"] == "true")
+                baseline = int(latest()["block_pixels"])
+                inputs.key(0x33); click_cell(85, 157)
+                stage(lambda r: int(r["block_pixels"]) == baseline + 16)
+                inputs.key(0x74); inputs.key(0x5b); click_cell(84, 156)
+                stage(lambda r: int(r["block_pixels"]) == baseline + 15 and r["block_drops"] == "0")
+                six_ticks(); inputs.key(0x5d); click_cell(85, 157)
+                stage(lambda r: int(r["block_pixels"]) == baseline + 12 and r["block_drops"] == "0")
+                six_ticks(); click_cell(87, 157)
+                stage(lambda r: r["block_drops"] == "1" and r["rubble_pixels"] == "8" and r["block_items"] == "1")
+                inputs.key(0x70); time.sleep(1); inputs.key(0x70)
+                stage(lambda r: r["paused"] == "true" and r["rubble_pixels"] == "8")
+                inputs.key(0x70); inputs.hold(0x64, True); time.sleep(.3); inputs.hold(0x64, False)
+                time.sleep(.2); inputs.key(0x70)
+                stage(lambda r: r["inventory_blocks"] == "33" and r["block_items"] == "0")
+                inputs.key(0x31)
+                for _ in range(14): inputs.key(0x5d); time.sleep(.03)
+                click_cell(128, 156)
+                at(17); inputs.key(0x70)
+                at(20); inputs.key(0x70)
+            elif sample == "sandbox":
                 at(0.5)
                 inputs.drag(2, [(x, 700) for x in range(700, 1221, 8)])
                 at(3.4)
@@ -480,40 +515,59 @@ EndSection
             elif sample == "world-combat":
                 def observe():
                     return list(csv.DictReader((local / "metrics.csv").open()))[-1]
+                previous_enemy = None
                 def aim_enemy(row):
-                    x = (float(row["enemy_x"]) - float(row["camera_x"])) / float(row["camera_width"]) * float(row["window_width"])
-                    y = (float(row["enemy_y"]) - float(row["camera_y"])) / float(row["camera_height"]) * float(row["window_height"])
+                    nonlocal previous_enemy
+                    # Lead the moving target using measured global coordinates,
+                    # rather than aiming at a CSV sample already behind it.
+                    point = [float(row["enemy_x"]), float(row["enemy_y"])]
+                    now = float(row["elapsed_s"])
+                    global_point = [point[0] + int(row["world_origin_x"]), point[1] + int(row["world_origin_y"])]
+                    if previous_enemy and previous_enemy[0] == row["enemy_id"] and now > previous_enemy[1]:
+                        dt = now - previous_enemy[1]
+                        velocity = [(global_point[i] - previous_enemy[2][i]) / dt for i in range(2)]
+                        flight = min(.25, math.hypot(point[0] - float(row["player_x"]), point[1] - float(row["player_y"])) / 810 + .06)
+                        point[0] += max(-90, min(90, velocity[0])) * flight
+                        point[1] += max(-140, min(240, velocity[1])) * flight
+                        if abs(velocity[1]) > 10: point[1] += 200 * flight * flight
+                    previous_enemy = (row["enemy_id"], now, global_point)
+                    x = (point[0] - float(row["camera_x"])) / float(row["camera_width"]) * float(row["window_width"])
+                    y = (point[1] - float(row["camera_y"])) / float(row["camera_height"]) * float(row["window_height"])
                     if 0 <= x < float(row["window_width"]) and 0 <= y < float(row["window_height"]):
                         inputs.move(round(x), round(y))
-                        inputs.button(1, True)
-                        time.sleep(0.06)
-                        inputs.button(1, False)
-                at(0.5)
-                inputs.key(0xff0d)
-                inputs.key(ord("q"))
-                at(0.7)
-                aim_enemy(observe())  # Wound the nearby turret once, then leave it alive.
-                at(1.4)
+                        inputs.button(1, True); time.sleep(.06); inputs.button(1, False)
+                def mine_ahead(row, direction):
+                    x = (float(row["player_x"]) + direction * 6 - float(row["camera_x"])) / float(row["camera_width"]) * float(row["window_width"])
+                    y = (float(row["player_y"]) + 6 - float(row["camera_y"])) / float(row["camera_height"]) * float(row["window_height"])
+                    inputs.move(round(x), round(y))
+                    inputs.button(1, True); time.sleep(.1); inputs.button(1, False)
+                at(.5); inputs.key(0xff0d)
+                for _ in range(14): inputs.key(0x5d); time.sleep(.03)
                 inputs.hold(ord("d"), True)
-                for index in range(52):
-                    at(1.6 + index * 0.2)
-                    if index % 2 == 0:
-                        inputs.key(0x20)
+                progress = []
+                for index in range(116):
+                    at(1.2 + index * .2)
                     row = observe()
-                    if row.get("enemy_id") == "2" and row["world_waiting"] == "false":
-                        aim_enemy(row)
-                at(12)
+                    assert row["run_phase"] != "Defeated", "player died before the world roundtrip; inspect the private preview"
+                    if int(row["kills"] or 0) == 1 and int(row["world_x"] or 0) > 820: break
+                    if index % 2 == 0: inputs.key(0x20)
+                    if row["world_waiting"] != "false": continue
+                    progress.append(int(row["world_x"]))
+                    if row.get("enemy_id") == "2":
+                        inputs.key(ord("q")); aim_enemy(row)
+                    elif len(progress) > 4 and progress[-1] - progress[-4] < 5:
+                        inputs.key(ord("t")); mine_ahead(row, 1)
+                assert int(observe()["world_x"]) > 820 and int(observe()["kills"] or 0) == 1, "forward exploration/combat did not complete"
                 inputs.hold(ord("d"), False)
-                inputs.hold(ord("a"), True)
-                for index in range(54):
-                    at(12.2 + index * 0.2)
-                    if index % 2 == 0:
-                        inputs.key(0x20)
+                inputs.key(ord("t")); inputs.hold(ord("a"), True)
+                reverse_at = time.monotonic()
+                for index in range(110):
+                    time.sleep(max(0, reverse_at + index * .2 - time.monotonic()))
                     row = observe()
-                    if row.get("enemy_id") == "2" and row["world_waiting"] == "false":
-                        aim_enemy(row)
-                at(23.2)
-                inputs.hold(ord("a"), False)
+                    if row["world_x"] and float(row["world_x"]) <= 80: break
+                    if row.get("player_x") and row["world_waiting"] == "false": mine_ahead(row, -1)
+                    if index % 2 == 0: inputs.key(0x20)
+                inputs.button(1, False); inputs.hold(ord("a"), False)
                 inputs.key(ord("p"))
             elif sample == "world":
                 at(0.5)
@@ -795,7 +849,16 @@ EndSection
             preview[0].save(local / "preview.gif",save_all=True,append_images=preview[1:],duration=125,loop=0,disposal=2)
             del preview
             rows = list(csv.DictReader((local / "metrics.csv").open()))
-            if sample == "sandbox":
+            if sample == "mining":
+                assert stages[-1]["inventory_blocks"] == "33"
+                assert all(r["block_drops"] in ("0", "1") for r in rows), "debris yielded another item"
+                assert all(r["embedded"] == "false" for r in rows)
+                replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=30)
+                records = trace_path.read_text()
+                assert "mine:" in records and ":16:1" in records, "circular tool sizes were not recorded"
+                shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
+                checks = {"stages": stages, "replay": replay.stdout.strip(), "checks": ["4x4 placed block", "1px circular corner cut without drop", "2px circular cuts to half", "exactly eight falling debris pixels and one item", "item pickup into inventory", "16px circular sand brush", "authoritative replay with one worker"]}
+            elif sample == "sandbox":
                 peak = max(int(row["sand"]) for row in rows)
                 assert peak > 147, "mouse painting did not add sand"
                 assert int(rows[-1]["sand"]) == 0, "keyboard reset did not clear sand"
@@ -996,11 +1059,10 @@ EndSection
                 assert max(float(r["world_x"]) for r in live) > 768, "second region boundary not reached"
                 assert len({r["world_origin_x"] for r in live}) >= 3
                 first = [r for r in live if r["enemy_id"] == "1"]
-                assert any(r["enemy_health"] == "2" for r in first), "initial aimed hit missing"
-                parked = [i for i, r in enumerate(rows) if r["world_origin_x"] == "64" and int(r["sleeping_enemies"] or 0) >= 1]
-                assert parked, "wounded enemy did not sleep outside the region"
-                returned = [r for r in rows[max(parked)+1:] if r["world_origin_x"] == "-960" and r["enemy_id"] == "1"]
-                assert returned and all(r["enemy_health"] == "2" for r in returned), "wounded enemy reset or failed to return"
+                despawned = [i for i, r in enumerate(rows) if r["world_origin_x"] == "64" and int(r["despawned_enemies"] or 0) >= 1]
+                assert despawned, "enemy outside the region was not released"
+                returned = [r for r in rows[max(despawned)+1:] if r["world_origin_x"] == "-960" and r["enemy_id"] not in ("", "1")]
+                assert returned and all(r["enemy_health"] == "3" for r in returned), "return did not spawn a fresh encounter"
                 assert all(abs(float(r["enemy_x"]) + int(r["world_origin_x"]) + 176.5) < 0.001 for r in first), "enemy global position shifted"
                 assert max(int(r["kills"] or 0) for r in rows) == 1, "streamed chasing encounter was not defeated"
                 assert max(int(r["resident_chunks"]) for r in live) <= 32
@@ -1010,7 +1072,7 @@ EndSection
                 assert len(paused) >= 2 and len(set(paused)) == 1
                 replay = subprocess.run([str(ROOT / "target/debug" / package), "--replay", str(trace_path), "--workers", "1"], env=env, text=True, capture_output=True, check=True, timeout=60)
                 shutil.copyfile(trace_path, MEDIA / f"{prefix}.trace")
-                checks = {"restart": resume_evidence, "resident_peak": max(int(r["resident_chunks"]) for r in live), "replay": replay.stdout.strip(), "checks": ["start screen", "aimed hit wounds a turret", "two region boundaries and return", "dormant enemy keeps global position and health", "chasing encounter and kill", "pause freezes combat", "bounded resident chunks", "authoritative replay with 1 worker", "Escape shutdown"]}
+                checks = {"restart": resume_evidence, "resident_peak": max(int(r["resident_chunks"]) for r in live), "replay": replay.stdout.strip(), "checks": ["start screen", "terrain-aware aimed shot", "two region boundaries and return", "outside enemy released and fresh encounter on return", "chasing encounter and kill", "pause freezes combat", "bounded resident chunks", "authoritative replay with 1 worker", "Escape shutdown"]}
             elif sample == "world":
                 live=[r for r in rows if r["world_x"]]
                 assert live, "no world coordinates"

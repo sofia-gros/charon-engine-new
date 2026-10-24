@@ -7,6 +7,23 @@ pub const WALL: u8 = 2;
 pub const ASH: u8 = 3;
 pub const WATER: u8 = 4;
 pub const OIL: u8 = 5;
+pub const RUBBLE: u8 = 6;
+pub const BLOCK_ITEM: u8 = 7;
+pub const DIRT: u8 = 8;
+pub const STONE: u8 = 9;
+pub const ORE: u8 = 10;
+pub const DIRT_RUBBLE: u8 = 11;
+pub const STONE_RUBBLE: u8 = 12;
+pub const ORE_RUBBLE: u8 = 13;
+pub fn mining_products(id: u8) -> Option<(u8, u8)> {
+    match id {
+        WALL => Some((RUBBLE, BLOCK_ITEM)),
+        DIRT => Some((DIRT_RUBBLE, BLOCK_ITEM)),
+        STONE => Some((STONE_RUBBLE, BLOCK_ITEM)),
+        ORE => Some((ORE_RUBBLE, BLOCK_ITEM)),
+        _ => None,
+    }
+}
 
 pub fn legacy_palette() -> Materials {
     Materials::new(
@@ -52,8 +69,8 @@ pub fn legacy_palette() -> Materials {
     .expect("valid game material definitions")
 }
 
-/// Current game palette. Keep the old definitions for explicit v1/v2 replay.
-pub fn palette() -> Materials {
+/// Palette used by the recorded sea scene, before mining materials were added.
+pub fn fluid_palette() -> Materials {
     let old = legacy_palette();
     let mut entries: Vec<_> = (0..4).map(|id| old.get(id).unwrap().clone()).collect();
     for (key, color, density) in [
@@ -67,6 +84,50 @@ pub fn palette() -> Materials {
             density,
             blocks_actors: false,
             blocks_projectiles: false,
+        });
+    }
+    Materials::new(entries, AIR, WALL).expect("valid game fluids")
+}
+
+pub fn palette() -> Materials {
+    let old = fluid_palette();
+    let mut entries: Vec<_> = (0..6).map(|id| old.get(id).unwrap().clone()).collect();
+    for (key, color, motion, actors) in [
+        (
+            "game.wall_rubble",
+            [82, 100, 121, 255],
+            Motion::Powder,
+            true,
+        ),
+        (
+            "game.block_item",
+            [90, 240, 160, 255],
+            Motion::Powder,
+            false,
+        ),
+        ("game.dirt", [122, 83, 55, 255], Motion::Static, true),
+        ("game.stone", [97, 103, 119, 255], Motion::Static, true),
+        ("game.ore", [174, 121, 63, 255], Motion::Static, true),
+        ("game.dirt_rubble", [122, 83, 55, 255], Motion::Powder, true),
+        (
+            "game.stone_rubble",
+            [97, 103, 119, 255],
+            Motion::Powder,
+            true,
+        ),
+        ("game.ore_rubble", [174, 121, 63, 255], Motion::Powder, true),
+    ] {
+        entries.push(Material {
+            key: key.into(),
+            color,
+            motion,
+            density: if motion == Motion::Static {
+                u16::MAX
+            } else {
+                2400
+            },
+            blocks_actors: actors,
+            blocks_projectiles: actors,
         });
     }
     Materials::new(entries, AIR, WALL).expect("valid game fluids")

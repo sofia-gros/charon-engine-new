@@ -26,11 +26,18 @@ pub struct Frame {
     pub enemies: Vec<EnemyView>,
     pub shots: Vec<[f32; 2]>,
     pub kills: u32,
-    pub sleeping: usize,
-    pub sleeping_shots: usize,
+
     pub rejected_shots: u64,
+    pub despawned: u64,
+    pub despawned_shots: u64,
+    pub nav_expansions: usize,
 }
 struct Enemy {
+    steer: i8,
+    jump_next: bool,
+    steer_ticks: u8,
+    id: u64,
+    spawn: u8,
     origin: [i64; 2],
     active: bool,
     behavior: Behavior,
@@ -39,8 +46,13 @@ struct Enemy {
     cooldown: u16,
 }
 pub struct Combat {
+    planner_cursor: usize,
+    nav_expansions: usize,
+    seed: u64,
     region: Option<([i64; 2], [usize; 2])>,
-    parked_shots: Vec<([i64; 2], Shot)>,
+    next_id: u64,
+    despawned: u64,
+    despawned_shots: u64,
     rejected_shots: u64,
     phase: Phase,
     health: u8,
@@ -61,12 +73,22 @@ fn rect(body: Body) -> [f32; 4] {
 impl Combat {
     pub fn new(width: usize, height: usize, ready: bool) -> Self {
         Self {
+            planner_cursor: 0,
+            nav_expansions: 0,
+            seed: 0,
             region: None,
-            parked_shots: vec![],
+            next_id: 2,
+            despawned: 0,
+            despawned_shots: 0,
             rejected_shots: 0,
             phase: if ready { Phase::Ready } else { Phase::Playing },
             health: 3,
             enemies: vec![Enemy {
+                steer: 0,
+                jump_next: false,
+                steer_ticks: 0,
+                id: 1,
+                spawn: 0,
                 origin: [0, 0],
                 active: true,
                 behavior: Behavior::Turret,
@@ -86,21 +108,13 @@ impl Combat {
     }
     /// Two game-owned prototype encounters. Global anchors stay integers;
     /// dormant bodies retain their bounded local coordinates and exact state.
-    pub fn streamed(width: usize, height: usize, origin: [i64; 2]) -> Self {
+    pub fn streamed(width: usize, height: usize, origin: [i64; 2], seed: u64) -> Self {
         let mut combat = Self::new(width, height, true);
         combat.enemies.clear();
-        for (x, behavior) in [(-180., Behavior::Turret), (1100., Behavior::Chase)] {
-            combat.enemies.push(Enemy {
-                origin: [0, 0],
-                active: false,
-                behavior,
-                body: Body::new(x, 0., 7., 12.),
-                health: 3,
-                cooldown: 90,
-            });
-        }
-        combat.region = Some(([0, 0], [width, height]));
-        combat.rebase(origin);
+        combat.seed = seed;
+        combat.next_id = 1;
+        combat.region = Some((origin, [width, height]));
+        combat.spawn_nearby();
         combat
     }
     fn offset(old: [i64; 2], new: [i64; 2], size: [usize; 2]) -> Option<[f32; 2]> {
@@ -114,48 +128,76 @@ impl Combat {
     fn inside(position: [f32; 2], extent: [f32; 2], size: [usize; 2], margin: f32) -> bool {
         (0..2).all(|i| position[i] >= margin && position[i] + extent[i] < size[i] as f32 - margin)
     }
+    fn spawn_nearby(&mut self) {
+        let Some((origin, size)) = self.region else {
+            return;
+        };
+        for (spawn, (x, behavior)) in [(-180., Behavior::Turret), (1100., Behavior::Chase)]
+            .into_iter()
+            .enumerate()
+        {
+            if self.enemies.len() >= 128 || self.enemies.iter().any(|e| e.spawn == spawn as u8) {
+                continue;
+            }
+            let Some(offset) = Self::offset([0, 0], origin, size) else {
+                continue;
+            };
+            let p = [
+                x + offset[0],
+                offset[1] + (crate::world_view::surface_y(x as i64, self.seed) - 12) as f32,
+            ];
+            if Self::inside(p, [7., 12.], size, 2.) {
+                self.enemies.push(Enemy {
+                    steer: 0,
+                    jump_next: false,
+                    steer_ticks: 0,
+                    id: self.next_id,
+                    spawn: spawn as u8,
+                    origin,
+                    active: true,
+                    behavior,
+                    body: Body::new(p[0], p[1], 7., 12.),
+                    health: 3,
+                    cooldown: 90,
+                });
+                self.next_id += 1;
+            }
+        }
+    }
     pub fn rebase(&mut self, origin: [i64; 2]) {
         let Some((old, size)) = self.region else {
             return;
         };
-        for enemy in &mut self.enemies {
-            enemy.active = false;
-            if let Some(offset) = Self::offset(enemy.origin, origin, size) {
-                let position = [enemy.body.x() + offset[0], enemy.body.y() + offset[1]];
-                if Self::inside(
-                    position,
-                    [enemy.body.width(), enemy.body.height()],
-                    size,
-                    96.,
-                ) {
-                    enemy.body.translate(offset);
-                    enemy.origin = origin;
-                    enemy.active = true;
-                }
-            }
-        }
-        self.parked_shots
-            .extend(self.shots.shots().iter().map(|s| (old, *s)));
-        self.shots = Projectiles::default();
-        self.parked_shots.retain(|&(anchor, mut shot)| {
-            if let Some(offset) = Self::offset(anchor, origin, size) {
-                let position = [shot.position[0] + offset[0], shot.position[1] + offset[1]];
-                // Keep the whole remaining straight trajectory clear of temporary
-                // window guards, instead of manufacturing a terrain collision.
-                let margin = shot.velocity[0].abs().max(shot.velocity[1].abs())
-                    * f32::from(shot.remaining_ticks)
-                    + 2.;
-                if Self::inside(position, [0., 0.], size, margin) {
-                    shot.position = position;
-                    self.shots
-                        .spawn(shot)
-                        .expect("total active and sleeping shots are bounded");
+        self.enemies.retain_mut(|enemy| {
+            let keep = Self::offset(enemy.origin, origin, size).is_some_and(|offset| {
+                let p = [enemy.body.x() + offset[0], enemy.body.y() + offset[1]];
+                if !Self::inside(p, [enemy.body.width(), enemy.body.height()], size, 2.) {
                     return false;
                 }
+                enemy.body.translate(offset);
+                enemy.origin = origin;
+                true
+            });
+            if !keep && enemy.health > 0 {
+                self.despawned += 1;
             }
-            true
+            keep
         });
+        let mut next = Projectiles::default();
+        for shot in self.shots.shots() {
+            if let Some(offset) = Self::offset(old, origin, size) {
+                let mut shot = *shot;
+                shot.position = [shot.position[0] + offset[0], shot.position[1] + offset[1]];
+                if Self::inside(shot.position, [0., 0.], size, 2.) {
+                    next.spawn(shot).expect("bounded live shots");
+                    continue;
+                }
+            }
+            self.despawned_shots += 1;
+        }
+        self.shots = next;
         self.region = Some((origin, size));
+        self.spawn_nearby();
     }
     pub fn save_state(&self) -> Option<crate::world_save::CombatState> {
         use crate::world_save::{BodyState, CombatState, EnemyState, ShotState};
@@ -167,11 +209,21 @@ impl Combat {
             health: self.health,
             invulnerable: self.invulnerable,
             kills: self.kills,
+            seed: self.seed,
+            planner_cursor: self.planner_cursor,
             rejected: self.rejected_shots,
+            next_id: self.next_id,
+            despawned: self.despawned,
+            despawned_shots: self.despawned_shots,
             enemies: self
                 .enemies
                 .iter()
                 .map(|e| EnemyState {
+                    steer: e.steer,
+                    jump_next: e.jump_next,
+                    steer_ticks: e.steer_ticks,
+                    id: e.id,
+                    spawn: e.spawn,
                     origin: e.origin,
                     active: e.active,
                     chase: e.behavior == Behavior::Chase,
@@ -187,19 +239,14 @@ impl Combat {
                 .copied()
                 .map(ShotState::capture)
                 .collect(),
-            parked: self
-                .parked_shots
-                .iter()
-                .map(|(o, s)| (*o, ShotState::capture(*s)))
-                .collect(),
         })
     }
     pub fn restore_state(state: &crate::world_save::CombatState) -> Result<Self, String> {
         if state.health > 3
             || state.invulnerable > 30
-            || state.enemies.len() != 2
-            || state.shots.len() + state.parked.len() > 1024
-            || state.kills != state.enemies.iter().filter(|e| e.health == 0).count() as u32
+            || state.enemies.len() > 128
+            || state.shots.len() > 1024
+            || state.next_id == 0
         {
             return Err("invalid saved combat counts".into());
         }
@@ -214,7 +261,22 @@ impl Combat {
         }
         let mut enemies = Vec::new();
         for e in &state.enemies {
-            if e.health > 3 || e.cooldown > 90 || (e.active && e.origin != state.origin) {
+            if ![-1, 0, 1].contains(&e.steer)
+                || e.steer_ticks > 6
+                || e.id == 0
+                || e.id >= state.next_id
+                || e.spawn > 1
+                || e.health > 3
+                || e.cooldown > 90
+                || !e.active
+                || e.origin != state.origin
+                || state
+                    .enemies
+                    .iter()
+                    .filter(|other| other.id == e.id)
+                    .count()
+                    != 1
+            {
                 return Err("invalid saved enemy".into());
             }
             let body = e.body.restore()?;
@@ -223,12 +285,17 @@ impl Combat {
                     [body.x(), body.y()],
                     [body.width(), body.height()],
                     state.size,
-                    95.,
+                    2.,
                 )
             {
                 return Err("active enemy outside saved region".into());
             }
             enemies.push(Enemy {
+                steer: e.steer,
+                jump_next: e.jump_next,
+                steer_ticks: e.steer_ticks,
+                id: e.id,
+                spawn: e.spawn,
                 origin: e.origin,
                 active: e.active,
                 behavior: if e.chase {
@@ -242,13 +309,14 @@ impl Combat {
             });
         }
         let shots = crate::world_save::shots(&state.shots)?;
-        let mut parked_shots = Vec::new();
-        for (origin, shot) in &state.parked {
-            parked_shots.push((*origin, shot.restore()?));
-        }
         Ok(Self {
+            planner_cursor: state.planner_cursor,
+            nav_expansions: 0,
+            seed: state.seed,
             region: Some((state.origin, state.size)),
-            parked_shots,
+            next_id: state.next_id,
+            despawned: state.despawned,
+            despawned_shots: state.despawned_shots,
             rejected_shots: state.rejected,
             phase,
             health: state.health,
@@ -297,6 +365,23 @@ impl Combat {
             false
         }
     }
+    fn needs_path(enemy: &Enemy, player: Body, solid: &impl Fn(i32, i32) -> bool) -> bool {
+        let dx = player.x() - enemy.body.x();
+        let front = if dx < 0. {
+            enemy.body.x() - 2.
+        } else {
+            enemy.body.x() + enemy.body.width() + 2.
+        };
+        let blocked = (enemy.body.y().floor() as i32
+            ..(enemy.body.y() + enemy.body.height()).ceil() as i32)
+            .any(|y| solid(front.floor() as i32, y));
+        let gap = enemy.body.grounded
+            && !solid(
+                front.floor() as i32,
+                (enemy.body.y() + enemy.body.height() + 1.).floor() as i32,
+            );
+        blocked || gap || (player.y() - enemy.body.y()).abs() > 12.
+    }
     pub fn tick(
         &mut self,
         player: Body,
@@ -307,7 +392,21 @@ impl Combat {
             return;
         }
         self.invulnerable = self.invulnerable.saturating_sub(1);
-        for enemy in &mut self.enemies {
+        self.nav_expansions = 0;
+        let count = self.enemies.len();
+        let planner = (0..count)
+            .map(|i| (i + self.planner_cursor) % count)
+            .find(|&i| {
+                let enemy = &self.enemies[i];
+                enemy.health > 0
+                    && enemy.behavior == Behavior::Chase
+                    && enemy.steer_ticks == 0
+                    && Self::needs_path(enemy, player, &actor_solid)
+            });
+        if let Some(index) = planner {
+            self.planner_cursor = (index + 1) % count;
+        }
+        for (index, enemy) in self.enemies.iter_mut().enumerate() {
             if enemy.health == 0 || !enemy.active {
                 continue;
             }
@@ -321,25 +420,43 @@ impl Combat {
             } else {
                 0
             };
-            let front = if direction < 0 {
-                enemy.body.x() - 1.
+            let mut jump = false;
+            let direction = if enemy.behavior == Behavior::Chase {
+                if Self::needs_path(enemy, player, &actor_solid) {
+                    if enemy.steer_ticks == 0 {
+                        if planner == Some(index) {
+                            let plan = charon_navigation::plan(
+                                enemy.body,
+                                [player.x(), player.y()],
+                                &actor_solid,
+                            );
+                            self.nav_expansions = plan.expansions;
+                            enemy.steer = plan.control.direction;
+                            enemy.jump_next = plan.control.jump;
+                            enemy.steer_ticks = 6;
+                        } else {
+                            enemy.steer = 0;
+                        }
+                    }
+                    jump = enemy.jump_next;
+                    enemy.jump_next = false;
+                    enemy.steer_ticks = enemy.steer_ticks.saturating_sub(1);
+                    enemy.steer
+                } else {
+                    enemy.steer_ticks = 0;
+                    enemy.steer = direction;
+                    direction
+                }
             } else {
-                enemy.body.x() + enemy.body.width() + 1.
+                0
             };
-            let obstacle = direction != 0
-                && actor_solid(
-                    front.floor() as i32,
-                    (enemy.body.y() + enemy.body.height() - 1.).floor() as i32,
-                );
-            enemy
-                .body
-                .step(direction, obstacle && enemy.body.grounded, &actor_solid);
+            enemy.body.step(direction, jump, &actor_solid);
             if let Some((_, size)) = self.region {
                 if !Self::inside(
                     [enemy.body.x(), enemy.body.y()],
                     [enemy.body.width(), enemy.body.height()],
                     size,
-                    96.,
+                    2.,
                 ) {
                     enemy.active = false;
                     continue;
@@ -367,8 +484,8 @@ impl Combat {
                 } else {
                     delta.map(|v| v / length * 5.)
                 };
-                // Sleeping projectiles count against the same bounded budget.
-                if self.shots.shots().len() + self.parked_shots.len() >= 1024 {
+                // Live projectiles share a bounded budget.
+                if self.shots.shots().len() >= 1024 {
                     self.rejected_shots += 1;
                     enemy.cooldown = 90;
                     continue;
@@ -383,6 +500,22 @@ impl Combat {
                     .expect("bounded prototype enemy fire");
                 enemy.cooldown = 90;
             }
+        }
+        self.enemies.retain(|e| {
+            if !e.active && e.health > 0 {
+                self.despawned += 1;
+            }
+            e.active
+        });
+        if let Some((_, size)) = self.region {
+            self.despawned_shots += self.shots.retain(|s| {
+                Self::inside(
+                    [s.position[0] + s.velocity[0], s.position[1] + s.velocity[1]],
+                    [0., 0.],
+                    size,
+                    2.,
+                )
+            }) as u64;
         }
         let player_rect = rect(player);
         let hits = self
@@ -408,10 +541,9 @@ impl Combat {
             enemies: self
                 .enemies
                 .iter()
-                .enumerate()
-                .filter(|(_, e)| e.health > 0 && e.active)
-                .map(|(index, e)| EnemyView {
-                    id: index as u64 + 1,
+                .filter(|e| e.health > 0 && e.active)
+                .map(|e| EnemyView {
+                    id: e.id,
                     rect: rect(e.body),
                     health: e.health,
                     behavior: e.behavior,
@@ -419,12 +551,10 @@ impl Combat {
                 .collect(),
             shots: self.shots.shots().iter().map(|s| s.position).collect(),
             kills: self.kills,
-            sleeping: self
-                .enemies
-                .iter()
-                .filter(|e| e.health > 0 && !e.active)
-                .count(),
-            sleeping_shots: self.parked_shots.len(),
+
+            despawned: self.despawned,
+            despawned_shots: self.despawned_shots,
+            nav_expansions: self.nav_expansions,
             rejected_shots: self.rejected_shots,
         }
     }
@@ -443,11 +573,22 @@ impl Combat {
                 size[0] as u64,
                 size[1] as u64,
                 self.rejected_shots,
+                self.next_id,
+                self.despawned,
+                self.despawned_shots,
             ]);
         }
+        values.extend([0x6e6176, self.planner_cursor as u64]);
         for enemy in &self.enemies {
+            values.extend([
+                enemy.steer as u64,
+                u64::from(enemy.jump_next),
+                u64::from(enemy.steer_ticks),
+            ]);
             if self.region.is_some() {
                 values.extend([
+                    enemy.id,
+                    enemy.spawn as u64,
                     enemy.origin[0] as u64,
                     enemy.origin[1] as u64,
                     u64::from(enemy.active),
@@ -475,17 +616,6 @@ impl Combat {
             );
             values.push(shot.remaining_ticks as u64);
         }
-        for (origin, shot) in &self.parked_shots {
-            values.extend([0x7061726b, origin[0] as u64, origin[1] as u64]);
-            values.extend(
-                shot.position
-                    .into_iter()
-                    .chain(shot.velocity)
-                    .chain(shot.acceleration)
-                    .map(|v| u64::from(v.to_bits())),
-            );
-            values.push(u64::from(shot.remaining_ticks));
-        }
         values
     }
 }
@@ -494,90 +624,73 @@ impl Combat {
 mod tests {
     use super::*;
     #[test]
-    fn streamed_enemies_and_shots_sleep_without_reset_or_float_world_coordinates() {
+    fn overlap_keeps_health_but_outside_entities_despawn_and_memory_stays_bounded() {
         let origin = [-960, -540];
-        let mut combat = Combat::streamed(1920, 1080, origin);
-        assert_eq!(combat.frame().sleeping, 1);
-        assert_eq!(combat.frame().enemies[0].id, 1);
-        combat.begin();
-        let player = Body::new(960., 540., 7., 12.);
-        combat.tick(player, |_, y| y >= 552, |_, y| y >= 552);
-        assert!(combat.hit_enemy([781, 541]));
-        assert_eq!(combat.enemies[0].health, 2);
+        let mut combat = Combat::streamed(1920, 1080, origin, 42);
+        assert_eq!(combat.enemies.len(), 1);
+        let id = combat.enemies[0].id;
+        let y = combat.enemies[0].body.y() as i32 + 1;
+        combat.hit_enemy([781, y]);
+        combat.rebase([-448, -540]);
+        let first = combat.enemies.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(first.health, 2);
         combat
             .shots
             .spawn(Shot {
-                position: [800., 546.],
+                position: [100., 546.],
                 velocity: [5., 0.],
                 acceleration: [0., 0.],
                 remaining_ticks: 16,
             })
             .unwrap();
-        let cooldown = combat.enemies[0].cooldown;
-        let body = combat.enemies[0].body;
         combat.rebase([64, -540]);
-        assert_eq!(combat.frame().enemies[0].id, 2);
-        assert_eq!(combat.frame().sleeping, 1);
-        assert_eq!(combat.frame().sleeping_shots, 1);
-        for _ in 0..40 {
-            combat.tick(player, |_, y| y >= 552, |_, y| y >= 552);
+        assert!(!combat.enemies.iter().any(|e| e.id == id));
+        assert!(combat.shots.shots().is_empty());
+        assert!(combat.despawned > 0 && combat.despawned_shots > 0);
+        for index in 0..600 {
+            combat.rebase(if index % 2 == 0 {
+                origin
+            } else {
+                [1_i64 << 54, -540]
+            });
+            assert!(combat.enemies.len() <= 2);
+            assert!(combat.shots.shots().is_empty());
         }
-        assert_eq!(combat.enemies[0].cooldown, cooldown);
-        assert_eq!(combat.enemies[0].health, 2);
-        assert_eq!(combat.enemies[0].body.x().to_bits(), body.x().to_bits());
-        assert_eq!(
-            combat.enemies[0].body.vertical_velocity(),
-            body.vertical_velocity()
-        );
-        assert_eq!(combat.parked_shots[0].1.remaining_ticks, 16);
-        let far = [1_i64 << 54, -(1_i64 << 54)];
-        combat.rebase(far);
-        assert!(combat.frame().enemies.is_empty());
-        assert_eq!(combat.enemies[0].origin, origin);
-        assert_eq!(combat.enemies[0].body.x().to_bits(), body.x().to_bits());
         combat.rebase(origin);
-        let first = combat
-            .frame()
-            .enemies
-            .iter()
-            .find(|e| e.id == 1)
-            .copied()
-            .unwrap();
-        assert_eq!(first.health, 2);
-        assert_eq!(first.rect[0] as i64 + origin[0], -180);
-        assert_eq!(combat.shots.shots()[0].remaining_ticks, 16);
-        assert_eq!(combat.shots.shots()[0].position, [800., 546.]);
-        combat.hit_enemy([781, 541]);
-        combat.hit_enemy([781, 541]);
-        assert_eq!(combat.frame().kills, 1);
-        combat.rebase(far);
-        combat.rebase(origin);
-        assert!(
-            !combat.frame().enemies.iter().any(|e| e.id == 1),
-            "killed enemy respawned on return"
-        );
-        assert_eq!(combat.frame().kills, 1);
+        assert_eq!(combat.frame().enemies[0].health, 3);
+        assert_ne!(combat.frame().enemies[0].id, id);
+        let restored = Combat::restore_state(&combat.save_state().unwrap()).unwrap();
+        assert_eq!(restored.signature(), combat.signature());
     }
     #[test]
-    fn sleeping_shots_share_the_bounded_fire_budget_and_report_rejection() {
-        let mut combat = Combat::streamed(1920, 1080, [-960, -540]);
-        combat.begin();
-        let shot = Shot {
-            position: [10., 10.],
-            velocity: [5., 0.],
-            acceleration: [0., 0.],
-            remaining_ticks: 16,
-        };
-        combat.parked_shots.resize(1024, ([5000, 0], shot));
-        combat.enemies[0].cooldown = 1;
-        combat.tick(
-            Body::new(960., 540., 7., 12.),
-            |_, y| y >= 552,
-            |_, y| y >= 552,
+    fn chase_uses_an_intermediate_ledge_with_a_bounded_planner_budget() {
+        let solid = |x, y| y >= 100 || ((60..76).contains(&x) && y == 80) || (x < 45 && y >= 60);
+        let player = Body::new(25., 48., 7., 12.);
+        let mut combat = Combat::new(160, 120, false);
+        combat.set_behavior(Behavior::Chase);
+        combat.enemies[0].body = Body::new(82., 88., 7., 12.);
+        combat.enemies[0]
+            .body
+            .restore_motion(0., true, false)
+            .unwrap();
+        combat.enemies[0].cooldown = 1000;
+        let mut reached = false;
+        let mut planned = false;
+        for _ in 0..360 {
+            combat.tick(player, solid, solid);
+            assert!(combat.nav_expansions <= charon_navigation::MAX_EXPANSIONS);
+            planned |= combat.nav_expansions > 0;
+            let body = combat.enemies[0].body;
+            assert!(!body.embedded);
+            if body.x() < 45. && body.y() <= 49. {
+                reached = true;
+                break;
+            }
+        }
+        assert!(
+            planned && reached,
+            "chaser did not climb via the intermediate ledge"
         );
-        assert_eq!(combat.frame().rejected_shots, 1);
-        assert_eq!(combat.parked_shots.len(), 1024);
-        assert!(combat.shots.shots().is_empty());
     }
     #[test]
     fn hunters_follow_both_directions_jump_small_obstacles_and_respect_tall_walls() {
@@ -603,9 +716,9 @@ mod tests {
                 highest = highest.min(combat.enemies[0].body.y());
                 assert!(!combat.enemies[0].body.embedded);
             }
-            assert!(highest < 63., "hunter never jumped at obstacle");
             let x = combat.enemies[0].body.x();
             if height == 4 {
+                assert!(highest < 63., "hunter never jumped at small obstacle");
                 assert!(x < 70., "small obstacle was not traversed");
             } else {
                 assert!(x >= 75., "hunter passed through a tall wall");

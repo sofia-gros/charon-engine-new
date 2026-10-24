@@ -12,6 +12,11 @@ fn rect(x: f32, y: f32, width: f32, height: f32, color: [f32; 4]) -> OverlayRect
         color,
     }
 }
+#[derive(Clone, Copy)]
+pub enum Preview {
+    Rectangle([f32; 4]),
+    Disk { position: [f32; 2], diameter: u8 },
+}
 pub fn overlays(
     frame: &Frame,
     inspect_enabled: bool,
@@ -19,7 +24,7 @@ pub fn overlays(
     software: bool,
     camera: charon_render::Camera2D,
     tool_label: &str,
-    preview: Option<[f32; 4]>,
+    preview: Option<Preview>,
 ) -> Vec<OverlayRect> {
     let mut result = Vec::new();
     if let Some(body) = frame.player.filter(|body| body.embedded) {
@@ -87,7 +92,38 @@ pub fn overlays(
     for &[x, y] in &frame.sparks {
         result.push(rect(x, y, 0.8, 0.8, [1., 0.5, 0.15, 1.]));
     }
-    if let Some([x, y, w, h]) = preview {
+    if let Some(Preview::Disk { position, diameter }) = preview {
+        let pixels = charon_mining::disk(usize::from(diameter)).unwrap();
+        let origin = [
+            position[0].floor() - f32::from(diameter / 2),
+            position[1].floor() - f32::from(diameter / 2),
+        ];
+        for &(x, y) in &pixels {
+            for (dx, dy) in [(-1, 0), (1, 0), (0, -1), (0, 1)] {
+                if !pixels.contains(&(x + dx, y + dy)) {
+                    let (px, py) = (origin[0] + x as f32, origin[1] + y as f32);
+                    result.push(if dx != 0 {
+                        rect(
+                            px + if dx > 0 { 0.85 } else { 0. },
+                            py,
+                            0.15,
+                            1.,
+                            [0.5, 1., 0.65, 1.],
+                        )
+                    } else {
+                        rect(
+                            px,
+                            py + if dy > 0 { 0.85 } else { 0. },
+                            1.,
+                            0.15,
+                            [0.5, 1., 0.65, 1.],
+                        )
+                    });
+                }
+            }
+        }
+    }
+    if let Some(Preview::Rectangle([x, y, w, h])) = preview {
         let color = [0.5, 1., 0.65, 1.];
         let line = 0.2;
         result.extend([
@@ -200,11 +236,11 @@ pub fn overlays(
         let label = match combat.phase {
             crate::combat::Phase::Ready => "ENTER TO START - Q WAND 3 BUILD".into(),
             crate::combat::Phase::Playing if frame.stream.is_some() => format!(
-                "HP {} ACTIVE {} SLEEP {} SHOTS WAIT {} REJECT {}",
+                "HP {} ACTIVE {} DESPAWN {} SHOTS {} REJECT {}",
                 combat.health,
                 combat.enemies.len(),
-                combat.sleeping,
-                combat.sleeping_shots,
+                combat.despawned,
+                combat.despawned_shots,
                 combat.rejected_shots
             ),
             crate::combat::Phase::Playing => format!(
@@ -219,6 +255,15 @@ pub fn overlays(
             crate::combat::Phase::Defeated => "DEFEATED - R RETRY SAME MAP".into(),
         };
         text(&mut result, 4., 83., &label, [1., 0.8, 0.4, 1.]);
+    }
+    if frame.player.is_some() {
+        text(
+            &mut result,
+            4.,
+            96.,
+            &format!("BLOCKS {} YIELDS {}", frame.inventory, frame.block_drops),
+            [0.4, 1., 0.7, 1.],
+        );
     }
     if let Some(error) = frame.image_error {
         result.push(rect(2., 69., 270., 11., [0.1, 0.03, 0.03, 1.]));

@@ -6,6 +6,8 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+charon-navigation.workspace = true
+charon-mining.workspace = true
 charon-world.workspace = true
 charon-fluid = { workspace = true, features = ["gpu"] }
 charon-image.workspace = true

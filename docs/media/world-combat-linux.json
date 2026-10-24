@@ -1,25 +1,25 @@
 {
-  "source_sha256": "133db16d2cfbff4f5a9b5fa3de9ae794aed461a3248580cf8637d02b9ef4714d",
+  "source_sha256": "23af2a65c9b79f1f249a9966047789787f9675871efec4f328fc9e4f3f35da8c",
   "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
   "sample": "world-combat",
-  "base_revision": "4ff98cccb7ae2abd0f8cdd7e87715bc2e43bb700",
+  "base_revision": "35c772f4d00fcc7b36ec83fa9199aece97d69342",
   "platform": "Linux Xorg dummy",
   "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
   "build_profile": "dev",
   "target_capture_fps": 8,
-  "observed_capture_fps": 7.487,
-  "gif_encoded_frames": 256,
+  "observed_capture_fps": 7.755,
+  "gif_encoded_frames": 436,
   "draw_submission_fps_range": [
-    2.08,
-    45.33
+    1.83,
+    43.07
   ],
   "simulation_hz_range": [
     0.0,
-    160.23
+    166.65
   ],
   "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
-  "captured_frames": 264,
-  "gif_duration_ms": 35230,
+  "captured_frames": 456,
+  "gif_duration_ms": 58770,
   "capture_target": "game client window (desktop excluded)",
   "source_size": "actual client size; see window_width/window_height in CSV",
   "gif_size": [
@@ -33,10 +33,10 @@
     1080
   ],
   "restart": {
-    "restored_tick": 1333,
-    "enemy_id": "1",
-    "enemy_health": "2",
-    "replay": "replay_ticks=544 checks=terrain,player,input_state workers=1",
+    "restored_tick": 1287,
+    "enemy_id": "3",
+    "enemy_health": "3",
+    "replay": "replay_ticks=514 checks=terrain,player,input_state workers=1",
     "checks": [
       "normal shutdown publishes checkpoint",
       "new process restores player/enemy/tick/pause",
@@ -48,12 +48,12 @@
     ]
   },
   "resident_peak": 16,
-  "replay": "replay_ticks=1628 checks=terrain,player,input_state workers=1",
+  "replay": "replay_ticks=3061 checks=terrain,player,input_state workers=1",
   "checks": [
     "start screen",
-    "aimed hit wounds a turret",
+    "terrain-aware aimed shot",
     "two region boundaries and return",
-    "dormant enemy keeps global position and health",
+    "outside enemy released and fresh encounter on return",
     "chasing encounter and kill",
     "pause freezes combat",
     "bounded resident chunks",

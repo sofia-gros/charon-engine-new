@@ -297,6 +297,17 @@ name = "charon-image"
 version = "0.1.0"
 
 [[package]]
+name = "charon-mining"
+version = "0.1.0"
+
+[[package]]
+name = "charon-navigation"
+version = "0.1.0"
+dependencies = [
+ "charon-platformer",
+]
+
+[[package]]
 name = "charon-platformer"
 version = "0.1.0"
 
@@ -335,6 +346,8 @@ dependencies = [
  "charon-assets",
  "charon-fluid",
  "charon-image",
+ "charon-mining",
+ "charon-navigation",
  "charon-platformer",
  "charon-projectiles",
  "charon-render",

@@ -65,6 +65,12 @@ impl Projectiles {
     }
     /// Query a stable collision state for the whole batch; apply returned impact
     /// requests afterward, so firing order does not change the queried terrain.
+    /// Remove game-owned out-of-range projectiles without reporting a terrain hit.
+    pub fn retain(&mut self, keep: impl FnMut(&Shot) -> bool) -> usize {
+        let before = self.shots.len();
+        self.shots.retain(keep);
+        before - self.shots.len()
+    }
     pub fn step(&mut self, mut blocks: impl FnMut(i32, i32) -> bool) -> Vec<Impact> {
         let mut impacts = Vec::new();
         self.shots.retain_mut(|shot| {

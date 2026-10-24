@@ -47,6 +47,8 @@ fn submit_draw_command<S: charon_runtime::Simulation<Command = GameCommand>>(
 
 #[derive(Clone, Copy)]
 enum Tool {
+    Pickaxe,
+    Explosive,
     Lob,
     Wand,
     Brush,
@@ -56,10 +58,12 @@ enum Tool {
 impl Tool {
     fn label(self) -> &'static str {
         match self {
+            Self::Pickaxe => "T PICKAXE [ ] SIZE CLICK DIG",
+            Self::Explosive => "X EXPLOSION CLICK BLAST",
             Self::Lob => "E ARC SHOT CLICK FIRE Q STRAIGHT",
             Self::Wand => "Q WAND CLICK FIRE 3 BUILD",
             Self::Brush => "1 SAND 2 ASH 3 BLOCK 4 IMAGE 5 WATER 6 OIL L SEA",
-            Self::Blocks => "3 BLOCK GRID 8",
+            Self::Blocks => "3 BLOCK GRID 4",
             Self::Images => "4 IMAGE FREE",
         }
     }
@@ -194,6 +198,7 @@ struct App {
     cursor: Option<(f64, f64)>,
     buttons: [bool; 3],
     brush: u8,
+    mining_size: u8,
     tool: Tool,
     clicks: [bool; 3],
     follow_camera: bool,
@@ -224,7 +229,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting,shot_x,shot_y,shot_vx,shot_vy,shot_gravity,enemy_x,enemy_y,sleeping_enemies,sleeping_enemy_shots,rejected_enemy_shots,enemy_id,enemy_health")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting,shot_x,shot_y,shot_vx,shot_vy,shot_gravity,enemy_x,enemy_y,despawned_enemies,despawned_enemy_shots,rejected_enemy_shots,enemy_id,enemy_health,inventory_blocks,block_drops,rubble_pixels,block_items,block_pixels,ai_path_expansions")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -285,6 +290,7 @@ impl App {
             cursor: None,
             buttons: [false; 3],
             brush: SAND,
+            mining_size: 2,
             tool,
             clicks: [false; 3],
             follow_camera: streaming,
@@ -510,18 +516,19 @@ impl App {
             )
         });
         let preview = match self.tool {
+            Tool::Pickaxe | Tool::Explosive => None,
             Tool::Wand | Tool::Lob => pointer.map(|[x, y]| [x - 0.5, y - 0.5, 1., 1.]),
             Tool::Brush => None,
             Tool::Blocks => pointer
                 .map(|point| {
                     Placement::Grid {
                         origin: [0., 0.],
-                        cell: [8., 8.],
+                        cell: [4., 4.],
                     }
                     .position(point)
                 })
                 .transpose()?
-                .map(|[x, y]| [x, y, 8., 8.]),
+                .map(|[x, y]| [x, y, 4., 4.]),
             Tool::Images => pointer
                 .map(|point| Placement::Free.position(point))
                 .transpose()?
@@ -533,6 +540,28 @@ impl App {
         }
         if let Some([x, y]) = pointer.filter(|_| !world_loading) {
             match self.tool {
+                Tool::Pickaxe => {
+                    if self.buttons[0] {
+                        submit_draw_command(
+                            &self.runtime,
+                            GameCommand::MineAt {
+                                position: [x, y],
+                                size: self.mining_size,
+                            },
+                        )?;
+                    }
+                }
+                Tool::Explosive => {
+                    if self.clicks[0] {
+                        submit_draw_command(
+                            &self.runtime,
+                            GameCommand::ExplodeAt {
+                                position: [x, y],
+                                radius: 12,
+                            },
+                        )?;
+                    }
+                }
                 Tool::Wand | Tool::Lob => {
                     if self.clicks[0] {
                         self.rejected_edits += u64::from(!submit_draw_command(
@@ -549,30 +578,32 @@ impl App {
                     for (pressed, material) in self.buttons.into_iter().zip([self.brush, AIR, WALL])
                     {
                         if pressed {
-                            let command = if material == WALL {
+                            if material == WALL {
                                 let [bx, by] = Placement::Grid {
                                     origin: [0., 0.],
-                                    cell: [8., 8.],
+                                    cell: [4., 4.],
                                 }
                                 .position([x, y])?;
-                                Command::FillRect {
-                                    x: bx as usize,
-                                    y: by as usize,
-                                    width: 8,
-                                    height: 8,
-                                    material,
-                                }
+                                submit_draw_command(
+                                    &self.runtime,
+                                    GameCommand::Terrain(Command::FillRect {
+                                        x: bx as usize,
+                                        y: by as usize,
+                                        width: 4,
+                                        height: 4,
+                                        material,
+                                    }),
+                                )?;
                             } else {
-                                Command::Paint {
-                                    x: x.floor() as usize,
-                                    y: y.floor() as usize,
-                                    material,
-                                }
-                            };
-                            self.rejected_edits += u64::from(!submit_draw_command(
-                                &self.runtime,
-                                GameCommand::Terrain(command),
-                            )?);
+                                submit_draw_command(
+                                    &self.runtime,
+                                    GameCommand::BrushAt {
+                                        position: [x, y],
+                                        diameter: self.mining_size,
+                                        material,
+                                    },
+                                )?;
+                            }
                         }
                     }
                 }
@@ -584,8 +615,8 @@ impl App {
                             GameCommand::Terrain(Command::FillRect {
                                 x: bx as usize,
                                 y: by as usize,
-                                width: 8,
-                                height: 8,
+                                width: 4,
+                                height: 4,
                                 material: if self.buttons[1] { AIR } else { WALL },
                             }),
                         )?);
@@ -616,7 +647,7 @@ impl App {
                 .map_err(|e| format!("inspection queue: {e}"))?;
             self.inspected = inspection;
         }
-        let input_label = if self.rejected_edits > 0 {
+        let mut input_label = if self.rejected_edits > 0 {
             format!("{} ACTIONS NOT APPLIED", self.rejected_edits)
         } else if let Some(stream) = snapshot.frame.stream {
             let p = snapshot.frame.player.expect("stream player");
@@ -638,6 +669,14 @@ impl App {
         } else {
             format!("QUEUE FULL: {} ACTIONS NOT APPLIED", self.rejected_edits)
         };
+        if matches!(self.tool, Tool::Brush | Tool::Pickaxe) {
+            input_label.push_str(&format!(" DIAMETER {}", self.mining_size));
+        }
+        let brush_preview = pointer.and_then(|p| match self.tool {
+            Tool::Pickaxe | Tool::Brush => Some((p, self.mining_size)),
+            Tool::Explosive => Some((p, 25)),
+            _ => None,
+        });
         let overlays = debug_view::overlays(
             &snapshot.frame,
             self.inspect_enabled,
@@ -645,7 +684,9 @@ impl App {
             view.software_adapter,
             camera,
             &input_label,
-            preview,
+            brush_preview
+                .map(|(position, diameter)| debug_view::Preview::Disk { position, diameter })
+                .or_else(|| preview.map(debug_view::Preview::Rectangle)),
         );
         let sprites = self.actor.as_mut().map_or_else(Vec::new, |actor| {
             actor.sprites(&snapshot.frame, displayed_player)
@@ -882,7 +923,7 @@ impl App {
             if let Some(combat) = &snapshot.frame.combat {
                 row.push_str(&format!(
                     ",{},{},{}",
-                    combat.sleeping, combat.sleeping_shots, combat.rejected_shots
+                    combat.despawned, combat.despawned_shots, combat.rejected_shots
                 ));
             } else {
                 row.push_str(",,,");
@@ -892,6 +933,22 @@ impl App {
             } else {
                 row.push_str(",,");
             }
+            row.push_str(&format!(
+                ",{},{},{},{},{}",
+                snapshot.frame.inventory,
+                snapshot.frame.block_drops,
+                snapshot.frame.rubble_pixels,
+                snapshot.frame.block_items,
+                snapshot.frame.block_pixels
+            ));
+            row.push_str(&format!(
+                ",{}",
+                snapshot
+                    .frame
+                    .combat
+                    .as_ref()
+                    .map_or(0, |c| c.nav_expansions)
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -980,6 +1037,14 @@ impl ApplicationHandler for App {
                     }
                     PhysicalKey::Code(KeyCode::KeyQ) if down => self.tool = Tool::Wand,
                     PhysicalKey::Code(KeyCode::KeyE) if down => self.tool = Tool::Lob,
+                    PhysicalKey::Code(KeyCode::KeyT) if down => self.tool = Tool::Pickaxe,
+                    PhysicalKey::Code(KeyCode::KeyX) if down => self.tool = Tool::Explosive,
+                    PhysicalKey::Code(KeyCode::BracketLeft) if down => {
+                        self.mining_size = self.mining_size.saturating_sub(1).max(1)
+                    }
+                    PhysicalKey::Code(KeyCode::BracketRight) if down => {
+                        self.mining_size = (self.mining_size + 1).min(16)
+                    }
                     PhysicalKey::Code(KeyCode::Digit1) if down => {
                         self.brush = SAND;
                         self.tool = Tool::Brush;

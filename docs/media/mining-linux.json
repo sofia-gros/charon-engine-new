@@ -1,0 +1,103 @@
+{
+  "source_sha256": "23af2a65c9b79f1f249a9966047789787f9675871efec4f328fc9e4f3f35da8c",
+  "compiler": "rustc 1.99.1 (58cf8f9c3 2026-10-13)",
+  "sample": "mining",
+  "base_revision": "35c772f4d00fcc7b36ec83fa9199aece97d69342",
+  "platform": "Linux Xorg dummy",
+  "adapter": "adapter=llvmpipe (LLVM 19.1.7, 256 bits) backend=Gl device_type=Cpu",
+  "build_profile": "dev",
+  "target_capture_fps": 8,
+  "observed_capture_fps": 7.999,
+  "gif_encoded_frames": 162,
+  "draw_submission_fps_range": [
+    3.55,
+    33.44
+  ],
+  "simulation_hz_range": [
+    0.0,
+    73.48
+  ],
+  "measurement_scope": "On-screen DRAW counts completed present-submission calls per wall-clock interval; SIM counts simulation ticks. GIF rate is capture rate. Render GPU execution time and physical presentation are not measured; CFD compute queries are reported separately when available.",
+  "captured_frames": 176,
+  "gif_duration_ms": 21960,
+  "capture_target": "game client window (desktop excluded)",
+  "source_size": "actual client size; see window_width/window_height in CSV",
+  "gif_size": [
+    960,
+    540
+  ],
+  "fluid_backend": null,
+  "fluid_compute_adapter": null,
+  "simulation_grid": [
+    480,
+    270
+  ],
+  "stages": [
+    {
+      "simulation_tick": "41",
+      "block_pixels": "100020",
+      "block_drops": "0",
+      "rubble_pixels": "0",
+      "block_items": "0",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "41",
+      "block_pixels": "100036",
+      "block_drops": "0",
+      "rubble_pixels": "0",
+      "block_items": "0",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "41",
+      "block_pixels": "100035",
+      "block_drops": "0",
+      "rubble_pixels": "0",
+      "block_items": "0",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "47",
+      "block_pixels": "100032",
+      "block_drops": "0",
+      "rubble_pixels": "0",
+      "block_items": "0",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "53",
+      "block_pixels": "100020",
+      "block_drops": "1",
+      "rubble_pixels": "8",
+      "block_items": "1",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "113",
+      "block_pixels": "100020",
+      "block_drops": "1",
+      "rubble_pixels": "8",
+      "block_items": "1",
+      "inventory_blocks": "32"
+    },
+    {
+      "simulation_tick": "138",
+      "block_pixels": "100020",
+      "block_drops": "1",
+      "rubble_pixels": "8",
+      "block_items": "0",
+      "inventory_blocks": "33"
+    }
+  ],
+  "replay": "replay_ticks=1339 checks=terrain,player,input_state workers=1",
+  "checks": [
+    "4x4 placed block",
+    "1px circular corner cut without drop",
+    "2px circular cuts to half",
+    "exactly eight falling debris pixels and one item",
+    "item pickup into inventory",
+    "16px circular sand brush",
+    "authoritative replay with one worker"
+  ]
+}

@@ -29,7 +29,7 @@ impl Session {
             side: SIDE,
             resident_limit: 32,
             seed,
-            generator_revision: 2,
+            generator_revision: 3,
             materials,
         };
         Ok(Self {
@@ -173,35 +173,78 @@ impl Session {
         }
     }
 }
-/// Placeholder game terrain at Noita-scale coordinates, not a copy of its biome
-/// content or algorithm. Every cell depends only on the seed and global position.
+/// Terraria-inspired surface strata and ores, with Noita-inspired connected
+/// underground passages and wider chambers. These are independent game rules,
+/// not either game's proprietary generation algorithm. Geometry uses 4px blocks.
+pub fn surface_y(x: i64, seed: u64) -> i64 {
+    let noise = charon_world::noise::Noise::new(seed);
+    let distance = x.unsigned_abs();
+    let blend = distance.saturating_sub(48).min(80) as i64;
+    let variation = i64::from(noise.sample(x.div_euclid(4), 0, 96)) * 10 / 65535;
+    12 + (variation * blend / 80) * 4
+}
+fn block_material(bx: i64, by: i64, seed: u64) -> u8 {
+    use crate::materials::{DIRT, ORE, STONE};
+    let n = charon_world::noise::Noise::new(seed);
+    let ground = surface_y(bx * 4, seed).div_euclid(4);
+    if by < ground {
+        return AIR;
+    }
+    let depth = by - ground;
+    let band = by.div_euclid(48);
+    let center = band * 48 + 28 + i64::from(n.sample(bx, band, 64)) * 5 / 65535;
+    let chamber = (by - center).abs() <= 12 && n.fractal(bx, by) > 14000;
+    let tunnel_half = 3 + (i64::from(n.sample(bx, band.wrapping_add(13), 48)) + 65535) * 3 / 131070;
+    let horizontal = depth >= 12 && (by - center).abs() <= tunnel_half;
+    let column = bx.div_euclid(96);
+    let shaft_center = column * 96 + 48 + i64::from(n.sample(column, by, 48)) * 3 / 65535;
+    let shaft = (bx - shaft_center).abs() <= 3 && bx.unsigned_abs() > 24;
+    if shaft {
+        // Alternating 8px ledges, 20px apart, connect the surface and cave bands.
+        let left = by.div_euclid(5).rem_euclid(2) == 0;
+        let ledge = by.rem_euclid(5) == 0
+            && if left {
+                bx < shaft_center - 1
+            } else {
+                bx > shaft_center + 1
+            };
+        if !ledge {
+            return AIR;
+        }
+    } else if horizontal || (depth >= 12 && chamber) {
+        return AIR;
+    }
+    if depth < 2 && n.sample(bx, 7, 32) > 22000 && bx.unsigned_abs() > 24 {
+        return SAND;
+    }
+    if depth > 20 && n.sample(bx, by, 6) > 40000 && n.sample(bx, by, 40) > 0 {
+        return ORE;
+    }
+    if depth < 14 + i64::from(n.sample(bx, 3, 64)) * 5 / 65535 {
+        DIRT
+    } else {
+        STONE
+    }
+}
 pub fn generate(key: ChunkKey, seed: u64) -> io::Result<Vec<u8>> {
     let [ox, oy] = key
         .origin(SIDE)
         .ok_or_else(|| io::Error::other("chunk overflow"))?;
-    ox.checked_add(SIDE as i64 - 1 + PARALLEL_PERIOD / 2)
+    ox.checked_add(SIDE as i64 - 1)
         .ok_or_else(|| io::Error::other("chunk overflow"))?;
     oy.checked_add(SIDE as i64 - 1)
         .ok_or_else(|| io::Error::other("chunk overflow"))?;
-    let coherent = charon_world::noise::Noise::new(seed);
-    let roofs: Vec<_> = (0..SIDE)
-        .map(|x| -48 - i64::from(coherent.sample(ox + x as i64, 0, 128) + 65535) * 32 / 131070)
-        .collect();
-    let mut cells = vec![WALL; SIDE * SIDE];
-    for y in 0..SIDE {
-        for x in 0..SIDE {
-            let gx = ox + x as i64;
-            let gy = oy + y as i64;
-            let lx = (gx + PARALLEL_PERIOD / 2).rem_euclid(PARALLEL_PERIOD) - PARALLEL_PERIOD / 2;
-            let room = gy >= 24 && coherent.fractal(gx, gy) > 6000;
-            cells[y * SIDE + x] =
-                if (9..12).contains(&gy) && lx.abs() > 32 && lx.rem_euclid(128) > 120 {
-                    SAND
-                } else if (roofs[x]..12).contains(&gy) || room {
-                    AIR
-                } else {
-                    WALL
-                };
+    let mut cells = vec![AIR; SIDE * SIDE];
+    for y in (0..SIDE).step_by(4) {
+        for x in (0..SIDE).step_by(4) {
+            let material = block_material(
+                (ox + x as i64).div_euclid(4),
+                (oy + y as i64).div_euclid(4),
+                seed,
+            );
+            for row in y..y + 4 {
+                cells[row * SIDE + x..row * SIDE + x + 4].fill(material);
+            }
         }
     }
     Ok(cells)
@@ -221,6 +264,64 @@ mod tests {
             assert!(Instant::now() < deadline);
             std::thread::sleep(Duration::from_millis(1));
         }
+    }
+    #[test]
+    fn geology_is_block_aligned_seeded_and_contains_strata_caves_and_ores() {
+        use crate::materials::{DIRT, ORE, STONE};
+        let a = generate(ChunkKey(0, 0), 42).unwrap();
+        assert_eq!(a, generate(ChunkKey(0, 0), 42).unwrap());
+        assert_ne!(a, generate(ChunkKey(0, 0), 43).unwrap());
+        for material in [AIR, DIRT, STONE, ORE] {
+            assert!(a.contains(&material), "missing material {material}");
+        }
+        for key in [ChunkKey(-1, 0), ChunkKey(0, 0), ChunkKey(1, 0)] {
+            let cells = generate(key, 42).unwrap();
+            let [ox, oy] = key.origin(SIDE).unwrap();
+            for y in (0..SIDE).step_by(4) {
+                for x in (0..SIDE).step_by(4) {
+                    let expected = block_material(
+                        (ox + x as i64).div_euclid(4),
+                        (oy + y as i64).div_euclid(4),
+                        42,
+                    );
+                    for dy in 0..4 {
+                        assert!(cells[(y + dy) * SIDE + x..(y + dy) * SIDE + x + 4]
+                            .iter()
+                            .all(|&id| id == expected));
+                    }
+                }
+            }
+        }
+        // Follow open cells from the surface into a generated underground band.
+        let mut seen = vec![false; a.len()];
+        let mut queue = std::collections::VecDeque::new();
+        for x in 0..SIDE {
+            if a[x] == AIR {
+                seen[x] = true;
+                queue.push_back(x);
+            }
+        }
+        while let Some(i) = queue.pop_front() {
+            let (x, y) = (i % SIDE, i / SIDE);
+            for (nx, ny) in [
+                (x.wrapping_sub(1), y),
+                (x + 1, y),
+                (x, y.wrapping_sub(1)),
+                (x, y + 1),
+            ] {
+                if nx < SIDE && ny < SIDE {
+                    let j = ny * SIDE + nx;
+                    if !seen[j] && a[j] == AIR {
+                        seen[j] = true;
+                        queue.push_back(j);
+                    }
+                }
+            }
+        }
+        assert!(
+            seen[128 * SIDE..].iter().any(|&v| v),
+            "surface has no open connection to the caves"
+        );
     }
     #[test]
     fn moving_active_window_preserves_global_physics_and_never_saves_guard_walls() {
@@ -328,7 +429,7 @@ mod integration_tests {
         }
     }
     #[test]
-    fn streamed_combat_keeps_wounded_enemy_across_a_real_region_roundtrip_and_replay() {
+    fn streamed_combat_despawns_outside_region_and_replays_new_encounter_on_return() {
         let root = std::env::temp_dir().join(format!("charon-world-combat-{}", std::process::id()));
         std::fs::create_dir_all(&root).unwrap();
         let path = root.join("inputs.trace");
@@ -354,12 +455,25 @@ mod integration_tests {
             frame.combat.as_ref().unwrap().phase,
             crate::combat::Phase::Ready
         );
-        let enemy = frame.combat.as_ref().unwrap().enemies[0];
         game.step(vec![
             Command::Begin,
             Command::Pause,
-            Command::FireAt([enemy.rect[0] + 3.5, enemy.rect[1] + 6.]),
+            Command::Terrain(charon_sand::Command::FillRect {
+                x: 128,
+                y: 176,
+                width: 508,
+                height: 48,
+                material: AIR,
+            }),
         ]);
+        for _ in 0..40 {
+            frame = game.step(vec![Command::Step]);
+        }
+        let enemy = frame.combat.as_ref().unwrap().enemies[0];
+        game.step(vec![Command::FireAt([
+            enemy.rect[0] + 3.5,
+            enemy.rect[1] + 6.,
+        ])]);
         for _ in 0..16 {
             frame = game.step(vec![Command::Step]);
         }
@@ -395,7 +509,7 @@ mod integration_tests {
             },
         ]);
         assert!(frame.combat.as_ref().unwrap().enemies.is_empty());
-        assert_eq!(frame.combat.as_ref().unwrap().sleeping, 2);
+        assert_eq!(frame.combat.as_ref().unwrap().despawned, 1);
         frame = game.step(vec![Command::Pause, Command::Left(true)]);
         for _ in 0..10 {
             if frame.stream.unwrap().waiting {
@@ -417,8 +531,8 @@ mod integration_tests {
             },
         ]);
         let combat = frame.combat.as_ref().unwrap();
-        let returned = combat.enemies.iter().find(|e| e.id == enemy.id).unwrap();
-        assert_eq!(returned.health, 2);
+        let returned = combat.enemies.iter().find(|e| e.id != enemy.id).unwrap();
+        assert_eq!(returned.health, 3);
         assert_eq!(returned.rect[0], enemy.rect[0]);
         assert_eq!(combat.health, 3);
         assert!(!frame.player.unwrap().embedded);
