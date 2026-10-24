@@ -4,6 +4,8 @@ pub use placement::Placement;
 mod debug_text;
 pub use camera::Camera2D;
 mod indexed;
+mod lighting;
+pub use lighting::{LightMaterial, Lighting, LightingStats, PointLight};
 mod sprites;
 pub use charon_image::IndexedImage;
 pub use charon_image::TiledImage;
@@ -76,6 +78,7 @@ pub struct Gpu {
     ui_sprites: sprites::SpriteLayer,
     indexed: Option<indexed::IndexedLayer>,
     indexed_active: bool,
+    lighting: Option<Lighting>,
     camera: Camera2D,
     camera_buffer: wgpu::Buffer,
     format: wgpu::TextureFormat,
@@ -98,6 +101,7 @@ impl Gpu {
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("charon-device"),
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
                 ..Default::default()
             })
             .await?;
@@ -223,6 +227,7 @@ impl Gpu {
             ui_sprites,
             indexed: None,
             indexed_active: false,
+            lighting: None,
             format,
             device,
             queue,
@@ -339,8 +344,12 @@ impl Gpu {
                 self.texture.width(),
                 self.texture.height(),
                 &self.camera_buffer,
+                &self.queue,
             )
         });
+        layer
+            .lighting
+            .configure(&self.device, &self.queue, self.lighting.as_ref())?;
         let bytes = layer.upload(&self.device, &self.queue, image, looks, atlas)?;
         self.indexed_active = true;
         Ok(bytes)
@@ -387,7 +396,33 @@ impl Gpu {
         bytes.len()
     }
 
-    pub fn draw(&self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+    /// Opt-in lighting for indexed terrain. Sprites/UI and the RGBA path retain
+    /// their own colors. None restores exact unlit rendering.
+    pub fn set_lighting(&mut self, lighting: Option<Lighting>) -> Result<()> {
+        if let Some(config) = &lighting {
+            config.validate()?;
+        }
+        self.lighting = lighting;
+        Ok(())
+    }
+    pub fn lighting_stats(&self) -> LightingStats {
+        self.indexed
+            .as_ref()
+            .map_or_else(LightingStats::default, |layer| layer.lighting.stats)
+    }
+    fn lighting_after_submit(&mut self) {
+        if let Some(layer) = &mut self.indexed {
+            layer.lighting.after_submit();
+        }
+    }
+    pub fn draw(&mut self, encoder: &mut wgpu::CommandEncoder, view: &wgpu::TextureView) {
+        if self.indexed_active {
+            if let Some(layer) = &mut self.indexed {
+                layer
+                    .lighting
+                    .encode(&self.device, &self.queue, encoder, self.camera);
+            }
+        }
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("cells"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -591,14 +626,20 @@ impl Gpu {
         result
     }
 
-    fn verify(&self, frame: &ImageView<'_>) -> Result<()> {
-        const WIDTH: u32 = 1920;
-        const HEIGHT: u32 = 1080;
+    /// Blocking diagnostic readback of the real render pipeline. Never called
+    /// by window rendering; useful for GPU pixel contract tests without files.
+    pub fn readback(&mut self, width: u32, height: u32) -> Result<Vec<u8>> {
+        if self.format != wgpu::TextureFormat::Rgba8Unorm {
+            return Err("diagnostic readback requires an Rgba8Unorm renderer".into());
+        }
+        if width == 0 || height == 0 || width > 8192 || height > 8192 {
+            return Err("invalid diagnostic target size".into());
+        }
         let target = self.device.create_texture(&wgpu::TextureDescriptor {
             label: Some("offscreen"),
             size: wgpu::Extent3d {
-                width: WIDTH,
-                height: HEIGHT,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -608,10 +649,10 @@ impl Gpu {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
             view_formats: &[],
         });
-        let pitch = (WIDTH * 4).div_ceil(256) * 256;
+        let pitch = (width * 4).div_ceil(256) * 256;
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("smoke-readback"),
-            size: u64::from(pitch * HEIGHT),
+            size: u64::from(pitch * height),
             usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
             mapped_at_creation: false,
         });
@@ -630,6 +671,7 @@ impl Gpu {
             target.size(),
         );
         self.queue.submit([encoder.finish()]);
+        self.lighting_after_submit();
         let (sender, receiver) = mpsc::channel();
         buffer
             .slice(..)
@@ -642,10 +684,18 @@ impl Gpu {
         })?;
         receiver.recv_timeout(Duration::from_secs(30))??;
         let mapped = buffer.slice(..).get_mapped_range()?;
-        let mut rgba = Vec::with_capacity((WIDTH * HEIGHT * 4) as usize);
+        let mut rgba = Vec::with_capacity((width * height * 4) as usize);
         for row in mapped.chunks_exact(pitch as usize) {
-            rgba.extend_from_slice(&row[..WIDTH as usize * 4]);
+            rgba.extend_from_slice(&row[..width as usize * 4]);
         }
+        drop(mapped);
+        buffer.unmap();
+        Ok(rgba)
+    }
+    fn verify(&mut self, frame: &ImageView<'_>) -> Result<()> {
+        const WIDTH: u32 = 1920;
+        const HEIGHT: u32 = 1080;
+        let rgba = self.readback(WIDTH, HEIGHT)?;
         for y in 0..HEIGHT as usize {
             for x in 0..WIDTH as usize {
                 let origin = self.camera.origin();
@@ -726,6 +776,12 @@ impl WindowRenderer {
             config,
             gpu,
         })
+    }
+    pub fn set_lighting(&mut self, lighting: Option<Lighting>) -> Result<()> {
+        self.gpu.set_lighting(lighting)
+    }
+    pub fn lighting_stats(&self) -> LightingStats {
+        self.gpu.lighting_stats()
     }
     pub fn set_camera(&mut self, camera: Camera2D) {
         self.gpu.set_camera(camera);
@@ -891,12 +947,14 @@ impl WindowRenderer {
             &texture.texture.create_view(&Default::default()),
         );
         self.gpu.queue.submit([encoder.finish()]);
+        self.gpu.lighting_after_submit();
         self.window.pre_present_notify();
         self.gpu.queue.present(texture);
         if reconfigure {
             self.surface.configure(&self.gpu.device, &self.config);
         }
         Ok(Some(RenderStats {
+            lighting: self.gpu.lighting_stats(),
             upload_enqueue_ms,
             upload_bytes,
             appearance_upload_bytes,
@@ -911,6 +969,7 @@ impl WindowRenderer {
 }
 #[derive(Clone, Copy, Default)]
 pub struct RenderStats {
+    pub lighting: LightingStats,
     pub upload_enqueue_ms: f64,
     pub upload_bytes: usize,
     pub appearance_upload_bytes: usize,

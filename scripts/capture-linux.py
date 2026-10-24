@@ -149,7 +149,7 @@ def source_fingerprint():
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--sample", choices=("mining", "world-combat", "world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
+    parser.add_argument("--sample", choices=("lighting", "mining", "world-combat", "world", "combat", "exploration", "sandbox", "dialogue", "platformer", "debugger", "projectiles", "camera", "placement", "sea", "cup", "fluid-wave", "fluid-dam"), default="sandbox")
     parser.add_argument("--fluid-backend", choices=("cpu", "gpu"), default="cpu")
     parser.add_argument("--grid", default="480x270", help="simulation grid; client remains 1920x1080")
     args = parser.parse_args()
@@ -158,7 +158,7 @@ def main():
     package = "charon-sandbox" if sample != "dialogue" else "charon-dialogue-sample"
     prefix = f"{sample}{'-gpu' if args.fluid_backend == 'gpu' else ''}-linux"
     local = LOCAL / sample
-    duration = 22 if sample == "mining" else 50 if sample == "world-combat" else 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
+    duration = 18 if sample == "lighting" else 22 if sample == "mining" else 50 if sample == "world-combat" else 20 if sample in ("world", "combat") else 23 if sample == "dialogue" else (40 if sample == "sea" else (36 if sample == "cup" else (20 if sample == "fluid-wave" else 14)))
     trace_path = local / f"inputs-{time.time_ns()}.trace"
     os.chdir(ROOT)
     local.mkdir(parents=True, exist_ok=True)
@@ -222,7 +222,7 @@ EndSection
                 processes.append(server)
             wait_for(lambda: Path(f"/tmp/.X11-unix/X{number}").exists())
             with open(local / f"{sample}.log", "w") as log:
-                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample in ("exploration", "mining") else []), *(["--game", "42"] if sample == "combat" else []), *(["--world-game" if sample == "world-combat" else "--world", "42", "--world-dir", str(temporary / "world")] if sample in ("world", "world-combat") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
+                client = subprocess.Popen([str(ROOT / "target/debug" / package), *(["--workers", "4", "--fluid-backend", args.fluid_backend, "--grid", args.grid] if sample != "dialogue" else ["--save-file", str(local / "slot.json")]), *(["--lighting-scene"] if sample == "lighting" else []), *(["--play"] if sample in ("platformer", "debugger", "projectiles", "camera") else []), *(["--explore", "42"] if sample in ("exploration", "mining") else []), *(["--game", "42"] if sample == "combat" else []), *(["--world-game" if sample == "world-combat" else "--world", "42", "--world-dir", str(temporary / "world")] if sample in ("world", "world-combat") else []), *(["--input-log", str(trace_path)] if sample != "dialogue" else []), "--seconds", str(duration + 20), "--record", str(local / "metrics.csv")], env=env, stdout=log, stderr=subprocess.STDOUT)
                 processes.append(client)
             wait_for(lambda: "surface=" in (local / f"{sample}.log").read_text())
             def measured_frame_ready():
@@ -254,7 +254,22 @@ EndSection
             capture_thread.start()
             def at(seconds):
                 time.sleep(max(0, start + seconds - time.monotonic()))
-            if sample == "mining":
+            if sample == "lighting":
+                def click_cell(x,y,button=1):
+                    inputs.move(x*4+1,y*4+1);inputs.button(button,True);time.sleep(.15);inputs.button(button,False)
+                at(.5);inputs.key(ord("p"))
+                at(1.4);inputs.key(ord("v"))
+                at(2.6);inputs.key(ord("v"))
+                at(4);inputs.key(ord("1"));inputs.key(0x5b)
+                # Four exact pixels cut a one-pixel-high aperture in the 4px wall.
+                for x in range(224,228): click_cell(x,126,3)
+                at(7);inputs.key(ord("7"));click_cell(312,124)
+                at(9);click_cell(312,124,3)
+                at(11);inputs.key(ord("3"))
+                for y in (120,124,128):click_cell(224,y)
+                at(13);inputs.key(ord("v"))
+                at(14.4);inputs.key(ord("v"))
+            elif sample == "mining":
                 stages = []
                 def latest():
                     return list(csv.DictReader((local / "metrics.csv").open()))[-1]
@@ -849,7 +864,26 @@ EndSection
             preview[0].save(local / "preview.gif",save_all=True,append_images=preview[1:],duration=125,loop=0,disposal=2)
             del preview
             rows = list(csv.DictReader((local / "metrics.csv").open()))
-            if sample == "mining":
+            if sample == "lighting":
+                assert max(int(r["lighting_lights"]) for r in rows)==2,"glowing block placement did not add a source"
+                assert rows[-1]["lighting_lights"]=="1","removed lamp left a stale source"
+                assert any(int(r["lighting_cells"])>0 for r in rows),"lighting never computed"
+                idle=[r for r in rows if float(r["elapsed_s"])>float(rows[-1]["elapsed_s"])-1.5]
+                assert idle and all(r["lighting_dispatches"]=="0" for r in idle),"static lighting recomputed"
+                assert all(r["lighting_omitted"]=="0" for r in rows),"demo exceeded its source budget"
+                def probe(seconds,point):
+                    _,path=min(frames,key=lambda f:abs(f[0]-start-seconds))
+                    with Image.open(path) as im:return im.convert("RGB").getpixel(point)
+                edge=probe(1,(160,224))[0];center=probe(1,(208,224))[0]
+                assert edge>center+20,(edge,center,"no interior darkening")
+                blocked=probe(3.5,(488,252))[0];opened=probe(6,(488,252))[0];closed=probe(12,(488,252))[0]
+                assert opened>blocked+5,(blocked,opened,"one-pixel opening did not transmit light")
+                assert abs(closed-blocked)<=2,(blocked,closed,"rebuilt wall left light behind it")
+                replay=subprocess.run([str(ROOT/"target/debug"/package),"--replay",str(trace_path),"--workers","1"],env=env,text=True,capture_output=True,check=True,timeout=30)
+                shutil.copyfile(trace_path,MEDIA/f"{prefix}.trace")
+                gpu_times=[float(r["lighting_gpu_ms"]) for r in rows if r["lighting_gpu_ms"]]
+                checks={"replay":replay.stdout.strip(),"lighting_gpu_ms_range":[min(gpu_times),max(gpu_times)] if gpu_times else None,"probe_red":{"edge":edge,"center":center,"blocked":blocked,"opened":opened,"closed":closed},"checks":["interior shading","1px aperture transmits light","glowing block placed and removed","rebuilt wall restores shadow","lighting toggle","zero idle lighting dispatches","authoritative physics replay with one worker"]}
+            elif sample == "mining":
                 assert stages[-1]["inventory_blocks"] == "33"
                 assert all(r["block_drops"] in ("0", "1") for r in rows), "debris yielded another item"
                 assert all(r["embedded"] == "false" for r in rows)

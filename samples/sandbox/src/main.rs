@@ -3,6 +3,7 @@ mod combat;
 mod cup;
 mod debug_view;
 mod game;
+mod lighting_view;
 mod material_view;
 mod materials;
 mod scenes;
@@ -13,7 +14,7 @@ mod world_view;
 use charon_render::{
     self as gpu, Camera2D, DebugPerformance, Gpu, Placement, Result, WindowRenderer,
 };
-use charon_runtime::Runtime;
+use charon_runtime::{Runtime, Simulation};
 use charon_sand::Command;
 use game::{Command as GameCommand, Game};
 use materials::{AIR, ASH, OIL, SAND, WALL, WATER};
@@ -53,6 +54,7 @@ enum Tool {
     Wand,
     Brush,
     Blocks,
+    Lamps,
     Images,
 }
 impl Tool {
@@ -64,11 +66,14 @@ impl Tool {
             Self::Wand => "Q WAND CLICK FIRE 3 BUILD",
             Self::Brush => "1 SAND 2 ASH 3 BLOCK 4 IMAGE 5 WATER 6 OIL L SEA",
             Self::Blocks => "3 BLOCK GRID 4",
+            Self::Lamps => "7 GLOW BLOCK V LIGHTING",
             Self::Images => "4 IMAGE FREE",
         }
     }
 }
 struct Options {
+    lighting: bool,
+    lighting_scene: bool,
     world: Option<u64>,
     world_game: bool,
     world_dir: PathBuf,
@@ -91,6 +96,8 @@ struct Options {
 impl Options {
     fn parse() -> Result<Self> {
         let mut options = Self {
+            lighting: false,
+            lighting_scene: false,
             world: None,
             world_game: false,
             world_dir: "artifacts/local/worlds".into(),
@@ -127,6 +134,11 @@ impl Options {
                 "--input-log" => options.input_log = Some(value()?.into()),
                 "--replay" => options.replay = Some(value()?.into()),
                 "--play" => options.play = true,
+                "--lighting" => options.lighting = true,
+                "--lighting-scene" => {
+                    options.lighting = true;
+                    options.lighting_scene = true;
+                }
                 kind @ ("--world" | "--world-game") => {
                     options.world_game = kind == "--world-game";
                     options.world = Some(value()?.parse()?);
@@ -170,6 +182,19 @@ impl Options {
         if options.world.is_some() && (options.width < 1024 || options.height < 1024) {
             return Err("streamed active windows need at least 1024 cells per axis for the current guard band".into());
         }
+        if options.lighting_scene
+            && (options.world.is_some()
+                || options.explore.is_some()
+                || options.game
+                || options.play
+                || options.smoke
+                || options.width < 384
+                || options.height < 224)
+        {
+            return Err(
+                "--lighting-scene requires a standalone sandbox grid of at least 384x224".into(),
+            );
+        }
         if options.ticks == 0 || options.ticks > 3600 {
             return Err("ticks must be 1..3600".into());
         }
@@ -180,6 +205,9 @@ type RetryWorker = std::thread::JoinHandle<
     std::result::Result<(world_save::Checkpoint, world_view::Session), String>,
 >;
 struct App {
+    lighting_view: lighting_view::LightingView,
+    lighting_cells_since_report: usize,
+    lighting_dispatches_since_report: usize,
     retry_worker: Option<RetryWorker>,
     retry_started: bool,
     retry_reset_sent: bool,
@@ -229,7 +257,7 @@ impl App {
             None
         };
         if let Some(file) = &mut record {
-            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting,shot_x,shot_y,shot_vx,shot_vy,shot_gravity,enemy_x,enemy_y,despawned_enemies,despawned_enemy_shots,rejected_enemy_shots,enemy_id,enemy_health,inventory_blocks,block_drops,rubble_pixels,block_items,block_pixels,ai_path_expansions")?;
+            writeln!(file, "elapsed_s,draw_fps,sim_hz,frame_p95_ms,frame_p99_ms,tick_work_ms,tick_late_ms,sand,active_tiles,visited_cells,workers_configured,workers_used,update_ms,snapshot_ms,upload_enqueue_ms,upload_bytes,acquire_ms,encode_present_ms,converted_cells,player_x,player_y,grounded,embedded,sand_solid,overlay_upload_bytes,runtime_tick,simulation_tick,paused,inspect_x,inspect_y,material,next_tile_awake,shots,sparks,impacts,sprite_upload_bytes,appearance_upload_bytes,atlas_upload_bytes,camera_x,camera_y,camera_width,camera_height,display_player_x,display_player_y,window_width,window_height,facing,placed_images,last_image_x,last_image_y,liquid,cup_x,cup_y,cup_width,cup_height,cup_moves,cup_blocked,water,oil,fluid_water_volume,fluid_oil_volume,fluid_divergence,fluid_substeps,fluid_pressure_ms,fluid_transport_ms,fluid_velocity_ms,fluid_flux_retries,fluid_max_speed,fluid_sleeping,fluid_surface_delta,fluid_rms_speed,fluid_mass_speed,fluid_fraction_change,fluid_compute_backend,fluid_gpu_velocity_ms,fluid_gpu_pressure_ms,fluid_gpu_upload_bytes,fluid_gpu_readback_bytes,fluid_gpu_dispatches,fluid_gpu_velocity_workgroups,fluid_gpu_pressure_workgroups,fluid_pressure_iterations,fluid_pressure_assembly_ms,fluid_pressure_setup_ms,fluid_gpu_readbacks,fluid_velocity_extension_ms,exploration_seed,run_phase,player_health,enemies,enemy_shots,kills,world_x,world_y,world_origin_x,world_origin_y,resident_chunks,world_waiting,shot_x,shot_y,shot_vx,shot_vy,shot_gravity,enemy_x,enemy_y,despawned_enemies,despawned_enemy_shots,rejected_enemy_shots,enemy_id,enemy_health,inventory_blocks,block_drops,rubble_pixels,block_items,block_pixels,ai_path_expansions,lighting_cells,lighting_dispatches,lighting_lights,lighting_omitted,lighting_gpu_ms")?;
         }
         let now = Instant::now();
         let actor = Some(actor_view::ActorVisual::new()?);
@@ -282,6 +310,9 @@ impl App {
             world_payload: None,
             world_sent: false,
             world_captured: None,
+            lighting_view: lighting_view::LightingView::default(),
+            lighting_cells_since_report: 0,
+            lighting_dispatches_since_report: 0,
             material_visual: material_view::MaterialVisual::new()?,
             actor,
             options,
@@ -519,7 +550,7 @@ impl App {
             Tool::Pickaxe | Tool::Explosive => None,
             Tool::Wand | Tool::Lob => pointer.map(|[x, y]| [x - 0.5, y - 0.5, 1., 1.]),
             Tool::Brush => None,
-            Tool::Blocks => pointer
+            Tool::Blocks | Tool::Lamps => pointer
                 .map(|point| {
                     Placement::Grid {
                         origin: [0., 0.],
@@ -607,7 +638,7 @@ impl App {
                         }
                     }
                 }
-                Tool::Blocks => {
+                Tool::Blocks | Tool::Lamps => {
                     let [bx, by, _, _] = preview.expect("block pointer preview");
                     if self.buttons[0] || self.buttons[1] {
                         self.rejected_edits += u64::from(!submit_draw_command(
@@ -617,7 +648,13 @@ impl App {
                                 y: by as usize,
                                 width: 4,
                                 height: 4,
-                                material: if self.buttons[1] { AIR } else { WALL },
+                                material: if self.buttons[1] {
+                                    AIR
+                                } else if matches!(self.tool, Tool::Lamps) {
+                                    materials::ORE
+                                } else {
+                                    WALL
+                                },
                             }),
                         )?);
                     }
@@ -672,6 +709,25 @@ impl App {
         if matches!(self.tool, Tool::Brush | Tool::Pickaxe) {
             input_label.push_str(&format!(" DIAMETER {}", self.mining_size));
         }
+        if self.options.lighting {
+            let lighting = self
+                .lighting_view
+                .prepare(&snapshot.frame.terrain.indices, camera);
+            view.set_lighting(Some(lighting))?;
+            let stats = view.lighting_stats();
+            input_label = format!(
+                "V LIGHT 7 GLOW SIZE {} LIGHTS {} OMIT {} REJECT {} LASTGPU {}",
+                self.mining_size,
+                stats.lights,
+                self.lighting_view.omitted,
+                self.rejected_edits,
+                stats
+                    .gpu_ms
+                    .map_or_else(|| "N/A".into(), |ms| format!("{ms:.2}MS"))
+            );
+        } else {
+            view.set_lighting(None)?;
+        }
         let brush_preview = pointer.and_then(|p| match self.tool {
             Tool::Pickaxe | Tool::Brush => Some((p, self.mining_size)),
             Tool::Explosive => Some((p, 25)),
@@ -702,6 +758,8 @@ impl App {
         else {
             return Ok(());
         };
+        self.lighting_cells_since_report += render.lighting.cells_updated;
+        self.lighting_dispatches_since_report += render.lighting.dispatches;
         if let Some(last) = self.last_draw.replace(now) {
             self.intervals.push((now - last).as_secs_f64() * 1000.0);
         }
@@ -949,6 +1007,17 @@ impl App {
                     .as_ref()
                     .map_or(0, |c| c.nav_expansions)
             ));
+            row.push_str(&format!(
+                ",{},{},{},{},{}",
+                self.lighting_cells_since_report,
+                self.lighting_dispatches_since_report,
+                render.lighting.lights,
+                self.lighting_view.omitted,
+                render
+                    .lighting
+                    .gpu_ms
+                    .map_or_else(String::new, |v| format!("{v:.6}"))
+            ));
             println!("{row}");
             if let Some(file) = &mut self.record {
                 writeln!(file, "{row}")?;
@@ -959,6 +1028,8 @@ impl App {
             self.draws = 0;
             self.intervals.clear();
             self.report = Instant::now();
+            self.lighting_cells_since_report = 0;
+            self.lighting_dispatches_since_report = 0;
         }
         Ok(())
     }
@@ -1076,6 +1147,13 @@ impl ApplicationHandler for App {
                         }
                     }
                     PhysicalKey::Code(KeyCode::Digit3) if down => self.tool = Tool::Blocks,
+                    PhysicalKey::Code(KeyCode::Digit7) if down => {
+                        self.tool = Tool::Lamps;
+                        self.options.lighting = true;
+                    }
+                    PhysicalKey::Code(KeyCode::KeyV) if down => {
+                        self.options.lighting = !self.options.lighting
+                    }
                     PhysicalKey::Code(KeyCode::Digit4) if down => self.tool = Tool::Images,
                     PhysicalKey::Code(KeyCode::KeyP) if down => {
                         self.game_command(GameCommand::Pause)
@@ -1188,6 +1266,27 @@ fn main() -> Result<()> {
     }
     if let Some(path) = &options.input_log {
         game.record_to(path)?;
+    }
+    if options.lighting_scene {
+        use materials::ORE;
+        game.step(vec![GameCommand::Terrain(Command::Clear)]);
+        let edits = [
+            (1, 1, options.width - 2, options.height - 2, AIR),
+            (80, 80, 48, 48, WALL),
+            (224, 64, 4, 144, WALL),
+            (196, 124, 4, 4, ORE),
+            (264, 104, 40, 40, WALL),
+            (60, 200, 320, 4, WALL),
+        ];
+        for (x, y, width, height, material) in edits {
+            game.step(vec![GameCommand::Terrain(Command::FillRect {
+                x,
+                y,
+                width,
+                height,
+                material,
+            })]);
+        }
     }
     let runtime = Runtime::start(game)?;
     if let Some(seed) = options.world {

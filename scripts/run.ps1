@@ -5,6 +5,8 @@ param(
     [switch]$NoFluidTiming,
     [switch]$Smoke,
     [switch]$Play,
+    [switch]$Lighting,
+    [switch]$LightingScene,
     [switch]$Game,
     [switch]$World,
     [switch]$WorldGame,
@@ -29,6 +31,8 @@ try {
     if (-not $DebugBuild) { $cargoArgs += '--release' }
     $cargoArgs += @('--', '--workers', "$Workers", '--grid', $Grid, '--fluid-backend', $FluidBackend)
     if ($NoFluidTiming) { $cargoArgs += '--no-fluid-timing' }
+    if ($LightingScene) { $cargoArgs += '--lighting-scene' }
+    elseif ($Lighting) { $cargoArgs += '--lighting' }
     if ($Smoke) { $cargoArgs += '--smoke' }
     else { $cargoArgs += @('--record', "$directory/$stamp-metrics.csv") }
     if ($RecordInputs) { $cargoArgs += @('--input-log', "$directory/$stamp-input.trace") }

@@ -19,6 +19,7 @@ pub(crate) struct IndexedLayer {
     atlas: Option<Arc<Texture>>,
     appearances: Vec<TileAppearance>,
     camera: wgpu::Buffer,
+    pub lighting: crate::lighting::LightField,
 }
 impl IndexedLayer {
     pub fn new(
@@ -27,6 +28,7 @@ impl IndexedLayer {
         width: u32,
         height: u32,
         camera: &wgpu::Buffer,
+        queue: &wgpu::Queue,
     ) -> Self {
         let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: Some("indexed terrain"),
@@ -77,8 +79,12 @@ impl IndexedLayer {
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
-        let bind = Self::bind(device, &pipeline, &cells, &palette, &atlas, camera);
+        let lighting = crate::lighting::LightField::new(device, queue, &cells);
+        let bind = Self::bind(
+            device, &pipeline, &cells, &palette, &atlas, camera, &lighting,
+        );
         Self {
+            lighting,
             camera: camera.clone(),
             pipeline,
             cells,
@@ -89,6 +95,7 @@ impl IndexedLayer {
             appearances: vec![],
         }
     }
+    #[allow(clippy::too_many_arguments)]
     fn bind(
         device: &wgpu::Device,
         pipeline: &wgpu::RenderPipeline,
@@ -96,11 +103,22 @@ impl IndexedLayer {
         palette: &wgpu::Buffer,
         atlas: &wgpu::Texture,
         camera: &wgpu::Buffer,
+        lighting: &crate::lighting::LightField,
     ) -> wgpu::BindGroup {
         device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("indexed terrain"),
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 4,
+                    resource: wgpu::BindingResource::TextureView(
+                        &lighting.texture.create_view(&Default::default()),
+                    ),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 5,
+                    resource: lighting.enabled.as_entire_binding(),
+                },
                 wgpu::BindGroupEntry {
                     binding: 3,
                     resource: camera.as_entire_binding(),
@@ -189,6 +207,7 @@ impl IndexedLayer {
                 &self.palette,
                 &texture,
                 &self.camera,
+                &self.lighting,
             );
             self.atlas = Some(Arc::clone(atlas));
             bytes[2] = atlas.rgba().len();
@@ -218,6 +237,7 @@ impl IndexedLayer {
                 continue;
             }
             let rect = image.rect(index);
+            self.lighting.invalidate(rect);
             let mut target = self.cells.as_image_copy();
             target.origin = wgpu::Origin3d {
                 x: rect.x as u32,

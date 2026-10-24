@@ -144,6 +144,26 @@ PowerShell起動では `artifacts/local/` に時刻付きCSVとRustバージョ�
 
 現在の動きは空・静止・粉体・液体。`Material.density`は相対密度で、重い粉体/液体は下の軽い液体を押しのける。足場/弾の判定は密度と独立。独自の反応ルールや汎用plugin依存解決はまだ実装していない。見た目は別の[material_view.rs](../samples/sandbox/src/material_view.rs)で素材キーへ割り当てる。壁の繰り返し画像と灰の3フレームアニメーションを共通描画基盤へ渡し、物質の休止/停止を解除せずに表示を更新する。
 
+## 地形の照明
+
+```bash
+cargo run --locked -p charon-sandbox -- --lighting-scene --fluid-backend cpu
+```
+
+Windowsは`.\scripts\run.ps1 -LightingScene -FluidBackend cpu`。通常の探索等へ照明を加える場合は`--lighting`またはPowerShellの`-Lighting`を使う。7で発光ブロックの配置（左）/消去（右）、3で壁、1でブラシ、右ボタンで削除、`[`/`]`で円形ブラシの直径、Vで照明のON/OFF、Pで物質更新を停止する。照明は停止中の明示編集にも追従する。サンプルでは鉱石の素材IDを発光ブロックとして扱うため、通常の生成マップで有効にすると鉱石も発光する。
+
+![塊の内部の暗さと、穴を通る光・発光ブロックの配置](media/lighting-linux.gif)
+
+描画画素とは別のセル解像度で光マップを作り、見える32×32セルの区画だけ更新する。固体は近い露出面からの深さで暗くなる。光源から対象セルまでは格子をたどり、壁で遮光・透過素材で減衰する。1 pixelの壁・穴・斜めの角をGPU画素で検証する。地形編集は光が届く範囲まで更新を予約し、画面外の編集も画面内の影へ反映する。静止時は照明のcompute dispatchが0になる。物質の移動/休止や当たり判定は照明から変更しない。
+
+部品の入口は`charon_render::{Lighting, LightMaterial, PointLight}`と`set_lighting`。ゲームが素材ごとの発光RGB/不透明度、光源の位置/RGB/半径、環境光、内部の暗さを渡す。今回の範囲は地形の直接光と内部の陰影。反射光の多重反射、広域の太陽光、ぼかした半影、スプライトへの照明はまだ含まない。半径は最大128セル、内部の探索は最大16セル。この版のGPU入力は32光源までで、サンプルは画面付近の近い32個を選ぶ。4×4範囲の発光pixelを1光源へまとめ、選外数はHUD/CSVのOMIT/lighting_omittedに表示する。32個はゲーム全体の保存可能数を意味しない。
+
+`lighting_cells`/`lighting_dispatches`はCSV計測区間内の更新量。`lighting_gpu_ms`は非同期に取得した直近の完了computeのGPU時間で、その行の描画時間ではない。未対応のadapterは空欄/HUDのN/A。通常描画では光マップをCPUへ読み戻さず、時間計測用の16 byteだけを読む。ソフトウェアGPUの値をRTX 4060の性能の証拠にはしない。
+
+`python3 scripts/capture-linux.py --sample lighting`で実入力・実描画・1 pixelの開口/再閉鎖・発光ブロックの追加/除去・静止時再利用・物質入力再生を確認する。`cargo test -p charon-render --test lighting_gpu -- --ignored --nocapture`は画像ファイルを残さず、GPUの遮光/透過/内部/光源移動/画面外編集/再利用を検証する。Windows実機の動作・144 FPS/60 Hzは未確認。
+
+参考コードも手元で確認した。[FallingSandEngineの光マップ準備](https://github.com/PieKing1215/FallingSandEngine/blob/8ea0463b858105277000bd562e4cf638cfdca32f/gamedir/assets/data/shaders/lighting_prep.comp)・[伝播](https://github.com/PieKing1215/FallingSandEngine/blob/8ea0463b858105277000bd562e4cf638cfdca32f/gamedir/assets/data/shaders/lighting_propagate.comp)と[更新条件](https://github.com/PieKing1215/FallingSandEngine/blob/8ea0463b858105277000bd562e4cf638cfdca32f/fs_client/src/world/chunk.rs#L493)から、光マップの再利用・隣接領域への影響を参照。[FallingSandSurvivalのnewLighting.frag](https://github.com/PieKing1215/FallingSandSurvival/blob/9b64a9f69e3f6293691f6496c6c4934e9ca1f724/FallingSandSurvival/data/shaders/newLighting.frag)は周囲の遮蔽と発光を方向/距離でサンプリングする。[rust-sandboxのshade_blood](https://github.com/Hugo-Dz/rust-sandbox/blob/main/rust/src/blood.rs)は隣接粒に応じて画像を切り替えるCPU処理で、Bevyのスプライト描画を使う。Charonの格子レイとWGSLは独自実装。
+
 ## 流体テスト
 
 SandboxでLを押すと左に海、右に砂の岸を作る。1で砂を選び、海の上の空中に左ボタンを押し続けて大量に落とす。5で水、6で油を選べる。画面にはSAND/LIQUIDのセル数とACTIVE区画数を表示する。素材ブラシは既存セルを置き換える編集操作なので、水中へ直接描く場合はその水を置換する。砂による押しのけを試すときは空中から投入する。

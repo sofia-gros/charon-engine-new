@@ -4,6 +4,12 @@ struct Palette { entries: array<Appearance, 256> };
 @group(0) @binding(1) var<uniform> palette: Palette;
 @group(0) @binding(3) var<uniform> camera: vec4<f32>;
 @group(0) @binding(2) var atlas: texture_2d<f32>;
+@group(0) @binding(4) var lighting: texture_2d<f32>;
+@group(0) @binding(5) var<uniform> lighting_enabled: vec4<u32>;
+fn shade(color: vec4<f32>, pixel: vec2<i32>) -> vec4<f32> {
+    if lighting_enabled.x == 0u { return color; }
+    return vec4(color.rgb * textureLoad(lighting,pixel,0).rgb,color.a);
+}
 struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> };
 @vertex fn vs_main(@builtin(vertex_index) i: u32) -> Out {
     let p = array(vec2(-1.,-1.),vec2(3.,-1.),vec2(-1.,3.))[i];
@@ -19,8 +25,8 @@ struct Out { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> 
     let material = textureLoad(indices,pixel,0).r;
     let look = palette.entries[material];
     let color = vec4<f32>(look.color)/255.;
-    if look.rect.z == 0u { return color; }
+    if look.rect.z == 0u { return shade(color,pixel); }
     let uv = vec2<u32>(pixel)%look.rect.zw+look.rect.xy;
     let texel = textureLoad(atlas,vec2<i32>(uv),0);
-    return vec4(texel.rgb*texel.a+color.rgb*(1.-texel.a),color.a);
+    return shade(vec4(texel.rgb*texel.a+color.rgb*(1.-texel.a),color.a),pixel);
 }
