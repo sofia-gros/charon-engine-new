@@ -55,7 +55,7 @@ jobs:
         run: cargo run --locked -p charon-m3-sample --no-default-features -- --smoke-test
       - name: Install Linux GPU window test dependencies
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0
       - name: Linux GPU shader diagnostics and resize
         if: runner.os == 'Linux'
         env:

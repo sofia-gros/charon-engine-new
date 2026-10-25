@@ -13,7 +13,7 @@
 
 ## アセットとGPU
 
-`Assets<Image>::load(path, Image::decode)` はPNGをRGBAへ、`Assets<ShaderSource>::load(path, ShaderSource::decode)` はUTF-8のソースへ変換します。`get(handle)` は `Arc<T>` を返します。`unload(handle)` 以降、同じスロットを再利用しても旧ハンドルは無効です。既存のArcを持つ処理は読み終えられます。`drain_events()` で Loaded / Unloaded / Failed を取り出します。
+`Assets<Image>::load(path, Image::decode)` はPNGをRGBAへ、`Assets<ShaderSource>::load(path, ShaderSource::decode)` はUTF-8のソースへ変換します。`get(handle)` は `Arc<T>` を返します。`unload(handle)` 以降、同じスロットを再利用しても旧ハンドルは無効です。ハンドルは生成元のストアだけで有効で、別ストアへ渡しても参照・解放できません。プロセス内の識別子であり、保存ファイル用の永続IDではありません。アセット型にEq・Hashの実装がなくてもハンドルを比較・ハッシュ化できます。既存のArcを持つ処理は読み終えられます。`drain_events()` で Loaded / Unloaded / Failed を取り出します。
 
 読み込みは呼び出し元スレッドで同期的に行います。起動時、またはアセット用workerで実行してください。ファイル監視・非同期ロード・ホットリロードは今後の対象です。
 

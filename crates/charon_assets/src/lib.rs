@@ -1,12 +1,40 @@
 //! CPU assets. Handles do not own GPU resources; unloading invalidates stale handles.
 use charon_core::{Plugin, PluginResult, World};
-use std::{marker::PhantomData, path::Path, sync::Arc};
+use std::{
+    marker::PhantomData,
+    path::Path,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
+};
+static NEXT_STORE: AtomicU64 = AtomicU64::new(1);
 
-#[derive(Debug, PartialEq, Eq, Hash)]
 pub struct Handle<T> {
+    store: u64,
     slot: usize,
     generation: u64,
     marker: PhantomData<fn() -> T>,
+}
+impl<T> PartialEq for Handle<T> {
+    fn eq(&self, other: &Self) -> bool {
+        (self.store, self.slot, self.generation) == (other.store, other.slot, other.generation)
+    }
+}
+impl<T> Eq for Handle<T> {}
+impl<T> std::hash::Hash for Handle<T> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        std::hash::Hash::hash(&(self.store, self.slot, self.generation), state);
+    }
+}
+impl<T> std::fmt::Debug for Handle<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("Handle")
+            .field(&self.store)
+            .field(&self.slot)
+            .field(&self.generation)
+            .finish()
+    }
 }
 impl<T> Copy for Handle<T> {}
 impl<T> Clone for Handle<T> {
@@ -25,12 +53,16 @@ struct Entry<T> {
     value: Option<Arc<T>>,
 }
 pub struct Assets<T> {
+    store: u64,
     entries: Vec<Entry<T>>,
     events: Vec<AssetEvent>,
 }
 impl<T> Default for Assets<T> {
     fn default() -> Self {
         Self {
+            store: NEXT_STORE
+                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
+                .expect("asset store IDs exhausted"),
             entries: Vec::new(),
             events: Vec::new(),
         }
@@ -53,12 +85,16 @@ impl<T> Assets<T> {
         entry.value = Some(Arc::new(value));
         self.events.push(AssetEvent::Loaded { slot });
         Handle {
+            store: self.store,
             slot,
             generation: entry.generation,
             marker: PhantomData,
         }
     }
     pub fn get(&self, handle: Handle<T>) -> Option<Arc<T>> {
+        if handle.store != self.store {
+            return None;
+        }
         self.entries
             .get(handle.slot)
             .filter(|e| e.generation == handle.generation)?
@@ -67,6 +103,9 @@ impl<T> Assets<T> {
     }
     /// Existing Arc readers may finish; this handle can never access a replacement.
     pub fn unload(&mut self, handle: Handle<T>) -> bool {
+        if handle.store != self.store {
+            return false;
+        }
         let Some(entry) = self
             .entries
             .get_mut(handle.slot)
@@ -193,5 +232,21 @@ mod tests {
             Some(AssetEvent::Failed { .. })
         ));
         assert!(Image::new(u32::MAX, u32::MAX, vec![]).is_err());
+    }
+    #[test]
+    fn handles_are_store_scoped_and_hashable_without_asset_trait_bounds() {
+        struct Opaque(u8);
+        let mut first = Assets::default();
+        let mut second = Assets::default();
+        let a = first.insert(Opaque(4));
+        let b = second.insert(Opaque(7));
+        assert_ne!(a, b);
+        assert!(second.get(a).is_none());
+        assert!(!second.unload(a));
+        assert_eq!(second.get(b).unwrap().0, 7);
+        let mut lookup = std::collections::HashMap::new();
+        lookup.insert(a, "first");
+        lookup.insert(b, "second");
+        assert_eq!(lookup.len(), 2);
     }
 }
