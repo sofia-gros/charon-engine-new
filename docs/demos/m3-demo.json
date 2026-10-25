@@ -1,0 +1,46 @@
+{
+  "milestone": "m3",
+  "status": "M3 complete",
+  "sample_commit": "ae4449f1955c49f1d5e4f50212b7b322996dfe45",
+  "recorded_at": "2026-10-25T15:32:13+09:00",
+  "environment": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m3-sample",
+  "gif_fps": 12,
+  "gif_width": 768,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Move right and collect first gem (D)"
+    },
+    {
+      "seconds": 1.82,
+      "action": "Break sand tile (LMB)"
+    },
+    {
+      "seconds": 2.3,
+      "action": "Select water tile (3)"
+    },
+    {
+      "seconds": 2.48,
+      "action": "Place water tile (RMB)"
+    },
+    {
+      "seconds": 2.56,
+      "action": "Custom shader parameters (L)"
+    },
+    {
+      "seconds": 3.34,
+      "action": "Open stone platform (G)"
+    },
+    {
+      "seconds": 3.52,
+      "action": "Break all sand/water blocks (B)"
+    },
+    {
+      "seconds": 5.7,
+      "action": "Restore shader parameters (L)"
+    }
+  ]
+}
