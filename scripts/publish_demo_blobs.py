@@ -27,9 +27,5 @@ for stem in ["m4-demo", "m4-tilemap-demo"]:
         if len(data) > 5 * 1024 * 1024:
             raise SystemExit("Demo exceeds the 5 MiB recording budget")
         entry = {"path": str(path), "sha": upload(data), "bytes": len(data), "sha256": hashlib.sha256(data).hexdigest()}
-        # Small immutable transport parts let clients retrieve large GIFs through
-        # text-only Git Data APIs; the final tree references the full blob.
-        if len(data) > 384000:
-            entry["chunks"] = [{"sha": upload(data[i:i+262144]), "bytes": len(data[i:i+262144])} for i in range(0,len(data),262144)]
         manifest["files"].append(entry)
 print("CHARON_DEMO_BLOBS " + json.dumps(manifest, separators=(",", ":")))

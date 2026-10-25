@@ -51,6 +51,6 @@ python scripts/check_m4_dependencies.py
 
 `--gpu-check` は実ウィンドウでCompute結果とCPU参照値、照明テクスチャの共有・合成、リサイズ、描画を確認して終了します。`charon-lighting-check` はウィンドウを開かず、42ケースの数値比較と、指定時にはCPU/GPUのPNG比較を行います。
 
-[照明API](../../docs/lighting-api.md) / [計測と制約](../../docs/performance/m4-lighting.md)
+[照明API](../../docs/lighting-api.md) / [計測と制約](../../docs/performance/m4-lighting.md) / [連携GIF](../../docs/demos/m4-demo.gif) / [Tilemap単体GIF](../../docs/demos/m4-tilemap-demo.gif)
 
 Windows 11実機での表示・入力は未確認です。操作GIFはLinux GitHub Actions / Xvfbの実ウィンドウとXTest入力で録画し、ソースのコミットと操作を同名JSONへ記録します。

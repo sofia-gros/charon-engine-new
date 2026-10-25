@@ -8,6 +8,8 @@
 | [M2](./m2-demo.gif) / [録画情報](./m2-demo.json) | 砂・水・雲・窒素・土、障壁解除、砂への変換、安息角変更 | M2実装完了 |
 | [M3](./m3-demo.gif) / [録画情報](./m3-demo.json) | 宝石取得、タイルの設置・破壊、砂・水への変換、Shader設定 | M3実装完了 |
 | [M3 Tilemap](./m3-tilemap-demo.gif) / [録画情報](./m3-tilemap-demo.json) | 同じ操作をFalling Sandなしで実行 | M3単体利用例 |
+| [M4](./m4-demo.gif) / [録画情報](./m4-demo.json) | 松明、発光鉱石、火、通路の開閉、AO、照明合成 | M4実装完了 |
+| [M4 Tilemap](./m4-tilemap-demo.gif) / [録画情報](./m4-tilemap-demo.json) | 同じ照明をFalling Sandなしで実行 | M4単体利用例 |
 
 現在のGIFはLinux / Xvfb上で実際のネイティブウィンドウを表示し、XTestでキー・マウス操作を送り、ffmpegの画面キャプチャで録画したものです。プログラムで生成したフレームの合成ではありません。Windows 11実機の操作確認とは区別してください。
 
@@ -30,11 +32,13 @@ GIFは768px程度の幅・12fps程度を目安にし、短い操作列に絞り�
 Xvfb、ffmpeg、libX11、libXtstとPython 3を用意します。録画スクリプト自体には追加のPythonパッケージは不要です。
 
 ```sh
-cargo build --release -p charon-m1-sample -p charon-m2-sample -p charon-m3-sample
+cargo build --release -p charon-m1-sample -p charon-m2-sample -p charon-m3-sample -p charon-m4-sample
 python scripts/record_milestone.py m1
 python scripts/record_milestone.py m2
 python scripts/record_milestone.py m3
 python scripts/record_milestone.py m3-tilemap
+python scripts/record_milestone.py m4
+python scripts/record_milestone.py m4-tilemap
 python scripts/check_demo_assets.py
 ```
 
@@ -47,3 +51,5 @@ python scripts/record_milestone.py m1 --xvfb /path/to/Xvfb --display :97
 使用中のディスプレイは選ばないでください。スクリプトは専用Xvfbとサンプルを起動し、キー・マウス操作、キャプチャ、GIF変換を行って終了します。サンプルの操作やウィンドウ名を変更した場合は、録画手順も更新します。
 
 Windowsで録画した場合も同じGIF・JSON構成で保存し、録画環境を正しく記録してください。Windows 11でのサンプル起動コマンドは各サンプルのREADMEにあります。
+
+M4の初回録画は、3OSの検証後にGitHub Actionsの専用jobでも実行します。CIは実ウィンドウの録画をartifactとimmutableなGit blobへ保存し、ブランチを更新しません。録画内容を確認してから、README・ROADMAPと一緒にGitツリーへ追加します。既存のM4 GIFがあるpushではCI録画を省略します。再録画する場合は上のLinuxコマンドを使います。

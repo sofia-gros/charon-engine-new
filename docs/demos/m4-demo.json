@@ -1,0 +1,62 @@
+{
+  "milestone": "m4",
+  "status": "M4 complete",
+  "sample_commit": "2c92f3e9f4c1a172528ddee93b13f0e7cea31d01",
+  "recorded_at": "2026-10-25T16:45:47+09:00",
+  "environment": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m4-sample",
+  "gif_fps": 10,
+  "gif_width": 640,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Move torch with player and collect gem (D)"
+    },
+    {
+      "seconds": 1.42,
+      "action": "Disable carried torch (T)"
+    },
+    {
+      "seconds": 2.2,
+      "action": "Disable emitting ore (O)"
+    },
+    {
+      "seconds": 2.98,
+      "action": "Restore torch and ore"
+    },
+    {
+      "seconds": 3.35,
+      "action": "Spawn emitting fire particles (F)"
+    },
+    {
+      "seconds": 3.53,
+      "action": "Open passage (G)"
+    },
+    {
+      "seconds": 3.71,
+      "action": "Break sand/water blocks (B)"
+    },
+    {
+      "seconds": 4.69,
+      "action": "Close passage and invalidate light (G)"
+    },
+    {
+      "seconds": 4.87,
+      "action": "Disable AO (V)"
+    },
+    {
+      "seconds": 5.45,
+      "action": "Restore AO (V)"
+    },
+    {
+      "seconds": 5.63,
+      "action": "Disable lighting composition (L)"
+    },
+    {
+      "seconds": 6.31,
+      "action": "Restore lighting (L)"
+    }
+  ]
+}
