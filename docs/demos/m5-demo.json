@@ -1,0 +1,58 @@
+{
+  "milestone": "m5",
+  "status": "M5 complete",
+  "sample_commit": "375a8e9acffe3582bfedde9c58c8bfbd8e04c093",
+  "recorded_at": "2026-10-25T22:08:09+09:00",
+  "environment": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m5-sample",
+  "gif_fps": 10,
+  "gif_width": 640,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Start game scene (Enter)"
+    },
+    {
+      "seconds": 1.58,
+      "action": "Move player (D)"
+    },
+    {
+      "seconds": 1.93,
+      "action": "Pan camera right (ArrowRight)"
+    },
+    {
+      "seconds": 2.28,
+      "action": "Zoom camera at pointer (E)"
+    },
+    {
+      "seconds": 2.74,
+      "action": "Dig through transformed viewport (LMB)"
+    },
+    {
+      "seconds": 3.23,
+      "action": "Fit whole world (Space)"
+    },
+    {
+      "seconds": 3.41,
+      "action": "Release sand/water blocks (B)"
+    },
+    {
+      "seconds": 4.29,
+      "action": "Restart scene and resources (R)"
+    },
+    {
+      "seconds": 4.87,
+      "action": "Return to menu (Tab)"
+    },
+    {
+      "seconds": 5.45,
+      "action": "Open tilemap-only scene (T)"
+    },
+    {
+      "seconds": 6.13,
+      "action": "Return to menu (Tab)"
+    }
+  ]
+}

@@ -16,7 +16,7 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-M4までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。共通光学データを入力とする照明のCPU参照・GPU計算・描画合成も分離しています。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
+M5までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。共通光学データを入力とする照明のCPU参照・GPU計算・描画合成も分離しています。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
 
 | 機能 | 状況 |
 | --- | --- |
@@ -30,7 +30,7 @@ M4までの基盤を実装しています。Core、独立した物理ライブ�
 | Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
 | 共通光学データ、遮光・伝播・AO・発光、独立したGPU計算と描画合成 | M4実装済み |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
-| Input、Cameraの移動・ズーム・逆変換、Sceneとリソース所有権 | M5実装・完了検証中 |
+| Input、Cameraの移動・ズーム・逆変換、Sceneとリソース所有権 | M5実装済み |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
 | Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
 
@@ -84,7 +84,7 @@ cargo run --release -p charon-m3-sample
 cargo run --release -p charon-m3-sample --no-default-features
 ```
 
-WASDで移動して宝石を集め、左クリックで破壊、右クリックで設置します。Gで床を開き、Bで砂・水のブロックを粒子へ変換できます。LはカスタムShaderのパラメータ切り替えです。粒子を覆う固体の設置は拒否し、変換規則と追加の設置制約はゲーム側で定義できます。ライティング基盤は次のM4で実装します。
+WASDで移動して宝石を集め、左クリックで破壊、右クリックで設置します。Gで床を開き、Bで砂・水のブロックを粒子へ変換できます。LはカスタムShaderのパラメータ切り替えです。粒子を覆う固体の設置は拒否し、変換規則と追加の設置制約はゲーム側で定義できます。ライティング基盤はM4で追加しています。
 
 ### M4：独立したライティング基盤
 
@@ -105,6 +105,12 @@ cargo run --release -p charon-m4-sample --no-default-features --features lightin
 
 ### M5：Input・Camera・Scene
 
+![M5：開始画面・カメラ移動とズーム・掘削・シーン再開始](./docs/demos/m5-demo.gif)
+
+![M5：Falling Sandを使わないTilemapシーン](./docs/demos/m5-tilemap-demo.gif)
+
+[連携録画情報](./docs/demos/m5-demo.json) / [Tilemap単体録画情報](./docs/demos/m5-tilemap-demo.json)
+
 [Scene Lab](./samples/m5-scene-lab/README.md)では、開始画面とゲームの切り替え、Cameraの移動・ズーム、変換後の地形編集、Scene再開始を確認できます。旧Sceneのworkerを停止し、入力・アセット・GPUリソースを解放します。
 
 ```sh
@@ -112,7 +118,7 @@ cargo run --release -p charon-m5-sample
 cargo run --release -p charon-m5-sample --no-default-features --features lighting
 ```
 
-[Input / Camera / Scene API](./docs/input-camera-scene-api.md)。現在は完了検証と操作GIFの反映を進めています。
+[Input / Camera / Scene API](./docs/input-camera-scene-api.md)。Enterで開始、矢印でCamera移動、Q/E・ホイールでズーム、クリックで編集、Rで再開始、Tabでメニューへ戻ります。
 
 ## 開発環境
 
@@ -131,7 +137,7 @@ Edition 2024に対応した最新のstable Rustを使用してください。ゲ
 
 [M3のAssets / Tilemap / Rendering / Bridge API](./docs/m3-api.md)と、[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon-core` は物理・描画・ウィンドウに依存しません。
 
-APIドキュメントは `cargo doc --no-deps --open` で確認できます。Camera / Scene や Plugins のAPIは、実装に合わせて整備していきます。
+APIドキュメントは `cargo doc --no-deps --open` で確認できます。Input / Camera / SceneのAPIと所有権は[専用ドキュメント](./docs/input-camera-scene-api.md)に記載しています。
 
 ## コントリビュート
 

@@ -59,3 +59,23 @@ smokeは入力からの掘削、再開始時のworld/Camera/照明設定の初�
 実操作GIFはLinux GitHub Actions / Xvfb上で、XTestのキー・マウス入力を使って録画します。Windows 11実機での表示・入力は未確認です。
 
 [Input / Camera / Scene APIと所有権](../../docs/input-camera-scene-api.md)
+
+## M5実装事例
+
+![連携Sceneの入力・Camera・再開始](../../docs/demos/m5-demo.gif)
+
+![Tilemap単体のScene](../../docs/demos/m5-tilemap-demo.gif)
+
+[連携録画情報](../../docs/demos/m5-demo.json) / [Tilemap単体録画情報](../../docs/demos/m5-tilemap-demo.json)
+
+Windows・macOS・LinuxのCIでテストとリリースビルドを確認し、Linuxでは上記3構成のネイティブGPU確認も実行しています。Windows 11実機での操作確認は未実施です。
+
+## Windows 11実機での確認項目
+
+- [ ] Enterで開始し、WASDで移動して宝石を取得できる。
+- [ ] 矢印・Q/E・ホイールでCameraを動かしても、地形・粒子・照明の位置が一致する。
+- [ ] ズーム後もクリックしたタイルを編集でき、ヘッダー・フッターのクリックでは掘削しない。
+- [ ] Rで地形・Camera・照明設定が初期化され、Tabでメニューに戻る。
+- [ ] 再開始・メニュー復帰を繰り返しても旧Sceneの入力や更新が残らない。
+- [ ] フォーカスを外して戻った時にキーやマウスの押しっぱなしが残らない。
+- [ ] 依存を除いた2つのコマンドでも、同じ入力・Camera・Scene操作を使える。
