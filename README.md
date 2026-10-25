@@ -16,7 +16,7 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-M5までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。共通光学データを入力とする照明のCPU参照・GPU計算・描画合成も分離しています。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
+M6までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。共通光学データを入力とする照明のCPU参照・GPU計算・描画合成も分離しています。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
 
 | 機能 | 状況 |
 | --- | --- |
@@ -29,7 +29,7 @@ M5までの基盤を実装しています。Core、独立した物理ライブ�
 | Assets Plugin、型付きハンドル、PNG・Shaderソースの読み込み・解放 | M3実装済み |
 | Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
 | 共通光学データ、遮光・伝播・AO・発光、独立したGPU計算と描画合成 | M4実装済み |
-| 低レベルAPIと任意のcharon_engine、起動設定・Pluginセット・Sceneカタログ | M6実装・完了検証中 |
+| 低レベルAPIと任意のcharon_engine、起動設定・Pluginセット・Sceneカタログ | M6実装済み |
 | Input、Cameraの移動・ズーム・逆変換、Sceneとリソース所有権 | M5実装済み |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
 | Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
@@ -122,6 +122,12 @@ cargo run --release -p charon-m5-sample --no-default-features --features lightin
 
 ### M6：低レベルAPI / 高レベルAPI
 
+![M6：高レベルAPIでの照明取得・カメラ操作・掘削・Scene再開始](./docs/demos/m6-demo.gif)
+
+![M6：同じゲームを低レベルAPIで構成](./docs/demos/m6-low-demo.gif)
+
+[高レベル版録画情報](./docs/demos/m6-demo.json) / [低レベル版録画情報](./docs/demos/m6-low-demo.json)
+
 [API Lab](./samples/m6-api-lab/README.md)では、同じゲームを個別部品の直接登録と `charon_engine` の構成APIで起動できます。起動設定・Pluginセット・Sceneカタログを利用し、高レベルAPIからもApp・Worldを直接操作できます。
 
 ```sh
@@ -129,7 +135,7 @@ cargo run --release -p charon-m6-sample -- --api high
 cargo run --release -p charon-m6-sample -- --api low
 ```
 
-Uでワールド座標の照明を取得し、Zで照明解像度を切り替えます。[公開APIと移行ガイド](./docs/api-guide.md) / [Feature一覧](./crates/charon_engine/README.md)。現在は完了検証と操作GIFの反映を進めています。
+Uでワールド座標の照明を取得し、Zで照明解像度を切り替えます。[公開APIと移行ガイド](./docs/api-guide.md) / [Feature一覧](./crates/charon_engine/README.md)。HIGH/LOWは同じworld・ゲームロジックを使い、Falling Sandや照明を依存から除いた構成でも動きます。
 
 ## 開発環境
 

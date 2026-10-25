@@ -43,3 +43,13 @@ smokeはHIGH/LOWの初期world・Cameraの一致に加え、それぞれの入�
 - [ ] Falling Sandなし／照明なしでも起動できる。
 
 [公開API・移行ガイド](../../docs/api-guide.md) / [charon_engine Feature一覧](../../crates/charon_engine/README.md)
+
+## M6実装事例
+
+![高レベルAPIでのゲーム操作](../../docs/demos/m6-demo.gif)
+
+![低レベルAPIでのゲーム操作](../../docs/demos/m6-low-demo.gif)
+
+[高レベル版の録画情報](../../docs/demos/m6-demo.json) / [低レベル版の録画情報](../../docs/demos/m6-low-demo.json)
+
+Windows・macOS・LinuxのCIでテスト・APIドキュメント・リリースビルドを確認しています。LinuxではHIGH/LOWのGPU動作とworld照明取得、Falling Sandなし・照明なしの構成も確認しています。Windows 11実機の表示・操作は未確認です。

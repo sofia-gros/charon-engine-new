@@ -12,6 +12,8 @@
 | [M4 Tilemap](./m4-tilemap-demo.gif) / [録画情報](./m4-tilemap-demo.json) | 同じ照明をFalling Sandなしで実行 | M4単体利用例 |
 | [M5](./m5-demo.gif) / [録画情報](./m5-demo.json) | 開始画面、Camera移動・ズーム、座標変換した掘削、再開始、メニュー復帰 | M5実装完了 |
 | [M5 Tilemap](./m5-tilemap-demo.gif) / [録画情報](./m5-tilemap-demo.json) | 同じInput・Camera・SceneをFalling Sandなしで実行 | M5単体利用例 |
+| [M6 HIGH](./m6-demo.gif) / [録画情報](./m6-demo.json) | 高レベル構成APIで照明取得、Camera、掘削、再開始 | M6実装完了 |
+| [M6 LOW](./m6-low-demo.gif) / [録画情報](./m6-low-demo.json) | 同じゲームを直接APIで構成し、同じ操作を実行 | M6比較例 |
 
 現在のGIFはLinux / Xvfb上で実際のネイティブウィンドウを表示し、XTestでキー・マウス操作を送り、ffmpegの画面キャプチャで録画したものです。プログラムで生成したフレームの合成ではありません。Windows 11実機の操作確認とは区別してください。
 
@@ -34,7 +36,7 @@ GIFは768px程度の幅・12fps程度を目安にし、短い操作列に絞り�
 Xvfb、ffmpeg、libX11、libXtstとPython 3を用意します。録画スクリプト自体には追加のPythonパッケージは不要です。
 
 ```sh
-cargo build --release -p charon-m1-sample -p charon-m2-sample -p charon-m3-sample -p charon-m4-sample -p charon-m5-sample
+cargo build --release -p charon-m1-sample -p charon-m2-sample -p charon-m3-sample -p charon-m4-sample -p charon-m5-sample -p charon-m6-sample
 python scripts/record_milestone.py m1
 python scripts/record_milestone.py m2
 python scripts/record_milestone.py m3
@@ -43,6 +45,8 @@ python scripts/record_milestone.py m4
 python scripts/record_milestone.py m4-tilemap
 python scripts/record_milestone.py m5
 python scripts/record_milestone.py m5-tilemap
+python scripts/record_milestone.py m6
+python scripts/record_milestone.py m6-low
 python scripts/check_demo_assets.py
 ```
 
@@ -56,4 +60,4 @@ python scripts/record_milestone.py m1 --xvfb /path/to/Xvfb --display :97
 
 Windowsで録画した場合も同じGIF・JSON構成で保存し、録画環境を正しく記録してください。Windows 11でのサンプル起動コマンドは各サンプルのREADMEにあります。
 
-M4・M5の初回録画は、3OSの検証後にGitHub Actionsの専用jobでも実行します。CIは実ウィンドウの録画をartifactとimmutableなGit blobへ保存し、ブランチを更新しません。録画内容を確認してから、README・ROADMAPと一緒にGitツリーへ追加します。対象のGIFが既にあるpushでは、そのMのCI録画を省略します。再録画する場合は上のLinuxコマンドを使います。
+M4〜M6の初回録画は、3OSの検証後にGitHub Actionsの専用jobでも実行します。CIは実ウィンドウの録画をartifactとimmutableなGit blobへ保存し、ブランチを更新しません。録画内容を確認してから、README・ROADMAPと一緒にGitツリーへ追加します。対象のGIFが既にあるpushでは、そのMのCI録画を省略します。再録画する場合は上のLinuxコマンドを使います。

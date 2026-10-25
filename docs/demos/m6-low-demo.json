@@ -1,0 +1,70 @@
+{
+  "milestone": "m6-low",
+  "status": "M6 low-level API example",
+  "sample_commit": "4ce3e44eaf2c6ff34b805732500b6db91d14a8cf",
+  "recorded_at": "2026-10-26T07:24:05+09:00",
+  "environment": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m6-sample -- --api low",
+  "gif_fps": 10,
+  "gif_width": 640,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Start game scene (Enter)"
+    },
+    {
+      "seconds": 1.58,
+      "action": "Sample GPU light at world (252,132) (U)"
+    },
+    {
+      "seconds": 2.06,
+      "action": "Change lighting resolution (Z)"
+    },
+    {
+      "seconds": 2.24,
+      "action": "Resample light through selected API (U)"
+    },
+    {
+      "seconds": 2.72,
+      "action": "Move player (D)"
+    },
+    {
+      "seconds": 3.08,
+      "action": "Pan camera right (ArrowRight)"
+    },
+    {
+      "seconds": 3.43,
+      "action": "Zoom camera at pointer (E)"
+    },
+    {
+      "seconds": 3.89,
+      "action": "Dig through transformed viewport (LMB)"
+    },
+    {
+      "seconds": 4.37,
+      "action": "Fit whole world (Space)"
+    },
+    {
+      "seconds": 4.55,
+      "action": "Release sand/water blocks (B)"
+    },
+    {
+      "seconds": 5.43,
+      "action": "Restart scene and resources (R)"
+    },
+    {
+      "seconds": 6.01,
+      "action": "Return to menu (Tab)"
+    },
+    {
+      "seconds": 6.59,
+      "action": "Open tilemap-only scene (T)"
+    },
+    {
+      "seconds": 7.27,
+      "action": "Return to menu (Tab)"
+    }
+  ]
+}
