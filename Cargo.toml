@@ -1,0 +1,46 @@
+[package]
+name = "sandengine"
+version = "0.2.0"
+edition = "2024"
+license = "MIT"
+description = "A research-grade 2D falling-sand cellular automaton in Rust + wgpu"
+repository = "https://github.com/sofia-gros/charon-engine-new"
+readme = "README.md"
+keywords = ["cellular-automaton", "falling-sand", "wgpu", "simulation", "rust"]
+categories = ["graphics", "simulation", "game-development"]
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+panic = "abort"
+
+[profile.bench]
+opt-level = 3
+lto = "thin"
+
+[dependencies]
+bytemuck = { version = "1.25.0", features = ["derive"] }
+egui = "0.34.2"
+egui-wgpu = "0.34.2"
+egui-winit = "0.34.2"
+glam = "0.32.1"
+pollster = "0.4.0"
+rand = "0.10.1"
+wgpu = "29.0.3"
+winit = "0.30.13"
+
+[dev-dependencies]
+criterion = { version = "0.7", features = ["html_reports"] }
+
+[[bench]]
+name = "sim"
+harness = false
+
+[lib]
+name = "sandengine"
+path = "src/lib.rs"
+
+[[bin]]
+name = "sandengine"
+path = "src/main.rs"
