@@ -18,6 +18,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
+    "m4": ("charon-m4-sample", "Charon M4 / Cave Light", "M4 complete"),
+    "m4-tilemap": ("charon-m4-sample", "Charon M4 / Cave Light", "M4 tilemap-only lighting example"),
     "m3": ("charon-m3-sample", "Charon M3 / World Lab", "M3 complete"),
     "m3-tilemap": ("charon-m3-sample", "Charon M3 / World Lab", "M3 tilemap-only example"),
     "m2": ("charon-m2-sample", "Charon M2 / Falling Sand Lab", "M2 complete"),
@@ -141,7 +143,7 @@ def record(milestone,output,xvfb,display):
                         time.sleep(0.1)
                 if connection is None:
                     raise RuntimeError("Xvfb did not become ready")
-                app_args = ["--tilemap-only"] if milestone == "m3-tilemap" else []
+                app_args = ["--tilemap-only"] if milestone in ("m3-tilemap", "m4-tilemap") else []
                 app = subprocess.Popen([str(executable), *app_args],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
                 window = None
                 for _ in range(100):
@@ -176,6 +178,26 @@ def record(milestone,output,xvfb,display):
                     action("Resume (P)",lambda:connection.key("p"))
                     action("Restart (R)",lambda:connection.key("r"))
                     time.sleep(0.8)
+                elif milestone.startswith("m4"):
+                    action("Move torch with player and collect gem (D)",lambda:connection.key("d",0.52))
+                    action("Disable carried torch (T)",lambda:connection.key("t"))
+                    time.sleep(0.6)
+                    action("Disable emitting ore (O)",lambda:connection.key("o"))
+                    time.sleep(0.6)
+                    action("Restore torch and ore",lambda:(connection.key("t"),connection.key("o")))
+                    if milestone == "m4":
+                        action("Spawn emitting fire particles (F)",lambda:connection.key("f"))
+                    action("Open passage (G)",lambda:connection.key("g"))
+                    action("Break sand/water blocks (B)",lambda:connection.key("b"))
+                    time.sleep(0.8)
+                    action("Close passage and invalidate light (G)",lambda:connection.key("g"))
+                    action("Disable AO (V)",lambda:connection.key("v"))
+                    time.sleep(0.4)
+                    action("Restore AO (V)",lambda:connection.key("v"))
+                    action("Disable lighting composition (L)",lambda:connection.key("l"))
+                    time.sleep(0.5)
+                    action("Restore lighting (L)",lambda:connection.key("l"))
+                    time.sleep(0.6)
                 elif milestone.startswith("m3"):
                     action("Move right and collect first gem (D)",lambda:connection.key("d",0.52))
                     time.sleep(0.4)
@@ -223,7 +245,9 @@ def record(milestone,output,xvfb,display):
                 app.wait(timeout=5)
                 if app.returncode:
                     raise RuntimeError("sample did not shut down successfully")
-                filters = "fps=12,scale=768:-1:flags=lanczos"
+                gif_fps = 10 if milestone.startswith("m4") else 12
+                gif_width = 640 if milestone.startswith("m4") else 768
+                filters = f"fps={gif_fps},scale={gif_width}:-1:flags=lanczos"
                 palette = temporary/"palette.png"
                 subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(video),"-vf",filters+",palettegen=max_colors=128",str(palette)],check=True)
                 subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(video),"-i",str(palette),"-lavfi",filters+"[x];[x][1:v]paletteuse=dither=bayer:bayer_scale=3","-loop","0",str(output)],check=True)
@@ -233,7 +257,7 @@ def record(milestone,output,xvfb,display):
                     "recorded_at":datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"),
                     "environment":platform.platform(),"display":"Linux Xvfb; actual native window and XTest input",
                     "windows_11_verified":False,"sample_command":f"cargo run --release -p {binary}" + (" -- --tilemap-only" if app_args else ""),
-                    "gif_fps":12,"gif_width":768,"actions":actions,
+                    "gif_fps":gif_fps,"gif_width":gif_width,"actions":actions,
                 }
                 output.with_suffix(".json").write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
             except Exception:

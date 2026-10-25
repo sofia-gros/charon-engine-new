@@ -1,0 +1,9 @@
+[package]
+name = "charon_tilemap_lighting"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+charon_lighting = { path = "../charon_lighting" }
+charon_tilemap = { path = "../charon_tilemap" }

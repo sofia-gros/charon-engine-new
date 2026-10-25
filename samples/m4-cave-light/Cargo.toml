@@ -1,0 +1,26 @@
+[package]
+name = "charon-m4-sample"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["bridge", "lighting"]
+bridge = ["charon-m3-sample/bridge", "dep:charon_physics", "dep:charon_sand_render", "dep:charon_sand_lighting"]
+lighting = ["dep:charon_lighting", "dep:charon_lighting_gpu", "dep:charon_tilemap_lighting", "dep:charon_lighting_render"]
+
+[dependencies]
+charon-m3-sample = { path = "../m3-world-lab", default-features = false }
+charon_assets = { path = "../../crates/charon_assets" }
+charon_tilemap = { path = "../../crates/charon_tilemap" }
+charon_render = { path = "../../crates/charon_render", features = ["gpu"] }
+charon_tilemap_render = { path = "../../crates/charon_tilemap_render" }
+charon_physics = { path = "../..", optional = true }
+charon_sand_render = { path = "../../crates/charon_sand_render", optional = true }
+charon_lighting = { path = "../../crates/charon_lighting", optional = true }
+charon_lighting_gpu = { path = "../../crates/charon_lighting_gpu", optional = true }
+charon_tilemap_lighting = { path = "../../crates/charon_tilemap_lighting", optional = true }
+charon_sand_lighting = { path = "../../crates/charon_sand_lighting", optional = true }
+charon_lighting_render = { path = "../../crates/charon_lighting_render", optional = true }
+pollster = "0.4"

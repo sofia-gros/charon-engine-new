@@ -15,6 +15,13 @@ pub const CELL: u32 = 8;
 pub enum Edit {
     Break(u32, u32),
     Place(u32, u32, TileId),
+    #[cfg(feature = "bridge")]
+    Paint {
+        x: i32,
+        y: i32,
+        radius: u16,
+        cell: charon_physics::sim::material::CellData,
+    },
 }
 #[derive(Clone)]
 pub struct View {
@@ -96,8 +103,8 @@ impl Compute {
         shared: Shared,
         rx: Receiver<(u64, Edit)>,
         coupled: bool,
+        map: Tilemap,
     ) -> Result<Self, String> {
-        let map = initial_map();
         #[cfg(feature = "bridge")]
         let bridge = if coupled {
             use charon_physics::sim::{material::CellData, simulation::Simulation};
@@ -131,6 +138,9 @@ impl Compute {
             let edit = match edit {
                 Edit::Break(x, y) => charon_bridge::Edit::Break { x, y },
                 Edit::Place(x, y, tile) => charon_bridge::Edit::Place { x, y, tile },
+                Edit::Paint { x, y, radius, cell } => {
+                    charon_bridge::Edit::Paint { x, y, radius, cell }
+                }
             };
             let receipt = bridge.apply(charon_bridge::Command {
                 id,
@@ -145,6 +155,8 @@ impl Compute {
         }
         let _ = id;
         let result = match edit {
+            #[cfg(feature = "bridge")]
+            Edit::Paint { .. } => Err("particles require the Bridge".into()),
             Edit::Break(x, y) => self.map.set(x, y, None),
             Edit::Place(x, y, tile) => {
                 if self.map.get(x, y).is_some() {
@@ -280,12 +292,22 @@ pub struct Runtime {
 }
 impl Runtime {
     pub fn start(hz: u32, coupled: bool) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_map(hz, coupled, initial_map())
+    }
+    pub fn start_with_map(
+        hz: u32,
+        coupled: bool,
+        map: Tilemap,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        if map.dimensions() != [W, H] || map.tile_size() != [CELL, CELL] {
+            return Err("sample world must be 40x24 tiles of size 8".into());
+        }
         if !(30..=60).contains(&hz) {
             return Err("compute rate must be 30..60".into());
         }
         let shared = Shared {
             view: Arc::new(Mutex::new(Arc::new(View {
-                map: initial_map(),
+                map: map.clone(),
                 ticks: 0,
                 revision: 0,
                 message: "STARTING".into(),
@@ -296,7 +318,7 @@ impl Runtime {
             controls: Arc::new(Mutex::new(Controls::default())),
         };
         let (tx, rx) = mpsc::sync_channel(64);
-        let compute = Compute::make(hz, shared.clone(), rx, coupled)?;
+        let compute = Compute::make(hz, shared.clone(), rx, coupled, map)?;
         let compute = Worker::spawn(
             WorkerConfig::new("charon-compute", hz),
             move |delta| {

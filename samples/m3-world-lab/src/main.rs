@@ -1,4 +1,4 @@
-mod runtime;
+use charon_m3_sample::runtime;
 mod ui;
 use charon_assets::{Assets, Image, ShaderSource};
 use charon_render::{

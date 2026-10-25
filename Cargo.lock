@@ -304,6 +304,17 @@ name = "charon-core"
 version = "0.1.0"
 
 [[package]]
+name = "charon-lighting-check"
+version = "0.1.0"
+dependencies = [
+ "charon_lighting",
+ "charon_lighting_gpu",
+ "image",
+ "pollster",
+ "serde_json",
+]
+
+[[package]]
 name = "charon-m1-sample"
 version = "0.1.0"
 dependencies = [
@@ -337,6 +348,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-m4-sample"
+version = "0.1.0"
+dependencies = [
+ "charon-m3-sample",
+ "charon_assets",
+ "charon_lighting",
+ "charon_lighting_gpu",
+ "charon_lighting_render",
+ "charon_physics",
+ "charon_render",
+ "charon_sand_lighting",
+ "charon_sand_render",
+ "charon_tilemap",
+ "charon_tilemap_lighting",
+ "charon_tilemap_render",
+ "pollster",
+]
+
+[[package]]
 name = "charon-sand"
 version = "0.1.0"
 dependencies = [
@@ -362,6 +392,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon_lighting"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+]
+
+[[package]]
+name = "charon_lighting_gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "charon_lighting",
+ "pollster",
+ "wgpu",
+]
+
+[[package]]
+name = "charon_lighting_render"
+version = "0.1.0"
+dependencies = [
+ "charon_assets",
+ "charon_lighting",
+ "charon_render",
+]
+
+[[package]]
 name = "charon_physics"
 version = "0.2.0"
 dependencies = [
@@ -382,6 +438,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon_sand_lighting"
+version = "0.1.0"
+dependencies = [
+ "charon_lighting",
+ "charon_physics",
+]
+
+[[package]]
 name = "charon_sand_render"
 version = "0.1.0"
 dependencies = [
@@ -395,6 +459,14 @@ name = "charon_tilemap"
 version = "0.1.0"
 dependencies = [
  "charon-core",
+]
+
+[[package]]
+name = "charon_tilemap_lighting"
+version = "0.1.0"
+dependencies = [
+ "charon_lighting",
+ "charon_tilemap",
 ]
 
 [[package]]

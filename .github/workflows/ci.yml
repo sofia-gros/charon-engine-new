@@ -37,14 +37,18 @@ jobs:
         run: python scripts/check_demo_assets.py
       - name: Stored physics profile consistency
         run: python scripts/check_physics_profiles.py
+      - name: Stored lighting profile and image consistency
+        run: python scripts/check_lighting_profiles.py
       - name: Core dependency boundary
         run: python scripts/check_core_dependencies.py
       - name: M3 optional dependency boundaries
         run: python scripts/check_m3_dependencies.py
+      - name: M4 lighting dependency boundaries
+        run: python scripts/check_m4_dependencies.py
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Unit, integration, sample, and doc tests
-        run: cargo test --locked --workspace
+        run: cargo test --locked --workspace --all-features
       - name: No-window sample
         run: cargo run --locked -p charon-m1-sample --no-default-features -- --smoke-test
       - name: Sand plugin sample (no window)
@@ -66,7 +70,79 @@ jobs:
         env:
           XDG_RUNTIME_DIR: /tmp
         run: xvfb-run -a cargo run --locked -p charon-m3-sample --no-default-features -- --gpu-check
+      - name: M4 cave game and compute workers
+        run: cargo run --locked -p charon-m4-sample -- --smoke-test
+      - name: M4 Tilemap without Falling Sand
+        run: cargo run --locked -p charon-m4-sample --no-default-features --features lighting -- --smoke-test
+      - name: M4 without Lighting or Falling Sand
+        run: cargo run --locked -p charon-m4-sample --no-default-features -- --smoke-test
+      - name: CPU and GPU optical field comparison
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: cargo run --locked -p charon-lighting-check -- /tmp/m4-check.json /tmp/m4-fields
+      - name: M4 GPU compute and rendering composition
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m4-sample -- --gpu-check
+      - name: M4 lit Tilemap without Falling Sand
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m4-sample --no-default-features --features lighting -- --gpu-check
+      - name: M4 rendering without Lighting
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m4-sample --no-default-features -- --gpu-check
       - name: Empty Core
         run: cargo run --locked -p charon-core --example empty
       - name: Release build
         run: cargo build --locked --release --workspace
+
+  record-m4:
+    name: Record native M4 operation examples
+    needs: build-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether examples already exist
+        id: media
+        shell: bash
+        run: |
+          if test -f docs/demos/m4-demo.gif && test -f docs/demos/m4-tilemap-demo.gif; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.media.outputs.needed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.media.outputs.needed == 'true'
+      - name: Install recording dependencies
+        if: steps.media.outputs.needed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0 libxtst6 ffmpeg
+      - name: Build and record actual native windows
+        if: steps.media.outputs.needed == 'true'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: |
+          cargo build --locked --release -p charon-m4-sample
+          python scripts/record_milestone.py m4
+          python scripts/record_milestone.py m4-tilemap
+      - name: Store immutable media blobs for reviewed publication
+        if: steps.media.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_demo_blobs.py m4
+      - uses: actions/upload-artifact@v4
+        if: steps.media.outputs.needed == 'true'
+        with:
+          name: m4-native-operation-examples
+          path: |
+            docs/demos/m4-demo.*
+            docs/demos/m4-tilemap-demo.*

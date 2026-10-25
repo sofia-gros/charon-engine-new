@@ -1,0 +1,11 @@
+[package]
+name = "charon_lighting_gpu"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+charon_lighting = { path = "../charon_lighting" }
+wgpu = "26"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"

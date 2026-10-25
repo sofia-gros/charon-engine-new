@@ -28,7 +28,7 @@ M3までの基盤を実装しています。Core、独立した物理ライブ�
 | 独立したTilemap / Spriteと、任意のFalling Sand Bridge | M3実装済み |
 | Assets Plugin、型付きハンドル、PNG・Shaderソースの読み込み・解放 | M3実装済み |
 | Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
-| Lighting Plugin による遮光・光の伝播・AO・発光。Tilemap / Falling Sand の両方に対応 | 計画中 |
+| 共通光学データ、遮光・伝播・AO・発光、独立したGPU計算と描画合成 | M4実装・完了検証中 |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
 | Phaser に影響を受けた Camera / Scene Plugins | 計画中 |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
@@ -85,6 +85,17 @@ cargo run --release -p charon-m3-sample --no-default-features
 ```
 
 WASDで移動して宝石を集め、左クリックで破壊、右クリックで設置します。Gで床を開き、Bで砂・水のブロックを粒子へ変換できます。LはカスタムShaderのパラメータ切り替えです。粒子を覆う固体の設置は拒否し、変換規則と追加の設置制約はゲーム側で定義できます。ライティング基盤は次のM4で実装します。
+
+### M4：独立したライティング基盤
+
+[Cave Light](./samples/m4-cave-light/README.md)では、松明・発光鉱石・火の粒子と、洞窟の遮光・光の伝播・接触部のAOを確認できます。照明の計算はGPU Compute、合成は別の描画Shaderです。TilemapとFalling Sandは共通の光学データへ接続します。
+
+```sh
+cargo run --release -p charon-m4-sample
+cargo run --release -p charon-m4-sample --no-default-features --features lighting
+```
+
+[照明API](./docs/lighting-api.md) / [CPU・GPUの数値・画像・計測記録](./docs/performance/m4-lighting.md)。現在は完了検証と操作GIFの反映を進めています。
 
 ## 開発環境
 

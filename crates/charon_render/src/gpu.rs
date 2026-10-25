@@ -14,12 +14,14 @@ struct GpuTexture {
     _texture: wgpu::Texture,
     bind: wgpu::BindGroup,
     size: [u32; 2],
+    cpu_writable: bool,
 }
 struct Pass {
     id: PassId,
     pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     bind: wgpu::BindGroup,
+    sampled: Option<TextureId>,
 }
 pub struct GpuRenderer {
     surface: wgpu::Surface<'static>,
@@ -47,7 +49,10 @@ impl GpuRenderer {
             .map_err(|e| e.to_string())?;
         let adapter_name = adapter.get_info().name;
         let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor::default())
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                ..Default::default()
+            })
             .await
             .map_err(|e| e.to_string())?;
         let mut config = surface
@@ -115,12 +120,110 @@ impl GpuRenderer {
         renderer.upload(TextureId(0), &Image::new(1, 1, vec![255; 4])?)?;
         Ok(renderer)
     }
-    /// Registration is transactional: failed shaders leave the old pipeline alive.
+    pub fn device(&self) -> &wgpu::Device {
+        &self.device
+    }
+    pub fn queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+    /// Share an externally computed image without GPU-to-CPU readback. Caller
+    /// uses this renderer's device/queue; the image remains an ordinary texture.
+    pub fn bind_texture(
+        &mut self,
+        id: TextureId,
+        texture: wgpu::Texture,
+        linear: bool,
+    ) -> Result<(), String> {
+        if id == TextureId(0)
+            || !texture
+                .usage()
+                .contains(wgpu::TextureUsages::TEXTURE_BINDING)
+            || texture.dimension() != wgpu::TextureDimension::D2
+            || texture.depth_or_array_layers() != 1
+            || texture.sample_count() != 1
+            || !matches!(
+                texture.format(),
+                wgpu::TextureFormat::Rgba8Unorm
+                    | wgpu::TextureFormat::Rgba8UnormSrgb
+                    | wgpu::TextureFormat::Bgra8Unorm
+                    | wgpu::TextureFormat::Bgra8UnormSrgb
+            )
+        {
+            return Err(
+                "external image must be a sampleable RGBA8/BGRA8 2D texture, ID 0 is reserved"
+                    .into(),
+            );
+        }
+        let view = texture.create_view(&Default::default());
+        let sampler = self.device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: if linear {
+                wgpu::FilterMode::Linear
+            } else {
+                wgpu::FilterMode::Nearest
+            },
+            min_filter: if linear {
+                wgpu::FilterMode::Linear
+            } else {
+                wgpu::FilterMode::Nearest
+            },
+            ..Default::default()
+        });
+        let bind = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("external sampled image"),
+            layout: &self.texture_layout,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: wgpu::BindingResource::Sampler(&sampler),
+                },
+            ],
+        });
+        self.textures.insert(
+            id,
+            GpuTexture {
+                size: [texture.width(), texture.height()],
+                _texture: texture,
+                bind,
+                cpu_writable: false,
+            },
+        );
+        Ok(())
+    }
+    /// Optional group 2 is a generic sampled image, independent of any world or
+    /// lighting data. Parameters remain the Shader's existing vec4 contract.
+    pub async fn register_sampled_pass(
+        &mut self,
+        id: PassId,
+        source: &ShaderSource,
+        parameters: [f32; 4],
+        image: TextureId,
+    ) -> Result<(), String> {
+        if !self.textures.contains_key(&image) {
+            return Err("sampled pass image is missing".into());
+        }
+        self.register_with_sampled(id, source, parameters, Some(image))
+            .await
+    }
     pub async fn register_pass(
         &mut self,
         id: PassId,
         source: &ShaderSource,
         parameters: [f32; 4],
+    ) -> Result<(), String> {
+        self.register_with_sampled(id, source, parameters, None)
+            .await
+    }
+    /// Registration is transactional: failed shaders leave the old pipeline alive.
+    async fn register_with_sampled(
+        &mut self,
+        id: PassId,
+        source: &ShaderSource,
+        parameters: [f32; 4],
+        sampled: Option<TextureId>,
     ) -> Result<(), String> {
         if parameters.iter().any(|v| !v.is_finite()) {
             return Err("non-finite shader parameter".into());
@@ -132,11 +235,15 @@ impl GpuRenderer {
                 label: Some("game shader"),
                 source: wgpu::ShaderSource::Wgsl(source.0.clone().into()),
             });
+        let mut layouts = vec![&self.texture_layout, &self.params_layout];
+        if sampled.is_some() {
+            layouts.push(&self.texture_layout);
+        }
         let layout = self
             .device
             .create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
                 label: Some("quad layout"),
-                bind_group_layouts: &[&self.texture_layout, &self.params_layout],
+                bind_group_layouts: &layouts,
                 push_constant_ranges: &[],
             });
         let pipeline=self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
@@ -167,6 +274,7 @@ impl GpuRenderer {
             pipeline,
             uniform,
             bind,
+            sampled,
         };
         if let Some(old) = self.passes.iter_mut().find(|p| p.id == id) {
             *old = pass;
@@ -196,13 +304,33 @@ impl GpuRenderer {
         }
     }
     pub fn upload(&mut self, id: TextureId, image: &Image) -> Result<(), String> {
+        self.upload_format(id, image, wgpu::TextureFormat::Rgba8UnormSrgb)
+    }
+    /// Linear data (for example masks or numerical fields) must not be decoded
+    /// as sRGB by the sampler.
+    pub fn upload_linear(&mut self, id: TextureId, image: &Image) -> Result<(), String> {
+        self.upload_format(id, image, wgpu::TextureFormat::Rgba8Unorm)
+    }
+    fn upload_format(
+        &mut self,
+        id: TextureId,
+        image: &Image,
+        format: wgpu::TextureFormat,
+    ) -> Result<(), String> {
+        if self.textures.get(&id).is_some_and(|t| !t.cpu_writable) {
+            return Err("cannot upload CPU pixels into an externally owned texture".into());
+        }
         Image::new(image.width, image.height, image.rgba.clone())?;
         let max = self.device.limits().max_texture_dimension_2d;
         if image.width > max || image.height > max {
             return Err("texture exceeds GPU limits".into());
         }
         let size = [image.width, image.height];
-        if self.textures.get(&id).is_none_or(|t| t.size != size) {
+        if self
+            .textures
+            .get(&id)
+            .is_none_or(|t| t.size != size || t._texture.format() != format)
+        {
             let texture = self.device.create_texture(&wgpu::TextureDescriptor {
                 label: Some("CPU image upload"),
                 size: wgpu::Extent3d {
@@ -213,7 +341,7 @@ impl GpuRenderer {
                 mip_level_count: 1,
                 sample_count: 1,
                 dimension: wgpu::TextureDimension::D2,
-                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                format,
                 usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
                 view_formats: &[],
             });
@@ -238,8 +366,12 @@ impl GpuRenderer {
                     _texture: texture,
                     bind,
                     size,
+                    cpu_writable: true,
                 },
             );
+        }
+        if !self.textures[&id].cpu_writable {
+            return Err("cannot upload CPU pixels into an externally owned texture".into());
         }
         let texture = &self.textures[&id]._texture;
         self.queue.write_texture(
@@ -359,6 +491,13 @@ impl Backend for GpuRenderer {
             });
             pass.set_vertex_buffer(0, buffer.slice(..));
             for pipeline in &self.passes {
+                if !ordered.iter().any(|q| q.pass == pipeline.id) {
+                    continue;
+                }
+                if let Some(id) = pipeline.sampled {
+                    let texture = self.textures.get(&id).ok_or("sampled pass image removed")?;
+                    pass.set_bind_group(2, &texture.bind, &[]);
+                }
                 pass.set_pipeline(&pipeline.pipeline);
                 pass.set_bind_group(1, &pipeline.bind, &[]);
 
