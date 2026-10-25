@@ -1,6 +1,6 @@
 # Tilemap / Falling Sand 接続APIの設計
 
-この文書はM2・M3で実装する接続APIの契約です。M1時点では、Tilemap本体とこのAPIの実装はまだありません。
+この文書はM2・M3で実装する接続APIの契約です。M2では、物理側の外部コリジョン・生成要求・結果・接触APIを[最初の実装単位](./falling-sand-api.md)として用意しました。Tilemap本体とBridge PluginはM3で実装します。
 
 ## 使い方の目標
 

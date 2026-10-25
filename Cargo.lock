@@ -99,6 +99,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-m2-sample"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+ "charon-sand",
+ "minifb",
+ "sandengine",
+]
+
+[[package]]
+name = "charon-sand"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+ "sandengine",
+]
+
+[[package]]
 name = "ciborium"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"

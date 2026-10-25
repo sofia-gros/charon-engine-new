@@ -16,14 +16,15 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、Falling Sand の物理処理を独立したライブラリとして取り出した段階です。独立した `charon-core` に、最小のPlugin実行基盤を実装しました。Falling Sand の Plugin 化はM2で行います。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
+現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、Falling Sand の物理処理を独立したライブラリとして取り出した段階です。独立した `charon-core` に、最小のPlugin実行基盤を実装しました。M2ではFalling SandのPlugin接続と外部コリジョン・生成要求のAPIを実装し、性能・物理表現の改善を進めています。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
 
 | 機能 | 状況 |
 | --- | --- |
 | セル単位の物理演算、密度による移動、燃焼・蒸発・溶解などの反応 | 実装済み |
 | 2バイトのセルデータ、32×32チャンクによる更新対象の管理 | 実装済み |
 | 粒子を押しのける可動ブロック | 実装済み |
-| 独立した Tilemap / Sprite Plugins と、Falling Sandとの双方向コリジョンAPI | 計画中 |
+| Falling Sand Plugin、外部コリジョン・生成要求・結果・接触API | M2の最初の実装単位として実装済み |
+| 独立した Tilemap / Sprite Plugins と、Falling SandとのBridge | 計画中 |
 | Assets Plugin によるアセットの読み込み・管理 | 計画中 |
 | Rendering Plugin と Shader、交換可能なGPUバックエンド | 計画中 |
 | Lighting Plugin による遮光・光の伝播・AO・発光。Tilemap / Falling Sand の両方に対応 | 計画中 |
@@ -43,6 +44,16 @@ cargo run --release -p charon-m1-sample
 ```
 
 各マイルストーンの実装完了時に、Windows 11で確認できるゲームサンプルを用意します。
+
+## M2 物理サンプル
+
+[Sand Lab](./samples/m2-sand-lab/README.md) で砂・水などを配置し、外部の障壁を解除したり砂へ変換したりできます。
+
+```sh
+cargo run --release -p charon-m2-sample
+```
+
+[APIと制約](./docs/falling-sand-api.md)を公開しています。安息角・性能最適化は未完了で、M2は進行中です。
 
 ## 導入
 

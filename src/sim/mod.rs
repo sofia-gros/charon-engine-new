@@ -17,3 +17,4 @@ pub mod block;
 pub mod grid;
 pub mod material;
 pub mod physics;
+pub mod simulation;

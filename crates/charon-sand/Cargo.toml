@@ -1,0 +1,11 @@
+[package]
+name = "charon-sand"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Optional Falling Sand plugin for charon-engine"
+repository = "https://github.com/sofia-gros/charon-engine-new"
+
+[dependencies]
+charon-core = { path = "../charon-core" }
+sandengine = { path = "../.." }

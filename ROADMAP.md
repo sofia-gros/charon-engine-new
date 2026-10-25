@@ -75,9 +75,11 @@ Terraria からはタイルマップ主体の2D世界、Noita からは Falling 
 
 ### M2：Falling Sand の独立性・性能・表現
 
-- [ ] 物理ライブラリを維持したまま、計算用Workerの30〜60Hz tick に接続する Falling Sand Plugin を作る
-- [ ] [Tilemap連携APIの契約](./docs/tilemap-falling-sand.md)に沿い、外部コリジョンの参照、粒子生成要求、変更結果・接触通知を公開する
-- [ ] Plugin を使わず、既存アプリから直接呼び出す headless 例を維持する
+**進行中：** Plugin化と外部連携APIの最初の実装単位を用意しました。[API](./docs/falling-sand-api.md) / [Windows 11サンプル](./samples/m2-sand-lab/README.md)。Tilemap本体との接続、性能評価、安息角の変更は未完了です。
+
+- [x] 物理ライブラリを維持したまま、計算用Workerの30〜60Hz tick に接続する Falling Sand Plugin を作る
+- [x] [Tilemap連携APIの契約](./docs/tilemap-falling-sand.md)に沿い、外部コリジョンの参照、粒子生成要求、変更結果・接触通知を公開する
+- [x] Plugin を使わず、既存アプリから直接呼び出す headless 例を維持する
 - [ ] seed を固定し、落下中の砂、静止地形、液体、反応の検証シーンを用意する
 - [ ] 365×365・640×360・1280×720で、tick時間・メモリ・アクティブチャンク数を記録する
 - [ ] 測定環境と性能予算を決め、全セルコピーの削減を比較・検証する
@@ -201,4 +203,4 @@ M1〜M7の各実装完了時に、その段階の機能をWindows 11実機で操
 - 各部品の単体動作と、追加しない構成も検証する。
 - 完了した項目とREADMEの開発状況を更新する。
 
-**次の確認：** M1ゲームサンプルのWindows 11実機チェック。次の実装段階はM2またはM3。
+**次の実装：** M2の性能測定基準と、マテリアル・安息角の改善。M1・M2サンプルのWindows 11実機確認は別途記録する。

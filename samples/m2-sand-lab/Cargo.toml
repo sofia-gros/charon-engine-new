@@ -1,0 +1,16 @@
+[package]
+name = "charon-m2-sample"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["window"]
+window = ["dep:minifb"]
+
+[dependencies]
+charon-core = { path = "../../crates/charon-core" }
+charon-sand = { path = "../../crates/charon-sand" }
+sandengine = { path = "../.." }
+minifb = { version = "0.28", default-features = false, features = ["x11"], optional = true }

@@ -41,6 +41,8 @@ jobs:
         run: cargo test --locked --workspace
       - name: No-window sample
         run: cargo run --locked -p charon-m1-sample --no-default-features -- --smoke-test
+      - name: Sand plugin sample (no window)
+        run: cargo run --locked -p charon-m2-sample --no-default-features -- --smoke-test
       - name: Empty Core
         run: cargo run --locked -p charon-core --example empty
       - name: Release build
