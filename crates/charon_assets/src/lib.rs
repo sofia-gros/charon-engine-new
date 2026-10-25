@@ -10,6 +10,18 @@ use std::{
 };
 static NEXT_STORE: AtomicU64 = AtomicU64::new(1);
 
+fn next_store_id() -> u64 {
+    let mut current = NEXT_STORE.load(Ordering::Relaxed);
+    loop {
+        let next = current.checked_add(1).expect("asset store IDs exhausted");
+        match NEXT_STORE.compare_exchange_weak(current, next, Ordering::Relaxed, Ordering::Relaxed)
+        {
+            Ok(_) => return current,
+            Err(observed) => current = observed,
+        }
+    }
+}
+
 pub struct Handle<T> {
     store: u64,
     slot: usize,
@@ -60,9 +72,7 @@ pub struct Assets<T> {
 impl<T> Default for Assets<T> {
     fn default() -> Self {
         Self {
-            store: NEXT_STORE
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
-                .expect("asset store IDs exhausted"),
+            store: next_store_id(),
             entries: Vec::new(),
             events: Vec::new(),
         }
