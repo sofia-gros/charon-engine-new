@@ -18,7 +18,7 @@ for case in data["cases"]:
     assert case["dispatches"] >= 2
     assert case["gpu_us"] is None or case["gpu_us"] >= 0
 for path, expected in data["source_sha256"].items():
-    assert hashlib.sha256((root / path).read_bytes()).hexdigest() == expected, path
+    assert hashlib.sha256((root / path).read_text(encoding="utf-8").encode("utf-8")).hexdigest() == expected, path
 assert len(data["image_sha256"]) == 12
 for path, expected in data["image_sha256"].items():
     raw = (root / path).read_bytes()

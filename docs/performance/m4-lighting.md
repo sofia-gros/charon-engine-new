@@ -1,6 +1,6 @@
 # M4：照明の数値・画像・計測
 
-[生データ](./m4-lighting.json)は、Linux / Vulkan llvmpipe（ソフトウェアドライバー）、releaseビルドで取得しました。Rustの版、ソースのSHA-256、PNGのSHA-256も保存しています。Windows 11実機の性能結果ではありません。
+[生データ](./m4-lighting.json)は、Linux / Vulkan llvmpipe（ソフトウェアドライバー）、releaseビルドで取得しました。Rustの版、ソースのSHA-256、PNGのSHA-256も保存しています。ソースの照合では改行をLFへ正規化し、WindowsのCRLFチェックアウトにも対応します。Windows 11実機の性能結果ではありません。
 
 ## 比較対象
 
