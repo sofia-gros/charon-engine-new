@@ -1,3 +1,7 @@
+[workspace]
+members = [".", "crates/charon-core", "samples/m1-plugin-game"]
+resolver = "3"
+
 [package]
 name = "sandengine"
 version = "0.2.0"

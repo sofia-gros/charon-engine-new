@@ -13,7 +13,7 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、Falling Sand の物理処理を独立したライブラリとして取り出した段階です。Plugin 化やエンジン全体の Core は未実装です。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
+現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、Falling Sand の物理処理を独立したライブラリとして取り出した段階です。独立した `charon-core` に、最小のPlugin実行基盤を実装しました。Falling Sand の Plugin 化はM2で行います。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
 
 | 機能 | 状況 |
 | --- | --- |
@@ -26,9 +26,20 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 | Lighting Plugin による遮光・光の伝播・AO・発光。Tilemap / Falling Sand の両方に対応 | 計画中 |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
 | Phaser に影響を受けた Camera / Scene Plugins | 計画中 |
-| コアによる Plugins の読み込みと各種拡張機能 | 計画中 |
+| Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
+| Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・自動確認・CI配布手順を用意。実機確認待ち |
 
 軽量・高性能はエンジン全体の開発目標です。現在の物理ライブラリには、毎 tick のセルバッファ全体のコピーなど、最適化の余地があります。また、砂の自然な安息角、セル単位の速度、温度伝導、粘性・表面張力は未実装です。
+
+## M1 ゲームサンプル
+
+[Gem Run](./samples/m1-plugin-game/README.md) で、Pluginの組み合わせ、固定tick、イベントによる得点処理を確認できます。Windows 11向け実行ファイルはCIのArtifactsから取得できます。操作・実機確認のチェックリストはサンプルのREADMEを参照してください。
+
+```sh
+cargo run --release -p charon-m1-sample
+```
+
+各マイルストーンの実装完了時に、Windows 11で確認できるゲームサンプルを用意します。
 
 ## 導入
 
@@ -74,6 +85,8 @@ cargo run --release --example headless
 - [Physics](./src/sim/physics.rs)：物質ごとの移動と反応
 - [Block](./src/sim/block.rs)：可動ブロックと粒子の押し出し
 
+[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon-core` は物理・描画・ウィンドウに依存しません。
+
 APIドキュメントは `cargo doc --no-deps --open` で確認できます。Camera / Scene や Plugins のAPIは、実装に合わせて整備していきます。
 
 ## コントリビュート
@@ -84,9 +97,9 @@ APIドキュメントは `cargo doc --no-deps --open` で確認できます。Ca
 
 ```sh
 cargo fmt --all -- --check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test --all
-cargo build --release
+cargo clippy --workspace --all-targets --all-features -- -D warnings
+cargo test --workspace
+cargo build --release --workspace
 ```
 
 物理処理のベンチマークは `cargo bench` で実行できます。CIでも Linux / macOS / Windows でフォーマット、Clippy、テスト、リリースビルドを確認します。

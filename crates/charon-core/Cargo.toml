@@ -1,0 +1,7 @@
+[package]
+name = "charon-core"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Dependency-free plugin runtime for charon-engine"
+repository = "https://github.com/sofia-gros/charon-engine-new"
