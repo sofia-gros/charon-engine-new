@@ -1,7 +1,8 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
 
-/// Typed shared state. The M1 runtime is single-threaded.
+/// Typed state owned by one App on one lane. Use messages or snapshots for
+/// cross-thread exchange; do not share a mutable World between workers.
 ///
 /// Events are broadcast buffers: reads do not consume them. The producer must
 /// explicitly clear its event type at the beginning of its next update. This

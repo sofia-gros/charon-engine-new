@@ -1,24 +1,26 @@
 # M1 ゲームサンプル：Gem Run
 
-Windows 11でM1のCore / Plugin基盤を確認するための小さな2Dゲームです。
-60秒以内に黄色い宝石を6個集めてください。ピンクの移動する障害物に当たるとHPが減り、HPが0になるか時間切れで失敗します。
+Windows 11でM1のCore / Plugin基盤と、更新周期を分離したマルチスレッド構成を確認する小さな2Dゲームです。60秒以内に黄色い宝石を6個集めてください。ピンクの障害物に当たるとHPが減り、HPが0になるか時間切れで失敗します。
 
-## Windows 11で実行する
+## Windows 11で起動する
 
-### 実行ファイルを使う
-
-1. リポジトリの [Actions](https://github.com/sofia-gros/charon-engine-new/actions/workflows/ci.yml) で、対象コミットの成功したCIを開く。
-2. Artifacts の `charon-M1-win11-x64` をダウンロードし、ZIPをすべて展開する。
-3. `run.cmd` または `charon-m1-sample.exe` を実行する。
-
-Windows x64向けです。実行用の画像・フォント・Rustのインストールは不要です。CIでビルド・自動テストを実行しますが、Windows 11実機の画面・入力確認は下のチェックリストで行ってください。
-
-### ソースから起動する
-
-Rust stable（MSVC）と、Visual Studio Build Toolsの「C++によるデスクトップ開発」を用意し、リポジトリのルートで実行します。
+Rust導入済みの環境で、リポジトリのルートから実行します。配布用exeの事前生成は不要です。
 
 ```powershell
 cargo run --release -p charon-m1-sample
+```
+
+計算の更新周期は30〜60Hzで指定できます。既定は45Hzです。ゲーム144Hz・描画60Hzの目標周期はこの変更の影響を受けません。
+
+```powershell
+cargo run --release -p charon-m1-sample -- --compute-hz 30
+cargo run --release -p charon-m1-sample -- --compute-hz 60
+```
+
+任意のPulse Pluginを登録しない構成も確認できます。
+
+```powershell
+cargo run --release -p charon-m1-sample -- --no-effects
 ```
 
 ## 操作
@@ -30,13 +32,21 @@ cargo run --release -p charon-m1-sample
 | 最初からやり直す | R |
 | 終了 | Esc / ウィンドウを閉じる |
 
-下部に実際のPlugin順序とフレーム番号、上部に得点・HP・残り時間・固定tick数を表示します。ゲーム開始時はフォーカスを合わせて操作してください。
+上部に宝石の収集数・HP・残り時間、下部に更新周期の目標値と、各ワーカーの処理数を表示します。ウィンドウにフォーカスを合わせて操作してください。目標周期の表示は実測FPSの保証値ではありません。
 
-任意のPulse Pluginを登録しない構成も実行できます。宝石の周囲の点滅がなくなり、HUDに `PULSE OFF` と表示されます。
+## マルチスレッド構成
 
-```powershell
-.\charon-m1-sample.exe --no-effects
-```
+| 所有スレッド | Pluginsと処理 | 目標周期 |
+| --- | --- | --- |
+| ゲーム用Worker | Game / Score。移動、勝敗、収集イベント、得点 | 144Hz |
+| 計算用Worker | Compute Clock / 任意のPulse。表示用の演出値を計算 | 45Hz（30〜60Hzで設定） |
+| メインスレッド | Snapshot / Viewとウィンドウ。最新状態を読み、描画 | 60Hz |
+
+M1ではFalling Sandは未接続で、計算用Workerは周期分離の検証を担います。正式な物理・照明計算を実装済みという意味ではありません。
+
+それぞれのAppがWorldを所有し、ゲーム状態を共有して同時に書き換えることはしません。小さなスナップショットを短時間のロックで交換し、描画は古い状態の追跡より最新状態の表示を優先します。ゲームと計算は、描画フレームが来るまで待つ必要がありません。入力はこのサンプルではウィンドウ更新時に取得します。
+
+Coreの契約を使うため、ゲーム処理と計算用Pluginはウィンドウなしでも動きます。表示はサンプル専用のソフトウェア描画で、正式なTilemap / Rendering / Input Pluginsは後続のマイルストーンで実装します。
 
 ## Windows 11実機の確認項目
 
@@ -45,39 +55,26 @@ cargo run --release -p charon-m1-sample
 - [ ] 宝石を取ると消え、得点が1だけ増える
 - [ ] 移動する障害物に当たるとHPが減り、短時間の連続ダメージは防がれる
 - [ ] 6個集めると勝利、時間切れまたはHP0で失敗になる
-- [ ] Pで停止し、位置・残り時間・ゲームtickが止まる。再度Pで再開する
+- [ ] Pで位置・残り時間・ゲーム内tickが止まり、再度Pで再開する
 - [ ] Rで位置・宝石・得点・HP・残り時間が初期状態に戻る
 - [ ] ウィンドウをリサイズしても表示できる
-- [ ] `--no-effects` でもゲームが成立し、点滅とPulseの登録だけがなくなる
-- [ ] Esc / 閉じるボタンで終了し、コンソールの終了ログが初期化の逆順になる
+- [ ] 計算周期30Hz / 60Hzの双方でゲームを遊べ、ゲーム側のタイマーや移動速度が変わらない
+- [ ] `--no-effects` でもゲームが成立し、宝石の周囲の点滅だけがなくなる
+- [ ] Esc / 閉じるボタンで終了し、コンソールに両Workerの終了結果が出る
 
-確認結果を共有するときは、コミット、Windowsのバージョン、画面倍率、操作、期待した結果と実際の結果を記録してください。
-
-## M1で確認する設計
-
-| Plugin | 役割 |
-| --- | --- |
-| Game | ゲーム状態・移動・収集イベント・勝敗。固定tickで動く |
-| Score | Gameに依存し、収集イベントから得点を更新する |
-| Pulse（任意） | フレームごとに表示用の演出値を更新する |
-| View | Game / Scoreの状態と任意の演出値から表示用バッファを作る |
-
-登録は意図的にViewから始めますが、Coreが依存関係を解決してGameから初期化します。終了は逆順です。ウィンドウの作成と入力取得はサンプルのホストが担当します。
-
-このゲームはFalling Sand、GPU計算、正式なTilemap / Rendering / Input Pluginsに依存しません。表示はサンプル専用のソフトウェア描画で、将来の機能の先行実装ではありません。
+確認結果には、コミット、Windowsのバージョン、CPU・GPU、画面倍率、操作、期待した結果と実際の結果を記録してください。CIのWindowsビルド・自動テストと、実機の画面・入力確認は区別します。
 
 ## 自動確認
 
-```sh
-cargo run -p charon-m1-sample -- --smoke-test
+```powershell
+cargo test --workspace
 cargo run -p charon-m1-sample --no-default-features -- --smoke-test
-cargo test -p charon-m1-sample
 ```
 
-スモークテストはウィンドウなしで、任意Pluginあり・なし、依存順序による初期化、宝石収集・得点・勝利、再開始、描画バッファ生成、終了を確認します。プレイヤー位置をスクリプトで設定するため、実機での入力・表示確認の代わりにはなりません。
+スモークテストはウィンドウなしで、Pluginの依存順序、イベント・得点・勝利・再開始、任意Pluginの有無、描画バッファ、両Workerからのスナップショット受信と終了を確認します。単一Appの決定的なテストも残していますが、シングルスレッドは製品向けの推奨構成ではありません。
 
 開発用に、ウィンドウなしで最初のフレームをPPM画像として保存できます。
 
-```sh
+```powershell
 cargo run -p charon-m1-sample --no-default-features -- --snapshot m1.ppm
 ```

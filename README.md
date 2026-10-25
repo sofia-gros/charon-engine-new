@@ -4,10 +4,13 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 - **小さな Core：** Core は Plugin の登録、ライフサイクル、更新順序、イベント・リソースの受け渡しを担当します。物理世界や描画方式を固定しません。
 - **独立した部品：** Falling Sand、Tilemap、Sprite、Rendering、Lighting、Assets、Input、Camera / Scene を独立した Plugins として組み合わせます。各機能のロジックをライブラリとして分離し、Plugin は Core への接続を担います。
+- **TilemapとFalling Sandの連携：** 任意のBridge Pluginで双方向コリジョンを接続し、ブロックの破壊から砂・水を生成する規則もゲーム側で制御できるAPIを用意します。Tilemapのみ・Falling Sandのみでも利用できる構成を維持します。
 - **共有できるライティング：** Tilemap と Falling Sand のどちらからも、共通の遮光・発光データへ変換して照明を計算します。照明の計算と描画への適用も分離します。
 - **選べる抽象度：** 各部品を直接使える低レベルAPIと、Plugins を登録してゲームを起動できる高レベルAPIを公開する方針です。
 
 たとえば、Tilemap と Sprite を使う2Dゲーム、Falling Sand を使うサンドボックス、Falling Sand を背景に使ったノベルゲーム。必要な Plugins を選んで構成できるエンジンにしていきます。Falling Sand を使わないゲームも、同じ Core で動かせることを設計条件にします。
+
+標準はマルチスレッド構成です。ゲーム144Hz・レンダリング60Hz・計算30〜60Hzを独立した目標周期とし、各レーンをスナップショットとコマンドで接続します。シングルスレッドは検証・デバッグ向けです。
 
 ## 開発状況
 
@@ -20,20 +23,20 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 | セル単位の物理演算、密度による移動、燃焼・蒸発・溶解などの反応 | 実装済み |
 | 2バイトのセルデータ、32×32チャンクによる更新対象の管理 | 実装済み |
 | 粒子を押しのける可動ブロック | 実装済み |
-| 独立した Tilemap / Sprite Plugins | 計画中 |
+| 独立した Tilemap / Sprite Plugins と、Falling Sandとの双方向コリジョンAPI | 計画中 |
 | Assets Plugin によるアセットの読み込み・管理 | 計画中 |
 | Rendering Plugin と Shader、交換可能なGPUバックエンド | 計画中 |
 | Lighting Plugin による遮光・光の伝播・AO・発光。Tilemap / Falling Sand の両方に対応 | 計画中 |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
 | Phaser に影響を受けた Camera / Scene Plugins | 計画中 |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
-| Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・自動確認・CI配布手順を用意。実機確認待ち |
+| Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
 
 軽量・高性能はエンジン全体の開発目標です。現在の物理ライブラリには、毎 tick のセルバッファ全体のコピーなど、最適化の余地があります。また、砂の自然な安息角、セル単位の速度、温度伝導、粘性・表面張力は未実装です。
 
 ## M1 ゲームサンプル
 
-[Gem Run](./samples/m1-plugin-game/README.md) で、Pluginの組み合わせ、固定tick、イベントによる得点処理を確認できます。Windows 11向け実行ファイルはCIのArtifactsから取得できます。操作・実機確認のチェックリストはサンプルのREADMEを参照してください。
+[Gem Run](./samples/m1-plugin-game/README.md) で、Pluginの組み合わせ、固定tick、イベントによる得点処理を確認できます。Rust導入済みのWindows 11では、リポジトリのルートから次のコマンドで起動できます。操作・実機確認のチェックリストはサンプルのREADMEを参照してください。
 
 ```sh
 cargo run --release -p charon-m1-sample

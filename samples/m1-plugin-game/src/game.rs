@@ -19,6 +19,7 @@ pub enum Status {
     Lost,
 }
 
+#[derive(Clone)]
 pub struct Game {
     pub player: (i32, i32),
     pub gems: Vec<(i32, i32)>,
@@ -49,7 +50,7 @@ impl Default for Game {
 
 impl Game {
     pub fn hazard(&self) -> (i32, i32) {
-        let phase = ((self.ticks / 12) % 52) as i32;
+        let phase = (((60.0 - self.remaining) * 5.0) as i32) % 52;
         (5 + if phase < 26 { phase } else { 51 - phase }, 10)
     }
 }
@@ -193,14 +194,16 @@ impl Plugin for ScorePlugin {
     }
 }
 
+#[derive(Clone, Copy)]
 pub struct Glow(pub u32);
 pub struct PulsePlugin;
 impl Plugin for PulsePlugin {
+    fn after(&self) -> &[&'static str] {
+        &["game"]
+    }
+
     fn name(&self) -> &'static str {
         "pulse"
-    }
-    fn dependencies(&self) -> &[&'static str] {
-        &["game"]
     }
     fn before(&self) -> &[&'static str] {
         &["view"]
@@ -210,8 +213,9 @@ impl Plugin for PulsePlugin {
         trace(world, "pulse:init");
         Ok(())
     }
-    fn frame_update(&mut self, world: &mut World, step: Step) -> PluginResult {
-        world.get_mut::<Glow>().ok_or("glow missing")?.0 = ((step.index / 2) % 20) as u32;
+    fn fixed_update(&mut self, world: &mut World, step: Step) -> PluginResult {
+        world.get_mut::<Glow>().ok_or("glow missing")?.0 =
+            ((step.index as f64 * step.delta.as_secs_f64() * 30.0) as u32) % 20;
         Ok(())
     }
     fn shutdown(&mut self, world: &mut World) -> PluginResult {
@@ -225,7 +229,7 @@ pub fn make_app(effects: bool) -> Result<App, CoreError> {
     let mut app = App::new();
     app.world_mut().insert(Trace::default());
     // Intentionally register the view first to demonstrate dependency resolution.
-    app.add_plugin(crate::view::ViewPlugin)?;
+    app.add_plugin(crate::view::ViewPlugin::local())?;
     app.add_plugin(ScorePlugin)?;
     if effects {
         app.add_plugin(PulsePlugin)?;

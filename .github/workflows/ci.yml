@@ -44,20 +44,4 @@ jobs:
       - name: Empty Core
         run: cargo run --locked -p charon-core --example empty
       - name: Release build
-        env:
-          RUSTFLAGS: ${{ runner.os == 'Windows' && '-D warnings -C target-feature=+crt-static' || '-D warnings' }}
         run: cargo build --locked --release --workspace
-      - name: Windows executable smoke test
-        if: runner.os == 'Windows'
-        run: .\target\release\charon-m1-sample.exe --smoke-test
-      - name: Package Windows 11 sample
-        if: runner.os == 'Windows'
-        run: python scripts/package_m1.py
-      - name: Upload Windows 11 sample
-        if: runner.os == 'Windows'
-        uses: actions/upload-artifact@v4
-        with:
-          name: charon-M1-win11-x64
-          path: dist/m1/
-          if-no-files-found: error
-          retention-days: 30

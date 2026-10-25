@@ -57,13 +57,27 @@ impl Canvas {
     }
 }
 
-pub struct ViewPlugin;
+pub struct ViewPlugin {
+    sources: &'static [&'static str],
+}
+impl ViewPlugin {
+    pub fn local() -> Self {
+        Self {
+            sources: &["game", "score"],
+        }
+    }
+    pub fn snapshot() -> Self {
+        Self {
+            sources: &["snapshot"],
+        }
+    }
+}
 impl Plugin for ViewPlugin {
     fn name(&self) -> &'static str {
         "view"
     }
     fn dependencies(&self) -> &[&'static str] {
-        &["game", "score"]
+        self.sources
     }
     fn init(&mut self, world: &mut World) -> PluginResult {
         world.insert(Canvas::default());
@@ -154,7 +168,9 @@ fn render(world: &World, c: &mut Canvas, step: Step) -> PluginResult {
         2,
         0xc4d0e9,
     );
-    let plugins = if glow.is_some() {
+    let plugins = if world.get::<crate::threaded::Metrics>().is_some() {
+        "GAME + SCORE / SNAPSHOT / VIEW"
+    } else if glow.is_some() {
         "GAME > SCORE > PULSE > VIEW"
     } else {
         "GAME > SCORE > VIEW / PULSE OFF"
@@ -163,10 +179,22 @@ fn render(world: &World, c: &mut Canvas, step: Step) -> PluginResult {
     c.text(
         48,
         674,
-        &format!("FIXED 60 HZ / FRAME {} / SAMPLE SOFTWARE VIEW", step.index),
+        &format!("TARGET GAME 144 HZ / RENDER 60 HZ / FRAME {}", step.index),
         1,
         0x92a5ca,
     );
+    if let Some(stats) = world.get::<crate::threaded::Metrics>() {
+        c.text(
+            48,
+            689,
+            &format!(
+                "COMPUTE TARGET {} HZ / STEPS {} / GAME STEPS {}",
+                stats.hz, stats.steps, stats.game_steps
+            ),
+            1,
+            0x92a5ca,
+        );
+    }
     if game.paused || game.status != Status::Playing {
         c.rect(230, 275, 500, 140, 0x0b1020);
         c.rect(230, 275, 500, 3, 0x56e5b2);
@@ -176,7 +204,12 @@ fn render(world: &World, c: &mut Canvas, step: Step) -> PluginResult {
             Status::Playing => "PAUSED",
         };
         c.text(270, 305, message, 3, 0xffd778);
-        c.text(270, 365, "P RESUME / R RESTART", 2, 0xc4d0e9);
+        let controls = if game.status == Status::Playing {
+            "P RESUME / R RESTART"
+        } else {
+            "R RESTART / ESC QUIT"
+        };
+        c.text(270, 365, controls, 2, 0xc4d0e9);
     }
     Ok(())
 }
@@ -220,6 +253,7 @@ fn glyph(c: char) -> [u8; 7] {
         '7' => [31, 1, 2, 4, 8, 8, 8],
         '8' => [14, 17, 17, 14, 17, 17, 14],
         '9' => [14, 17, 17, 15, 1, 1, 14],
+        '+' => [0, 4, 4, 31, 4, 4, 0],
         '/' => [1, 1, 2, 4, 8, 16, 16],
         '>' => [16, 8, 4, 2, 4, 8, 16],
         '!' => [4, 4, 4, 4, 4, 0, 4],

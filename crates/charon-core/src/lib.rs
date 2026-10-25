@@ -1,10 +1,12 @@
-//! Small, single-threaded plugin runtime with no platform or game dependencies.
+//! Small plugin runtime with independent fixed-rate workers and no platform or game dependencies.
 //!
 //! The host owns the clock and calls [`App::advance`], or drives fixed and frame
 //! stages explicitly. A plugin is compiled into the application; dynamic loading
 //! is outside M1. See `docs/architecture.md` in the repository for the contract.
 
+mod worker;
 mod world;
+pub use worker::{Worker, WorkerConfig, WorkerError, WorkerHooks, WorkerReport};
 pub use world::World;
 
 use std::error::Error;
@@ -150,7 +152,7 @@ pub struct App {
 
 impl Default for App {
     fn default() -> Self {
-        Self::with_timing(Duration::from_secs_f64(1.0 / 60.0), 8).expect("default timing is valid")
+        Self::with_timing(Duration::from_secs_f64(1.0 / 144.0), 8).expect("default timing is valid")
     }
 }
 
