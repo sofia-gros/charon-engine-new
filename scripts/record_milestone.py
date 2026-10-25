@@ -205,6 +205,12 @@ def record(milestone,output,xvfb,display):
                     time.sleep(0.8)
                 elif milestone.startswith("m6-rt"):
                     action("Start coupled world (Enter)",lambda:connection.key("Return"))
+                    ready = "LIGHTING SWITCH: LitePath" if milestone=="m6-rt-mobile" else "LIGHTING SWITCH: Path"
+                    deadline = time.monotonic() + 30
+                    while ready not in (temporary/"app.log").read_text():
+                        if app.poll() is not None or time.monotonic() >= deadline:
+                            raise RuntimeError("first world tracing dispatch did not become ready")
+                        time.sleep(0.1)
                     time.sleep(0.7)
                     action("Open lighting settings (C)",lambda:connection.key("c"))
                     time.sleep(0.6)

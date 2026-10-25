@@ -115,8 +115,8 @@ impl TraceScene {
                 grid.raster_rect([x, y, old.cell_size, old.cell_size], *optic)?;
             }
             if let Some(j) = geometry.index([x + old.cell_size * 0.5, y + old.cell_size * 0.5]) {
-                for c in 0..3 {
-                    sources[j][c] = sources[j][c].max(input.sources[i][c]);
+                for (value, source) in sources[j].iter_mut().zip(input.sources[i]) {
+                    *value = (*value).max(source);
                 }
             }
         }
