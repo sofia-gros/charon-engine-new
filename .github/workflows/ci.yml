@@ -47,6 +47,14 @@ jobs:
         run: python scripts/check_m4_dependencies.py
       - name: M5 optional input camera scene boundaries
         run: python scripts/check_m5_dependencies.py
+      - name: M6 facade and direct API dependency boundaries
+        run: python scripts/check_m6_dependencies.py
+      - name: M6 core-only facade
+        run: cargo test --locked -p charon_engine --no-default-features
+      - name: Public API documentation
+        env:
+          RUSTDOCFLAGS: "-D warnings"
+        run: cargo doc --locked --workspace --all-features --no-deps
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Unit, integration, sample, and doc tests
@@ -119,8 +127,34 @@ jobs:
         env:
           XDG_RUNTIME_DIR: /tmp
         run: xvfb-run -a cargo run --locked -p charon-m5-sample --no-default-features -- --gpu-check
+      - name: M6 high and low API game parity and lifecycle
+        run: cargo run --locked -p charon-m6-sample -- --smoke-test
+      - name: M6 without Falling Sand
+        run: cargo run --locked -p charon-m6-sample --no-default-features --features lighting -- --smoke-test
+      - name: M6 without Lighting or Falling Sand
+        run: cargo run --locked -p charon-m6-sample --no-default-features -- --smoke-test
+      - name: M6 native high API and world light sample
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m6-sample -- --api high --gpu-check
+      - name: M6 native low API and world light sample
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m6-sample -- --api low --gpu-check
+      - name: M6 native lit Tilemap without Falling Sand
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m6-sample --no-default-features --features lighting -- --api high --gpu-check
+      - name: M6 native without Lighting or Falling Sand
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m6-sample --no-default-features -- --api low --gpu-check
       - name: Empty Core
-        run: cargo run --locked -p charon-core --example empty
+        run: cargo run --locked -p charon_core --example empty
       - name: Release build
         run: cargo build --locked --release --workspace
 
@@ -215,3 +249,49 @@ jobs:
           path: |
             docs/demos/m5-demo.*
             docs/demos/m5-tilemap-demo.*
+
+  record-m6:
+    name: Record native M6 operation examples
+    needs: build-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether examples already exist
+        id: media
+        shell: bash
+        run: |
+          if test -f docs/demos/m6-demo.gif && test -f docs/demos/m6-low-demo.gif; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.media.outputs.needed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.media.outputs.needed == 'true'
+      - name: Install recording dependencies
+        if: steps.media.outputs.needed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0 libxtst6 ffmpeg
+      - name: Build and record actual native windows
+        if: steps.media.outputs.needed == 'true'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: |
+          cargo build --locked --release -p charon-m6-sample
+          python scripts/record_milestone.py m6
+          python scripts/record_milestone.py m6-low
+      - name: Store immutable media blobs for reviewed publication
+        if: steps.media.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_demo_blobs.py m6
+      - uses: actions/upload-artifact@v4
+        if: steps.media.outputs.needed == 'true'
+        with:
+          name: m6-native-operation-examples
+          path: |
+            docs/demos/m6-demo.*
+            docs/demos/m6-low-demo.*

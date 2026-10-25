@@ -10,7 +10,7 @@ default = ["bridge"]
 bridge = ["dep:charon_bridge", "dep:charon_physics", "dep:charon_sand_render"]
 
 [dependencies]
-charon-core = { path = "../../crates/charon-core" }
+charon_core = { path = "../../crates/charon_core" }
 charon_assets = { path = "../../crates/charon_assets" }
 charon_tilemap = { path = "../../crates/charon_tilemap" }
 charon_render = { path = "../../crates/charon_render", features = ["gpu"] }

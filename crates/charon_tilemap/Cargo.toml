@@ -6,8 +6,8 @@ license = "MIT"
 
 [features]
 default = []
-plugin = ["dep:charon-core"]
+plugin = ["dep:charon_core"]
 
 [dependencies]
-charon-core = { path = "../charon-core", optional = true }
+charon_core = { path = "../charon_core", optional = true }
 

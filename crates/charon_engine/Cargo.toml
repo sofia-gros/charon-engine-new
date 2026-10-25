@@ -1,0 +1,36 @@
+[package]
+name = "charon_engine"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "Optional high-level composition API for charon-engine"
+repository = "https://github.com/sofia-gros/charon-engine-new"
+readme = "README.md"
+
+[features]
+default = []
+input = ["dep:charon_input"]
+camera = ["dep:charon_camera"]
+scenes = ["dep:charon_scene"]
+assets = ["dep:charon_assets"]
+interaction = ["input", "camera", "assets"]
+lighting = ["dep:charon_lighting"]
+tilemap = ["dep:charon_tilemap"]
+render = ["dep:charon_render"]
+gpu = ["render", "charon_render/gpu"]
+physics = ["dep:charon_physics"]
+sand = ["physics", "dep:charon_sand"]
+bridge = ["sand", "tilemap", "dep:charon_bridge"]
+
+[dependencies]
+charon_core = { path = "../charon_core", version = "0.1.0" }
+charon_input = { path = "../charon_input", version = "0.1.0", features = ["plugin"], optional = true }
+charon_camera = { path = "../charon_camera", version = "0.1.0", features = ["plugin"], optional = true }
+charon_scene = { path = "../charon_scene", version = "0.1.0", features = ["plugin"], optional = true }
+charon_assets = { path = "../charon_assets", version = "0.1.0", optional = true }
+charon_lighting = { path = "../charon_lighting", version = "0.1.0", optional = true }
+charon_tilemap = { path = "../charon_tilemap", version = "0.1.0", features = ["plugin"], optional = true }
+charon_render = { path = "../charon_render", version = "0.1.0", optional = true }
+charon_physics = { path = "../..", version = "0.2.0", optional = true }
+charon_sand = { path = "../charon_sand", version = "0.1.0", optional = true }
+charon_bridge = { path = "../charon_bridge", version = "0.1.0", optional = true }

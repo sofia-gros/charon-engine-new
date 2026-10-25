@@ -11,7 +11,7 @@ bridge = ["charon-m3-sample/bridge", "charon-m4-sample/bridge", "dep:charon_phys
 lighting = ["charon-m4-sample/lighting"]
 
 [dependencies]
-charon-core = { path = "../../crates/charon-core" }
+charon_core = { path = "../../crates/charon_core" }
 charon_input = { path = "../../crates/charon_input", features = ["plugin"] }
 charon_input_winit = { path = "../../crates/charon_input_winit" }
 charon_camera = { path = "../../crates/charon_camera", features = ["plugin"] }

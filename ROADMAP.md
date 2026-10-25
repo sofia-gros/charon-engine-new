@@ -37,7 +37,7 @@ Terraria からはタイルマップ主体の2D世界、Noita からは Falling 
 - [x] 元のMIT表記と sofia-gros の変更分を明記する
 - [x] エンジンの Core と Plugin インターフェースを実装する
 
-現在の crate 名は `charon_physics` です。物理ライブラリの抽出と、独立した `charon-core` の最小実装が完了しています。Falling Sand の Plugin 化と物質登録はM2で実装済みです。
+現在の crate 名は `charon_physics` です。物理ライブラリの抽出と、独立した `charon_core` の最小実装が完了しています。Falling Sand の Plugin 化と物質登録はM2で実装済みです。
 
 ## 大きな目標
 
@@ -217,4 +217,4 @@ Rust導入済みの環境を前提に、配布用exeの事前生成は必須に�
 - 各部品の単体動作と、追加しない構成も検証する。
 - 完了した項目とREADMEの開発状況を更新する。
 
-**次の実装：** M6の低レベルAPI / 高レベルAPI。各サンプルのWindows 11実機確認は別途記録する。
+**進行中：** M6の低レベルAPI / 高レベルAPI。各サンプルのWindows 11実機確認は別途記録する。

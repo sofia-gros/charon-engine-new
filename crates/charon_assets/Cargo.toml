@@ -5,5 +5,5 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
-charon-core = { path = "../charon-core" }
+charon_core = { path = "../charon_core" }
 image = { version = "0.25", default-features = false, features = ["png"] }

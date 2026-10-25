@@ -2,12 +2,12 @@
 
 ## 依存方向
 
-`charon-core` は標準ライブラリだけに依存します。Falling Sand、Tilemap、描画、ライティング、ウィンドウは含みません。
+`charon_core` は標準ライブラリだけに依存します。Falling Sand、Tilemap、描画、ライティング、ウィンドウは含みません。
 
 ```text
-ホストアプリ ──→ charon-core
+ホストアプリ ──→ charon_core
      │
-     └──→ 機能の Plugin ──→ charon-core
+     └──→ 機能の Plugin ──→ charon_core
                   │
                   └──→ 独立した機能ライブラリ
 
@@ -18,9 +18,9 @@ M1のworkspaceは次の構成です。
 
 | package | 役割 | 依存 |
 | --- | --- | --- |
-| `charon-core` | 最小実行基盤 | なし（stdのみ） |
+| `charon_core` | 最小実行基盤 | なし（stdのみ） |
 | `charon_physics` | 既存の独立した物理ライブラリ | rand / glam |
-| `charon-m1-sample` | M1のゲームとサンプル専用の表示 | charon-core / minifb（任意） |
+| `charon-m1-sample` | M1のゲームとサンプル専用の表示 | charon_core / minifb（任意） |
 
 `charon_physics` の Plugin 化はM2です。M1サンプルのソフトウェア表示・入力は、M3以降の正式な描画・入力APIの実装を意味しません。将来の機能はCoreへ直接追加せず、それぞれのライブラリと登録用Pluginとして作ります。
 
@@ -110,9 +110,9 @@ TilemapとFalling Sandの接続は、[専用のAPI契約](./tilemap-falling-sand
 ## 確認方法
 
 ```sh
-cargo run -p charon-core --example empty
-cargo test -p charon-core
-cargo tree -p charon-core
+cargo run -p charon_core --example empty
+cargo test -p charon_core
+cargo tree -p charon_core
 python scripts/check_core_dependencies.py
 cargo run -p charon-m1-sample --no-default-features -- --smoke-test
 ```

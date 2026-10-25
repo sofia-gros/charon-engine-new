@@ -29,7 +29,7 @@ M5までの基盤を実装しています。Core、独立した物理ライブ�
 | Assets Plugin、型付きハンドル、PNG・Shaderソースの読み込み・解放 | M3実装済み |
 | Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
 | 共通光学データ、遮光・伝播・AO・発光、独立したGPU計算と描画合成 | M4実装済み |
-| 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
+| 低レベルAPIと任意のcharon_engine、起動設定・Pluginセット・Sceneカタログ | M6実装・完了検証中 |
 | Input、Cameraの移動・ズーム・逆変換、Sceneとリソース所有権 | M5実装済み |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
 | Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
@@ -120,6 +120,17 @@ cargo run --release -p charon-m5-sample --no-default-features --features lightin
 
 [Input / Camera / Scene API](./docs/input-camera-scene-api.md)。Enterで開始、矢印でCamera移動、Q/E・ホイールでズーム、クリックで編集、Rで再開始、Tabでメニューへ戻ります。
 
+### M6：低レベルAPI / 高レベルAPI
+
+[API Lab](./samples/m6-api-lab/README.md)では、同じゲームを個別部品の直接登録と `charon_engine` の構成APIで起動できます。起動設定・Pluginセット・Sceneカタログを利用し、高レベルAPIからもApp・Worldを直接操作できます。
+
+```sh
+cargo run --release -p charon-m6-sample -- --api high
+cargo run --release -p charon-m6-sample -- --api low
+```
+
+Uでワールド座標の照明を取得し、Zで照明解像度を切り替えます。[公開APIと移行ガイド](./docs/api-guide.md) / [Feature一覧](./crates/charon_engine/README.md)。現在は完了検証と操作GIFの反映を進めています。
+
 ## 開発環境
 
 Edition 2024に対応した最新のstable Rustを使用してください。ゲームサンプルの起動コマンドは上の各実装事例に記載しています。
@@ -135,7 +146,7 @@ Edition 2024に対応した最新のstable Rustを使用してください。ゲ
 - [Physics](./src/sim/physics.rs)：物質ごとの移動と反応
 - [Block](./src/sim/block.rs)：可動ブロックと粒子の押し出し
 
-[M3のAssets / Tilemap / Rendering / Bridge API](./docs/m3-api.md)と、[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon-core` は物理・描画・ウィンドウに依存しません。
+[M3のAssets / Tilemap / Rendering / Bridge API](./docs/m3-api.md)と、[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon_core` は物理・描画・ウィンドウに依存しません。
 
 APIドキュメントは `cargo doc --no-deps --open` で確認できます。Input / Camera / SceneのAPIと所有権は[専用ドキュメント](./docs/input-camera-scene-api.md)に記載しています。
 

@@ -17,6 +17,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
+    "m6": ("charon-m6-sample", "Charon M6 / API Lab", "M6 high-level API example"),
+    "m6-low": ("charon-m6-sample", "Charon M6 / API Lab", "M6 low-level API example"),
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
     "m5": ("charon-m5-sample", "Charon M5 / Scene Lab", "M5 complete"),
     "m5-tilemap": ("charon-m5-sample", "Charon M5 / Scene Lab", "M5 tilemap-only scene example"),
@@ -151,6 +153,8 @@ def record(milestone,output,xvfb,display):
                 if connection is None:
                     raise RuntimeError("Xvfb did not become ready")
                 app_args = ["--tilemap-only"] if milestone in ("m3-tilemap", "m4-tilemap", "m5-tilemap") else []
+                if milestone.startswith("m6"):
+                    app_args = ["--api", "low" if milestone == "m6-low" else "high"]
                 app = subprocess.Popen([str(executable), *app_args],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
                 window = None
                 for _ in range(100):
@@ -164,9 +168,9 @@ def record(milestone,output,xvfb,display):
                     raise RuntimeError("sample window not found")
                 # Creating a window precedes GPU/pipeline setup. Start the recording
                 # and input only after Scene Lab has submitted its first real frame.
-                if milestone.startswith("m5"):
+                if milestone.startswith(("m5", "m6")):
                     deadline = time.monotonic() + 30
-                    while "M5 READY: first frame presented" not in (temporary/"app.log").read_text():
+                    while f"{milestone[:2].upper()} READY: first frame presented" not in (temporary/"app.log").read_text():
                         if app.poll() is not None:
                             raise RuntimeError("sample exited before its first frame")
                         if time.monotonic() >= deadline:
@@ -195,9 +199,15 @@ def record(milestone,output,xvfb,display):
                     action("Resume (P)",lambda:connection.key("p"))
                     action("Restart (R)",lambda:connection.key("r"))
                     time.sleep(0.8)
-                elif milestone.startswith("m5"):
+                elif milestone.startswith(("m5", "m6")):
                     action("Start game scene (Enter)",lambda:connection.key("Return"))
                     time.sleep(0.6)
+                    if milestone.startswith("m6"):
+                        action("Sample GPU light at world (252,132) (U)",lambda:connection.key("u"))
+                        time.sleep(0.3)
+                        action("Change lighting resolution (Z)",lambda:connection.key("z"))
+                        action("Resample light through selected API (U)",lambda:connection.key("u"))
+                        time.sleep(0.3)
                     action("Move player (D)",lambda:connection.key("d",0.25))
                     action("Pan camera right (ArrowRight)",lambda:connection.key("Right",0.25))
                     action("Zoom camera at pointer (E)",lambda:(connection.move(x+480,y+360),connection.key("e",0.28)))
@@ -281,8 +291,8 @@ def record(milestone,output,xvfb,display):
                 app.wait(timeout=5)
                 if app.returncode:
                     raise RuntimeError("sample did not shut down successfully")
-                gif_fps = 10 if milestone.startswith(("m4", "m5")) else 12
-                gif_width = 640 if milestone.startswith(("m4", "m5")) else 768
+                gif_fps = 10 if milestone.startswith(("m4", "m5", "m6")) else 12
+                gif_width = 640 if milestone.startswith(("m4", "m5", "m6")) else 768
                 filters = f"fps={gif_fps},scale={gif_width}:-1:flags=lanczos"
                 palette = temporary/"palette.png"
                 subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(video),"-vf",filters+",palettegen=max_colors=128",str(palette)],check=True)
@@ -292,7 +302,7 @@ def record(milestone,output,xvfb,display):
                     "sample_commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
                     "recorded_at":datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"),
                     "environment":platform.platform(),"display":"Linux Xvfb; actual native window and XTest input",
-                    "windows_11_verified":False,"sample_command":f"cargo run --release -p {binary}" + (" -- --tilemap-only" if app_args else ""),
+                    "windows_11_verified":False,"sample_command":f"cargo run --release -p {binary}" + (" -- " + " ".join(app_args) if app_args else ""),
                     "gif_fps":gif_fps,"gif_width":gif_width,"actions":actions,
                 }
                 output.with_suffix(".json").write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")

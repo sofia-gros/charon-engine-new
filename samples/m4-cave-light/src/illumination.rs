@@ -187,6 +187,14 @@ impl Illumination {
         }
         Ok(())
     }
+    /// Low-level optical input for API examples and diagnostics.
+    pub fn scene(&self) -> &Scene {
+        &self.scene
+    }
+    /// Explicit synchronous diagnostic readback; do not call every render frame.
+    pub fn readback(&mut self) -> Result<LightField, String> {
+        self.gpu.readback()
+    }
     pub fn verify(&mut self) -> Result<(), String> {
         let actual = self.gpu.readback()?;
         let expected = solve_cpu(&self.scene.prepare())?;

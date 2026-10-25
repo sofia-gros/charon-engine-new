@@ -233,6 +233,31 @@ impl SceneLogic for Cave {
         Ok(())
     }
 }
+/// Create the existing game logic with an externally configured scene scope.
+pub fn menu_scene(ctx: Context, mut app: App, client: InputClient) -> Box<dyn charon_scene::Scene> {
+    app.world_mut().insert(Frontend(client));
+    Box::new(ScopedScene::new(
+        app,
+        Menu {
+            prefer_sand: ctx.prefer_sand,
+        },
+    ))
+}
+pub fn game_scene(
+    ctx: Context,
+    app: App,
+    name: &str,
+    coupled: bool,
+) -> Box<dyn charon_scene::Scene> {
+    Box::new(ScopedScene::new(
+        app,
+        Cave {
+            ctx,
+            coupled,
+            name: name.into(),
+        },
+    ))
+}
 pub fn manager(ctx: Context) -> Result<SceneManager, String> {
     let mut manager = SceneManager::new();
     let menu_ctx = ctx.clone();
@@ -242,13 +267,7 @@ pub fn manager(ctx: Context) -> Result<SceneManager, String> {
         app.add_plugin(plugin).map_err(|e| e.to_string())?;
         app.add_plugin(AssetsPlugin::default())
             .map_err(|e| e.to_string())?;
-        app.world_mut().insert(Frontend(client));
-        Ok(Box::new(ScopedScene::new(
-            app,
-            Menu {
-                prefer_sand: menu_ctx.prefer_sand,
-            },
-        )))
+        Ok(menu_scene(menu_ctx.clone(), app, client))
     })?;
     for (name, coupled) in [("sand-game", true), ("tile-game", false)] {
         let ctx = ctx.clone();
@@ -256,14 +275,7 @@ pub fn manager(ctx: Context) -> Result<SceneManager, String> {
             let mut app = App::new();
             app.add_plugin(AssetsPlugin::default())
                 .map_err(|e| e.to_string())?;
-            Ok(Box::new(ScopedScene::new(
-                app,
-                Cave {
-                    ctx: ctx.clone(),
-                    coupled,
-                    name: name.into(),
-                },
-            )))
+            Ok(game_scene(ctx.clone(), app, name, coupled))
         })?;
     }
     manager.switch_to("menu")?;
@@ -486,6 +498,11 @@ pub fn wait(
     }
 }
 pub fn smoke() -> Result<(), Box<dyn std::error::Error>> {
+    smoke_with(manager)
+}
+pub fn smoke_with(
+    factory: fn(Context) -> Result<SceneManager, String>,
+) -> Result<(), Box<dyn std::error::Error>> {
     for hz in [30, 60] {
         for coupled in [false, true] {
             if coupled && !cfg!(feature = "bridge") {
@@ -497,7 +514,7 @@ pub fn smoke() -> Result<(), Box<dyn std::error::Error>> {
                 hz,
                 prefer_sand: coupled,
             };
-            let mut m = manager(ctx)?;
+            let mut m = factory(ctx)?;
             pulse(&m, keys::ENTER)?;
             wait(&mut m, |m| session(m).is_some())?;
             let s = session(&m).unwrap();

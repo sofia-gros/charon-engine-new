@@ -62,7 +62,7 @@ Windows 11実機の画面・入力は別途確認が必要です。自動テス�
 ## 自動確認
 
 ```powershell
-cargo test -p charon-sand
+cargo test -p charon_sand
 cargo run -p charon-m2-sample --no-default-features -- --smoke-test
 ```
 

@@ -1,0 +1,16 @@
+[package]
+name = "charon-m6-sample"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["bridge", "lighting"]
+bridge = ["charon-m5-sample/bridge"]
+lighting = ["charon-m5-sample/lighting", "charon_engine/lighting"]
+
+[dependencies]
+charon_engine = { path = "../../crates/charon_engine", features = ["interaction", "scenes"] }
+charon-m5-sample = { path = "../m5-scene-lab", default-features = false }
+charon_render = { path = "../../crates/charon_render", features = ["gpu"] }

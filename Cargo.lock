@@ -291,17 +291,13 @@ dependencies = [
 name = "charon-bench"
 version = "0.1.0"
 dependencies = [
- "charon-core",
- "charon-sand",
+ "charon_core",
  "charon_physics",
+ "charon_sand",
  "rand",
  "serde",
  "serde_json",
 ]
-
-[[package]]
-name = "charon-core"
-version = "0.1.0"
 
 [[package]]
 name = "charon-lighting-check"
@@ -318,7 +314,7 @@ dependencies = [
 name = "charon-m1-sample"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
  "minifb",
 ]
 
@@ -326,9 +322,9 @@ dependencies = [
 name = "charon-m2-sample"
 version = "0.1.0"
 dependencies = [
- "charon-core",
- "charon-sand",
+ "charon_core",
  "charon_physics",
+ "charon_sand",
  "minifb",
 ]
 
@@ -336,9 +332,9 @@ dependencies = [
 name = "charon-m3-sample"
 version = "0.1.0"
 dependencies = [
- "charon-core",
  "charon_assets",
  "charon_bridge",
+ "charon_core",
  "charon_physics",
  "charon_render",
  "charon_sand_render",
@@ -370,12 +366,12 @@ dependencies = [
 name = "charon-m5-sample"
 version = "0.1.0"
 dependencies = [
- "charon-core",
  "charon-m3-sample",
  "charon-m4-sample",
  "charon_assets",
  "charon_camera",
  "charon_camera_render",
+ "charon_core",
  "charon_input",
  "charon_input_winit",
  "charon_physics",
@@ -388,18 +384,19 @@ dependencies = [
 ]
 
 [[package]]
-name = "charon-sand"
+name = "charon-m6-sample"
 version = "0.1.0"
 dependencies = [
- "charon-core",
- "charon_physics",
+ "charon-m5-sample",
+ "charon_engine",
+ "charon_render",
 ]
 
 [[package]]
 name = "charon_assets"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
  "image",
 ]
 
@@ -407,7 +404,7 @@ dependencies = [
 name = "charon_bridge"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
  "charon_physics",
  "charon_tilemap",
 ]
@@ -416,7 +413,7 @@ dependencies = [
 name = "charon_camera"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
 ]
 
 [[package]]
@@ -428,10 +425,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon_core"
+version = "0.1.0"
+
+[[package]]
+name = "charon_engine"
+version = "0.1.0"
+dependencies = [
+ "charon_assets",
+ "charon_bridge",
+ "charon_camera",
+ "charon_core",
+ "charon_input",
+ "charon_lighting",
+ "charon_physics",
+ "charon_render",
+ "charon_sand",
+ "charon_scene",
+ "charon_tilemap",
+]
+
+[[package]]
 name = "charon_input"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
 ]
 
 [[package]]
@@ -446,7 +464,7 @@ dependencies = [
 name = "charon_lighting"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
 ]
 
 [[package]]
@@ -482,10 +500,18 @@ name = "charon_render"
 version = "0.1.0"
 dependencies = [
  "bytemuck",
- "charon-core",
  "charon_assets",
+ "charon_core",
  "wgpu",
  "winit",
+]
+
+[[package]]
+name = "charon_sand"
+version = "0.1.0"
+dependencies = [
+ "charon_core",
+ "charon_physics",
 ]
 
 [[package]]
@@ -509,14 +535,14 @@ dependencies = [
 name = "charon_scene"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
 ]
 
 [[package]]
 name = "charon_tilemap"
 version = "0.1.0"
 dependencies = [
- "charon-core",
+ "charon_core",
 ]
 
 [[package]]

@@ -1,6 +1,6 @@
 # M2：Falling Sand API
 
-物理を単体利用する `charon_physics` と、Coreへ接続する `charon-sand` を分けています。描画・Tilemap・GPUへの依存はありません。M2では物質登録・独自更新・安息角も実装しています。[物質API](./materials.md)を参照してください。
+物理を単体利用する `charon_physics` と、Coreへ接続する `charon_sand` を分けています。描画・Tilemap・GPUへの依存はありません。M2では物質登録・独自更新・安息角も実装しています。[物質API](./materials.md)を参照してください。
 
 ## 独立した物理API
 
@@ -61,10 +61,10 @@ ReceiptにはID・確定revision・結果・変更数・ブラシで処理でき
 ## 検証
 
 ```powershell
-cargo test -p charon-sand
+cargo test -p charon_sand
 cargo run -p charon-m2-sample --no-default-features -- --smoke-test
 cargo tree -p charon_physics --edges normal
-cargo tree -p charon-core
+cargo tree -p charon_core
 ```
 
 単体利用とPlugin経由の結果一致、外部コリジョン、チャンク境界の解除、質量保存、二重適用の拒否、結果キューのバックプレッシャー、部分初期化失敗時のリソース所有権を確認します。

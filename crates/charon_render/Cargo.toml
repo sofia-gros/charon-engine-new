@@ -9,7 +9,7 @@ default = []
 gpu = ["dep:wgpu", "dep:winit", "dep:bytemuck"]
 
 [dependencies]
-charon-core = { path = "../charon-core" }
+charon_core = { path = "../charon_core" }
 charon_assets = { path = "../charon_assets" }
 wgpu = { version = "26", optional = true }
 winit = { version = "0.30", optional = true }
