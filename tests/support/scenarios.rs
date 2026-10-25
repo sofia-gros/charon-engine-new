@@ -5,11 +5,11 @@
 //! sand-rain or volcano scenarios). Keeping the spawn as a tiny function
 //! rather than baked frames makes them indefinitely stable.
 
-use super::block::Block;
-use super::grid::Grid;
-use super::material::{Cell, CellData};
 use rand::Rng;
 use rand::RngExt;
+use sandengine::sim::block::Block;
+use sandengine::sim::grid::Grid;
+use sandengine::sim::material::{Cell, CellData};
 
 pub const NAMES: &[&str] = &[
     "Triangle on Floor",

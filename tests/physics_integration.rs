@@ -1,12 +1,15 @@
 //! End-to-end integration tests that exercise the simulation through more
 //! than a single tick and validate emergent properties.
 
+#[path = "support/scenarios.rs"]
+mod scenarios;
+
 use rand::SeedableRng;
 use rand::rngs::StdRng;
 use sandengine::sim::block::Block;
 use sandengine::sim::grid::Grid;
 use sandengine::sim::material::{Cell, CellData};
-use sandengine::sim::{physics, scenarios};
+use sandengine::sim::physics;
 
 /// Mass conservation: with no acid/fire/steam, sand should never appear or
 /// disappear under pure gravity. The block stays rasterized so physics

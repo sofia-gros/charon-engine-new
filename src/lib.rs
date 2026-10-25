@@ -15,6 +15,6 @@
 //! for _ in 0..30 { physics::step(&mut grid, &mut rng); }
 //! ```
 //!
-//! See the README for a survey of the literature and design references.
+//! Rendering, input, replay storage, and frame timing belong to the host application.
 
 pub mod sim;
