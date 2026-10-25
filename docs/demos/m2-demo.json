@@ -1,8 +1,8 @@
 {
   "milestone": "m2",
-  "status": "M2 in progress",
-  "sample_commit": "154aba191a29348841b3ed75db55b26f86d48c00",
-  "recorded_at": "2026-10-25T11:47:42+09:00",
+  "status": "M2 complete",
+  "sample_commit": "4ca8acba2a85b438a605ba8f350a13cbab6164c3",
+  "recorded_at": "2026-10-25T13:18:31+09:00",
   "environment": "Linux-6.18.55-x86_64-with-glibc2.41",
   "display": "Linux Xvfb; actual native window and XTest input",
   "windows_11_verified": false,
@@ -35,12 +35,40 @@
       "action": "Convert barrier into sand (B)"
     },
     {
-      "seconds": 6.47,
+      "seconds": 6.48,
       "action": "Pause (P)"
     },
     {
       "seconds": 7.26,
       "action": "Resume (P)"
+    },
+    {
+      "seconds": 7.94,
+      "action": "Register-demo cloud: select C"
+    },
+    {
+      "seconds": 8.12,
+      "action": "Paint cloud gas"
+    },
+    {
+      "seconds": 8.52,
+      "action": "Register-demo nitrogen: select N"
+    },
+    {
+      "seconds": 8.7,
+      "action": "Paint nitrogen gas"
+    },
+    {
+      "seconds": 9.7,
+      "action": "Select registered soil (9)"
+    },
+    {
+      "seconds": 9.88,
+      "action": "Paint soil near floor"
+    },
+    {
+      "seconds": 10.38,
+      "action": "Change selected material repose (A)"
     }
   ]
 }
