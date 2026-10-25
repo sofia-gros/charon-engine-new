@@ -393,6 +393,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-rt-sample"
+version = "0.1.0"
+dependencies = [
+ "charon-m5-sample",
+ "charon_assets",
+ "charon_core",
+ "charon_input",
+ "charon_render",
+ "charon_scene",
+ "charon_tracing",
+ "charon_tracing_gpu",
+ "pollster",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "charon-tracing-check"
+version = "0.1.0"
+dependencies = [
+ "charon_tracing",
+ "charon_tracing_gpu",
+ "pollster",
+]
+
+[[package]]
 name = "charon_assets"
 version = "0.1.0"
 dependencies = [
@@ -443,6 +469,8 @@ dependencies = [
  "charon_sand",
  "charon_scene",
  "charon_tilemap",
+ "charon_tracing",
+ "charon_tracing_gpu",
 ]
 
 [[package]]
@@ -559,6 +587,29 @@ version = "0.1.0"
 dependencies = [
  "charon_render",
  "charon_tilemap",
+]
+
+[[package]]
+name = "charon_tracing"
+version = "0.1.0"
+dependencies = [
+ "charon_lighting",
+ "charon_physics",
+ "charon_sand_lighting",
+ "charon_tilemap",
+ "charon_tilemap_lighting",
+]
+
+[[package]]
+name = "charon_tracing_gpu"
+version = "0.1.0"
+dependencies = [
+ "bytemuck",
+ "charon_core",
+ "charon_tracing",
+ "naga",
+ "pollster",
+ "wgpu",
 ]
 
 [[package]]

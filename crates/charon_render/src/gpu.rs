@@ -35,23 +35,51 @@ pub struct GpuRenderer {
     sampler: wgpu::Sampler,
     next_resource_id: u64,
     pub adapter_name: String,
+    pub adapter_features: wgpu::Features,
+    pub adapter_info: wgpu::AdapterInfo,
 }
 impl GpuRenderer {
     pub async fn new(window: Arc<Window>) -> Result<Self, String> {
+        Self::with_optional_features(window, wgpu::Backends::all(), wgpu::Features::empty()).await
+    }
+    /// Explicit optional device features for independent compute plugins. Defaults
+    /// remain unchanged; unsupported optional feature sets are not enabled.
+    pub async fn with_optional_features(
+        window: Arc<Window>,
+        backends: wgpu::Backends,
+        optional: wgpu::Features,
+    ) -> Result<Self, String> {
         let size = window.inner_size();
-        let instance = wgpu::Instance::default();
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends,
+            ..Default::default()
+        });
         let surface = instance.create_surface(window).map_err(|e| e.to_string())?;
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 compatible_surface: Some(&surface),
+                power_preference: wgpu::PowerPreference::HighPerformance,
                 ..Default::default()
             })
             .await
             .map_err(|e| e.to_string())?;
-        let adapter_name = adapter.get_info().name;
+        let adapter_info = adapter.get_info();
+        let adapter_name = adapter_info.name.clone();
+        let adapter_features = adapter.features();
+        let optional = if adapter.features().contains(optional) {
+            optional
+        } else {
+            wgpu::Features::empty()
+        };
+        let mut limits = wgpu::Limits::default();
+        if optional.contains(wgpu::Features::EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE) {
+            limits = limits.using_minimum_supported_acceleration_structure_values();
+        }
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
-                required_features: adapter.features() & wgpu::Features::TIMESTAMP_QUERY,
+                required_features: (adapter.features() & wgpu::Features::TIMESTAMP_QUERY)
+                    | optional,
+                required_limits: limits,
                 ..Default::default()
             })
             .await
@@ -110,6 +138,8 @@ impl GpuRenderer {
             params_layout,
             sampler,
             adapter_name,
+            adapter_features,
+            adapter_info,
             next_resource_id: 100,
         };
         renderer

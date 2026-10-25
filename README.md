@@ -137,6 +137,17 @@ cargo run --release -p charon-m6-sample -- --api low
 
 Uでワールド座標の照明を取得し、Zで照明解像度を切り替えます。[公開APIと移行ガイド](./docs/api-guide.md) / [Feature一覧](./crates/charon_engine/README.md)。HIGH/LOWは同じworld・ゲームロジックを使い、Falling Sandや照明を依存から除いた構成でも動きます。
 
+### M6.1：RTX / Path / Mobile Lite照明
+
+[Lighting Lab](./samples/rt-light-lab/README.md)でPCのRTX・Path・既存照明、Mobile向けLite・既存照明を切り替えます。タイルと粒子の両方を共通光学データから照らします。設定画面・ファイル読込・選択判断はデモ側に置き、Pluginは能力取得と切り替えのAPIを公開します。未対応モードの変更はfalseになります。
+
+```sh
+cargo run --release -p charon-rt-sample
+cargo run --release -p charon-rt-sample --no-default-features -- --mobile
+```
+
+[APIとRTXの検証分担](./docs/tracing-api.md)。Path/Liteの最終確認と録画を進めています。RTX実機の検証はユーザーが担当します。
+
 ## 開発環境
 
 Edition 2024に対応した最新のstable Rustを使用してください。ゲームサンプルの起動コマンドは上の各実装事例に記載しています。

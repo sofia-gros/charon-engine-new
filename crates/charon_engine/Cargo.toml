@@ -22,6 +22,10 @@ physics = ["dep:charon_physics"]
 sand = ["physics", "dep:charon_sand"]
 bridge = ["sand", "tilemap", "dep:charon_bridge"]
 
+tracing = ["dep:charon_tracing"]
+tracing-gpu = ["tracing", "dep:charon_tracing_gpu"]
+rtx = ["tracing-gpu", "charon_tracing_gpu/rtx"]
+
 [dependencies]
 charon_core = { path = "../charon_core", version = "0.1.0" }
 charon_input = { path = "../charon_input", version = "0.1.0", features = ["plugin"], optional = true }
@@ -34,3 +38,5 @@ charon_render = { path = "../charon_render", version = "0.1.0", optional = true 
 charon_physics = { path = "../..", version = "0.2.0", optional = true }
 charon_sand = { path = "../charon_sand", version = "0.1.0", optional = true }
 charon_bridge = { path = "../charon_bridge", version = "0.1.0", optional = true }
+charon_tracing = { path = "../charon_tracing", optional = true }
+charon_tracing_gpu = { path = "../charon_tracing_gpu", optional = true, features = ["plugin"] }

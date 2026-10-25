@@ -15,6 +15,7 @@ pub struct Illumination {
     last_update: Instant,
     last_revision: Option<u64>,
     pub enabled: bool,
+    pub compute_enabled: bool,
     pub torch: bool,
     pub ore: bool,
     pub ao: bool,
@@ -59,6 +60,7 @@ impl Illumination {
             last_update: Instant::now() - Duration::from_secs(1),
             last_revision: None,
             enabled: true,
+            compute_enabled: true,
             torch: true,
             ore: true,
             ao: true,
@@ -76,6 +78,7 @@ impl Illumination {
             self.pass,
         )?;
         next.enabled = self.enabled;
+        next.compute_enabled = self.compute_enabled;
         next.torch = self.torch;
         next.ore = self.ore;
         next.ao = self.ao;
@@ -181,11 +184,19 @@ impl Illumination {
             self.scene.remove_light(1);
         }
         if self.last_revision != Some(self.scene.revision()) {
-            self.gpu.solve(&self.scene.prepare())?;
+            if self.compute_enabled {
+                self.gpu.solve(&self.scene.prepare())?;
+            }
             self.last_revision = Some(self.scene.revision());
             self.scene.acknowledge(self.scene.revision());
         }
         Ok(())
+    }
+    /// Restore the existing backend from the current optical snapshot on a mode switch.
+    pub fn restore_legacy(&mut self, renderer: &mut GpuRenderer) -> Result<(), String> {
+        self.gpu.solve(&self.scene.prepare())?;
+        self.compute_enabled = true;
+        renderer.bind_texture(self.image, self.gpu.texture().clone(), true)
     }
     /// Low-level optical input for API examples and diagnostics.
     pub fn scene(&self) -> &Scene {

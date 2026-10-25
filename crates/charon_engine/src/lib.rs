@@ -179,3 +179,8 @@ impl AppBuilder {
         self.app
     }
 }
+
+#[cfg(feature = "tracing")]
+pub use charon_tracing as tracing;
+#[cfg(feature = "tracing-gpu")]
+pub use charon_tracing_gpu as tracing_gpu;

@@ -1,0 +1,22 @@
+[package]
+name = "charon-rt-sample"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+[features]
+default = ["bridge", "rtx"]
+bridge = ["charon-m5-sample/bridge"]
+rtx = ["charon_tracing_gpu/rtx"]
+[dependencies]
+charon-m5-sample = { path = "../m5-scene-lab", default-features = false, features = ["lighting"] }
+charon_core = { path = "../../crates/charon_core" }
+charon_scene = { path = "../../crates/charon_scene", features = ["plugin"] }
+charon_assets = { path = "../../crates/charon_assets" }
+charon_input = { path = "../../crates/charon_input", features = ["plugin"] }
+charon_render = { path = "../../crates/charon_render", features = ["gpu"] }
+charon_tracing = { path = "../../crates/charon_tracing" }
+charon_tracing_gpu = { path = "../../crates/charon_tracing_gpu", features = ["plugin"] }
+pollster = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

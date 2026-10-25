@@ -140,5 +140,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         frame_hook: Some(frame),
         event_hook: Some(event),
+        ..Default::default()
     })
 }

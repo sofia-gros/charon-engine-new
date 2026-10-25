@@ -17,6 +17,8 @@ import time
 
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
+    "m6-rt": ("charon-rt-sample", "Charon RT / Lighting Lab", "PC path tracing and settings example; RTX user verification pending"),
+    "m6-rt-mobile": ("charon-rt-sample", "Charon RT / Lighting Lab", "Mobile Lite profile on Linux; mobile device verification pending"),
     "m6": ("charon-m6-sample", "Charon M6 / API Lab", "M6 high-level API example"),
     "m6-low": ("charon-m6-sample", "Charon M6 / API Lab", "M6 low-level API example"),
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
@@ -153,7 +155,9 @@ def record(milestone,output,xvfb,display):
                 if connection is None:
                     raise RuntimeError("Xvfb did not become ready")
                 app_args = ["--tilemap-only"] if milestone in ("m3-tilemap", "m4-tilemap", "m5-tilemap") else []
-                if milestone.startswith("m6"):
+                if milestone.startswith("m6-rt"):
+                    app_args = ["--mobile"] if milestone=="m6-rt-mobile" else []
+                elif milestone.startswith("m6"):
                     app_args = ["--api", "low" if milestone == "m6-low" else "high"]
                 app = subprocess.Popen([str(executable), *app_args],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
                 window = None
@@ -199,6 +203,29 @@ def record(milestone,output,xvfb,display):
                     action("Resume (P)",lambda:connection.key("p"))
                     action("Restart (R)",lambda:connection.key("r"))
                     time.sleep(0.8)
+                elif milestone.startswith("m6-rt"):
+                    action("Start coupled world (Enter)",lambda:connection.key("Return"))
+                    time.sleep(0.7)
+                    action("Open lighting settings (C)",lambda:connection.key("c"))
+                    time.sleep(0.6)
+                    action("Try disabled RTX option (1)",lambda:connection.key("1"))
+                    time.sleep(0.5)
+                    action("Select existing M5 lighting (4)",lambda:connection.key("4"))
+                    time.sleep(0.5)
+                    action("Select allowed tracing mode",lambda:connection.key("3" if milestone=="m6-rt-mobile" else "2"))
+                    time.sleep(0.7)
+                    action("Close settings (C)",lambda:connection.key("c"))
+                    action("Move carried light (D)",lambda:connection.key("d",0.25))
+                    action("Destroy tile blocks and release sand/water (B)",lambda:connection.key("b"))
+                    if milestone=="m6-rt":
+                        action("Spawn emitting falling-sand fire (F)",lambda:connection.key("f"))
+                    time.sleep(0.8)
+                    action("Toggle carried light (T)",lambda:connection.key("t"))
+                    time.sleep(0.6)
+                    action("Restart scene and light history (R)",lambda:connection.key("r"))
+                    time.sleep(0.6)
+                    action("Return to menu (Tab)",lambda:connection.key("Tab"))
+                    time.sleep(0.3)
                 elif milestone.startswith(("m5", "m6")):
                     action("Start game scene (Enter)",lambda:connection.key("Return"))
                     time.sleep(0.6)

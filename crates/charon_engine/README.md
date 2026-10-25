@@ -22,6 +22,7 @@ charon_engine = { git = "https://github.com/sofia-gros/charon-engine-new", featu
 | physics | 物理直接API |
 | sand | physics + Falling Sand Plugin |
 | bridge | sand + tilemap + 双方向連携API |
+| tracing / tracing-gpu / rtx | 独立したCPU参照／GPU Plugin／Vulkan hardware ray query。設定UIとファイル処理は利用側 |
 
 高レベルAPIは既存のApp / SceneManagerを返します。World・Plugin・Backendを独自に変更でき、独自Pluginも `.plugin()` / `.boxed_plugin()` で登録できます。各部品だけを使う場合は個別crateへ直接依存してください。
 

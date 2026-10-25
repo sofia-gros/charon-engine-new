@@ -1,0 +1,19 @@
+[package]
+name = "charon_tracing_gpu"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "GPU 2D path tracing, mobile Lite, and optional Vulkan hardware ray queries"
+[features]
+default = []
+plugin = ["dep:charon_core"]
+rtx = []
+[dependencies]
+charon_tracing = { path = "../charon_tracing" }
+charon_core = { path = "../charon_core", optional = true }
+wgpu = "26"
+bytemuck = { version = "1", features = ["derive"] }
+pollster = "0.4"
+
+[dev-dependencies]
+naga = { version = "26", features = ["wgsl-in"] }

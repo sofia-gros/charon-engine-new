@@ -31,8 +31,12 @@ pub type FrameHook =
     fn(&mut SceneManager, &mut GpuRenderer, &mut charon_render::DrawFrame) -> Result<(), String>;
 pub type EventHook = fn(&mut SceneManager, InputEvent) -> Result<(), String>;
 /// Shared sample window host; not part of the engine API.
+pub type InputFilter = fn(&mut SceneManager, InputEvent) -> Result<bool, String>;
+pub type RendererFactory = fn(Arc<Window>) -> Result<GpuRenderer, String>;
 pub struct RunOptions {
     pub title: &'static str,
+    pub renderer: RendererFactory,
+    pub input_filter: Option<InputFilter>,
     pub ready_marker: &'static str,
     pub manager: ManagerFactory,
     pub frame_hook: Option<FrameHook>,
@@ -42,6 +46,8 @@ impl Default for RunOptions {
     fn default() -> Self {
         Self {
             title: "Charon M5 / Scene Lab",
+            renderer: |window| pollster::block_on(GpuRenderer::new(window)),
+            input_filter: None,
             ready_marker: "M5 READY: first frame presented",
             manager: scenes::manager,
             frame_hook: None,
@@ -313,7 +319,7 @@ impl ApplicationHandler for Host {
                     )
                     .map_err(|e| e.to_string())?,
             );
-            let mut renderer = pollster::block_on(GpuRenderer::new(window.clone()))?;
+            let mut renderer = (self.options.renderer)(window.clone())?;
             if self.check.is_some() {
                 renderer.upload(
                     charon_render::TextureId(100),
@@ -354,7 +360,14 @@ impl ApplicationHandler for Host {
                     InputEvent::Focus(f) => self.focused = f,
                     _ => {}
                 }
-                if let Some(input) = self.barrier.route(input) {
+                let routed = self.barrier.route(input);
+                if let Some(filter) = self.options.input_filter
+                    && let Some(manager) = &mut self.manager
+                    && filter(manager, input)?
+                {
+                    return Ok(());
+                }
+                if let Some(input) = routed {
                     if let Some(hook) = self.options.event_hook
                         && let Some(manager) = &mut self.manager
                     {

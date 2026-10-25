@@ -10,8 +10,8 @@ import urllib.request
 
 if os.environ.get("GITHUB_ACTIONS") != "true":
     raise SystemExit("Run only in the repository's trusted recording job")
-if len(sys.argv)!=2 or sys.argv[1] not in ("m4","m5","m6"):
-    raise SystemExit("Expected milestone m4, m5 or m6")
+if len(sys.argv)!=2 or sys.argv[1] not in ("m4","m5","m6","tracing"):
+    raise SystemExit("Expected milestone m4, m5, m6 or tracing")
 milestone=sys.argv[1]
 repo = os.environ["GITHUB_REPOSITORY"]
 manifest = {"source_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(), "files": []}
@@ -21,7 +21,7 @@ def upload(data):
     with urllib.request.urlopen(request, timeout=60) as response:
         return json.load(response)["sha"]
 
-for stem in [f"{milestone}-demo", f"{milestone}-low-demo" if milestone=="m6" else f"{milestone}-tilemap-demo"]:
+for stem in (["m6-rt-demo","m6-rt-mobile-demo"] if milestone=="tracing" else [f"{milestone}-demo", f"{milestone}-low-demo" if milestone=="m6" else f"{milestone}-tilemap-demo"]):
     for extension in ["gif", "json"]:
         path = Path("docs/demos") / f"{stem}.{extension}"
         data = path.read_bytes()

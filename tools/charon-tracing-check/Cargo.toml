@@ -1,0 +1,10 @@
+[package]
+name = "charon-tracing-check"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+[dependencies]
+charon_tracing_gpu = { path = "../../crates/charon_tracing_gpu", features = ["rtx","plugin"] }
+charon_tracing = { path = "../../crates/charon_tracing" }
+pollster = "0.4"
