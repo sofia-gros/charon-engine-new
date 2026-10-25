@@ -1,0 +1,10 @@
+[package]
+name = "charon_bridge"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+charon-core = { path = "../charon-core" }
+charon_tilemap = { path = "../charon_tilemap" }
+charon_physics = { path = "../.." }

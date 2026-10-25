@@ -6,6 +6,8 @@
 | --- | --- | --- |
 | [M1](./m1-demo.gif) / [録画情報](./m1-demo.json) | 移動、宝石取得、一時停止、再開、リセット | M1実装事例 |
 | [M2](./m2-demo.gif) / [録画情報](./m2-demo.json) | 砂・水・雲・窒素・土、障壁解除、砂への変換、安息角変更 | M2実装完了 |
+| [M3](./m3-demo.gif) / [録画情報](./m3-demo.json) | 宝石取得、タイルの設置・破壊、砂・水への変換、Shader設定 | M3実装完了 |
+| [M3 Tilemap](./m3-tilemap-demo.gif) / [録画情報](./m3-tilemap-demo.json) | 同じ操作をFalling Sandなしで実行 | M3単体利用例 |
 
 現在のGIFはLinux / Xvfb上で実際のネイティブウィンドウを表示し、XTestでキー・マウス操作を送り、ffmpegの画面キャプチャで録画したものです。プログラムで生成したフレームの合成ではありません。Windows 11実機の操作確認とは区別してください。
 
@@ -28,9 +30,11 @@ GIFは768px程度の幅・12fps程度を目安にし、短い操作列に絞り�
 Xvfb、ffmpeg、libX11、libXtstとPython 3を用意します。録画スクリプト自体には追加のPythonパッケージは不要です。
 
 ```sh
-cargo build --release -p charon-m1-sample -p charon-m2-sample
+cargo build --release -p charon-m1-sample -p charon-m2-sample -p charon-m3-sample
 python scripts/record_milestone.py m1
 python scripts/record_milestone.py m2
+python scripts/record_milestone.py m3
+python scripts/record_milestone.py m3-tilemap
 python scripts/check_demo_assets.py
 ```
 

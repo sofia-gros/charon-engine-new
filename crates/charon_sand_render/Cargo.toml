@@ -1,0 +1,10 @@
+[package]
+name = "charon_sand_render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+charon_physics = { path = "../.." }
+charon_render = { path = "../charon_render" }
+charon_assets = { path = "../charon_assets" }

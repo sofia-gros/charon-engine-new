@@ -16,7 +16,7 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-M2までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
+M3までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
 
 | 機能 | 状況 |
 | --- | --- |
@@ -25,9 +25,9 @@ M2までの基盤を実装しています。Core、独立した物理ライブ�
 | 粒子を押しのける可動ブロック | 実装済み |
 | Falling Sand Plugin、外部コリジョン・生成要求・結果・接触API | M2実装済み |
 | API経由の物質登録、独自コールバック、物質ごとの安息角 | M2実装済み |
-| 独立した Tilemap / Sprite Plugins と、Falling SandとのBridge | 計画中 |
-| Assets Plugin によるアセットの読み込み・管理 | 計画中 |
-| Rendering Plugin と Shader、交換可能なGPUバックエンド | 計画中 |
+| 独立したTilemap / Spriteと、任意のFalling Sand Bridge | M3実装済み |
+| Assets Plugin、型付きハンドル、PNG・Shaderソースの読み込み・解放 | M3実装済み |
+| Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
 | Lighting Plugin による遮光・光の伝播・AO・発光。Tilemap / Falling Sand の両方に対応 | 計画中 |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
 | Phaser に影響を受けた Camera / Scene Plugins | 計画中 |
@@ -68,6 +68,24 @@ cargo run --release -p charon-m2-sample
 
 [物理API](./docs/falling-sand-api.md)と[物質の登録・独自更新API](./docs/materials.md)を公開しています。Cで雲、Nで窒素、9で土を選択し、Aで選択中の粒状物質の安息角を切り替えられます。
 
+### M3：Tilemap・Sprite・Assets・GPU描画・Falling Sand連携
+
+![M3：タイルの破壊・設置、砂と水への変換、Shader設定](./docs/demos/m3-demo.gif)
+
+![M3：Falling Sandを使わないTilemapゲーム](./docs/demos/m3-tilemap-demo.gif)
+
+[World Labの操作方法](./samples/m3-world-lab/README.md) / [連携APIと各crateの境界](./docs/m3-api.md) / [連携録画情報](./docs/demos/m3-demo.json) / [Tilemap単体録画情報](./docs/demos/m3-tilemap-demo.json)
+
+```sh
+# Tilemap + Falling Sand
+cargo run --release -p charon-m3-sample
+
+# Falling Sandを依存に含めないTilemap単体
+cargo run --release -p charon-m3-sample --no-default-features
+```
+
+WASDで移動して宝石を集め、左クリックで破壊、右クリックで設置します。Gで床を開き、Bで砂・水のブロックを粒子へ変換できます。LはカスタムShaderのパラメータ切り替えです。粒子を覆う固体の設置は拒否し、変換規則と追加の設置制約はゲーム側で定義できます。ライティング基盤は次のM4で実装します。
+
 ## 開発環境
 
 Edition 2024に対応した最新のstable Rustを使用してください。ゲームサンプルの起動コマンドは上の各実装事例に記載しています。
@@ -83,7 +101,7 @@ Edition 2024に対応した最新のstable Rustを使用してください。ゲ
 - [Physics](./src/sim/physics.rs)：物質ごとの移動と反応
 - [Block](./src/sim/block.rs)：可動ブロックと粒子の押し出し
 
-[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon-core` は物理・描画・ウィンドウに依存しません。
+[M3のAssets / Tilemap / Rendering / Bridge API](./docs/m3-api.md)と、[Core / Pluginの契約](./docs/architecture.md)も参照してください。`charon-core` は物理・描画・ウィンドウに依存しません。
 
 APIドキュメントは `cargo doc --no-deps --open` で確認できます。Camera / Scene や Plugins のAPIは、実装に合わせて整備していきます。
 

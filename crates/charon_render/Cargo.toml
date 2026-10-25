@@ -1,0 +1,16 @@
+[package]
+name = "charon_render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[features]
+default = []
+gpu = ["dep:wgpu", "dep:winit", "dep:bytemuck"]
+
+[dependencies]
+charon-core = { path = "../charon-core" }
+charon_assets = { path = "../charon_assets" }
+wgpu = { version = "26", optional = true }
+winit = { version = "0.30", optional = true }
+bytemuck = { version = "1", features = ["derive"], optional = true }

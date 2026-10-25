@@ -1,0 +1,21 @@
+[package]
+name = "charon-m3-sample"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+publish = false
+
+[features]
+default = ["bridge"]
+bridge = ["dep:charon_bridge", "dep:charon_physics", "dep:charon_sand_render"]
+
+[dependencies]
+charon-core = { path = "../../crates/charon-core" }
+charon_assets = { path = "../../crates/charon_assets" }
+charon_tilemap = { path = "../../crates/charon_tilemap" }
+charon_render = { path = "../../crates/charon_render", features = ["gpu"] }
+charon_tilemap_render = { path = "../../crates/charon_tilemap_render" }
+charon_bridge = { path = "../../crates/charon_bridge", optional = true }
+charon_physics = { path = "../..", optional = true }
+charon_sand_render = { path = "../../crates/charon_sand_render", optional = true }
+pollster = "0.4"

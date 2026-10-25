@@ -1,0 +1,390 @@
+mod runtime;
+mod ui;
+use charon_assets::{Assets, Image, ShaderSource};
+use charon_render::{
+    Backend, DrawFrame, PassId, TextureId,
+    gpu::GpuRenderer,
+    winit::{
+        application::ApplicationHandler,
+        dpi::LogicalSize,
+        event::{ElementState, MouseButton, WindowEvent},
+        event_loop::{ActiveEventLoop, ControlFlow, EventLoop},
+        keyboard::{KeyCode, PhysicalKey},
+        window::{Window, WindowId},
+    },
+};
+use charon_tilemap::{Atlas, Sprite, TileId};
+use runtime::{Controls, Edit, Runtime};
+use std::{
+    collections::HashSet,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+const SIZE: [u32; 2] = [960, 696];
+const TOP: f32 = 72.;
+struct Lab {
+    runtime: Runtime,
+    window: Option<Arc<Window>>,
+    renderer: Option<GpuRenderer>,
+    keys: HashSet<KeyCode>,
+    mouse: [f32; 2],
+    selected: TileId,
+    next_frame: Instant,
+    frames: u64,
+    error: Option<String>,
+    gpu_check: bool,
+    compute_hz: u32,
+    coupled: bool,
+    shader_tint: bool,
+    atlas: Atlas,
+    images: Assets<Image>,
+    image_handle: Option<charon_assets::Handle<Image>>,
+}
+impl Lab {
+    fn send(&mut self, edit: Edit) {
+        if let Err(error) = self.runtime.edits.try_send(edit) {
+            self.error = Some(format!("input queue: {error}"));
+        }
+    }
+    fn key(&mut self, key: KeyCode) {
+        match key {
+            KeyCode::Digit1 => self.selected = TileId(0),
+            KeyCode::Digit2 => self.selected = TileId(1),
+            KeyCode::Digit3 => self.selected = TileId(2),
+            KeyCode::KeyL => {
+                self.shader_tint = !self.shader_tint;
+                if let Some(renderer) = &mut self.renderer
+                    && let Err(e) = renderer.set_parameters(
+                        PassId(1),
+                        if self.shader_tint {
+                            [0.55, 0.8, 1., 0.]
+                        } else {
+                            [1., 1., 1., 0.]
+                        },
+                    )
+                {
+                    self.error = Some(e)
+                }
+            }
+            KeyCode::KeyB | KeyCode::KeyG => {
+                let view = self.runtime.shared.view.lock().unwrap().clone();
+                let edits: Vec<_> = view
+                    .map
+                    .occupied()
+                    .filter(|&(_, y, id)| {
+                        if key == KeyCode::KeyB {
+                            id == TileId(1) || id == TileId(2)
+                        } else {
+                            y == 12
+                        }
+                    })
+                    .map(|(x, y, _)| Edit::Break(x, y))
+                    .collect();
+                for edit in edits {
+                    self.send(edit)
+                }
+            }
+            _ => {}
+        }
+    }
+    fn draw(&mut self) -> Result<(), String> {
+        self.runtime.check()?;
+        let window = self.window.as_ref().ok_or("window missing")?;
+        let size = window.inner_size();
+        if size.width == 0 || size.height == 0 {
+            return Ok(());
+        }
+        let view = self.runtime.shared.view.lock().unwrap().clone();
+        let player = *self.runtime.shared.player.lock().unwrap();
+        let mut frame = DrawFrame::new([size.width, size.height]);
+        let scale = size.width as f32 / 320.;
+        let origin = [0., TOP];
+        charon_tilemap_render::append_tiles(
+            &mut frame,
+            &view.map,
+            &self.atlas,
+            origin,
+            scale,
+            0,
+            PassId(1),
+        )?;
+        #[cfg(feature = "bridge")]
+        if let Some(snapshot) = &view.sand {
+            self.renderer
+                .as_mut()
+                .unwrap()
+                .upload(TextureId(2), &charon_sand_render::image(snapshot)?)?;
+            charon_sand_render::append(
+                &mut frame,
+                TextureId(2),
+                [0., TOP, 320. * scale, 192. * scale],
+                1,
+                PassId(1),
+            );
+        }
+        for position in runtime::GEMS.iter().skip(player.score as usize) {
+            charon_tilemap_render::append_sprite(
+                &mut frame,
+                &Sprite {
+                    position: [position[0] * scale, TOP + position[1] * scale],
+                    size: [6. * scale, 6. * scale],
+                    atlas_index: 3,
+                    layer: 2,
+                    tint: [1.; 4],
+                },
+                &self.atlas,
+                PassId(1),
+            )?;
+        }
+        charon_tilemap_render::append_sprite(
+            &mut frame,
+            &Sprite {
+                position: [player.position[0] * scale, TOP + player.position[1] * scale],
+                size: [6. * scale, 6. * scale],
+                atlas_index: 3,
+                layer: 3,
+                tint: [0.4, 1., 0.9, 1.],
+            },
+            &self.atlas,
+            PassId(1),
+        )?;
+        let white = [0.88, 0.94, 1., 1.];
+        let mint = [0.35, 0.95, 0.75, 1.];
+        ui::text(&mut frame, 16., 12., "CHARON / M3 WORLD LAB", white);
+        ui::text(
+            &mut frame,
+            500.,
+            12.,
+            if self.coupled {
+                "TILEMAP + FALLING SAND"
+            } else {
+                "TILEMAP ONLY"
+            },
+            mint,
+        );
+        ui::text(
+            &mut frame,
+            16.,
+            36.,
+            &format!(
+                "GAME 144 TICK {} / RENDER 60 / COMPUTE {} TICK {}",
+                player.ticks, self.compute_hz, view.ticks
+            ),
+            mint,
+        );
+        ui::text(
+            &mut frame,
+            16.,
+            56.,
+            &format!(
+                "GEMS {} / 3 / TILE {} / REV {} / B RELEASE / G OPEN",
+                player.score,
+                self.selected.0 + 1,
+                view.revision
+            ),
+            white,
+        );
+        ui::text(
+            &mut frame,
+            16.,
+            656.,
+            "WASD MOVE / LMB BREAK / RMB PLACE / 1 2 3 TILE / L SHADER",
+            white,
+        );
+        ui::text(&mut frame, 16., 676., &view.message, mint);
+        self.renderer.as_mut().unwrap().render(&frame)?;
+        self.frames += 1;
+        if self.gpu_check && self.frames == 3 {
+            let renderer = self.renderer.as_mut().unwrap();
+            let result = pollster::block_on(renderer.register_pass(
+                PassId(1),
+                &ShaderSource("invalid shader".into()),
+                [1.; 4],
+            ));
+            if result.is_ok() {
+                return Err("invalid shader was accepted".into());
+            }
+            println!("GPU shader diagnostic OK: {}", result.unwrap_err());
+            let _ = window.request_inner_size(LogicalSize::new(800., 680.));
+        }
+        Ok(())
+    }
+}
+impl ApplicationHandler for Lab {
+    fn resumed(&mut self, event_loop: &ActiveEventLoop) {
+        if self.window.is_some() {
+            return;
+        }
+        let setup = (|| -> Result<(), String> {
+            let window = Arc::new(
+                event_loop
+                    .create_window(
+                        Window::default_attributes()
+                            .with_title("Charon M3 / World Lab")
+                            .with_inner_size(LogicalSize::new(SIZE[0], SIZE[1])),
+                    )
+                    .map_err(|e| e.to_string())?,
+            );
+            let mut renderer = pollster::block_on(GpuRenderer::new(window.clone()))?;
+            let base = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets");
+            let handle = self.images.load(base.join("atlas.png"), Image::decode)?;
+            renderer.upload(
+                TextureId(1),
+                self.images
+                    .get(handle)
+                    .ok_or("image handle invalid")?
+                    .as_ref(),
+            )?;
+            self.image_handle = Some(handle);
+            let mut shaders = Assets::<ShaderSource>::default();
+            let shader = shaders.load(base.join("world.wgsl"), ShaderSource::decode)?;
+            pollster::block_on(renderer.register_pass(
+                PassId(1),
+                shaders.get(shader).ok_or("shader handle invalid")?.as_ref(),
+                [1., 1., 1., 0.],
+            ))?;
+            println!("GPU: {}", renderer.adapter_name);
+            self.renderer = Some(renderer);
+            self.window = Some(window);
+            Ok(())
+        })();
+        if let Err(error) = setup {
+            self.error = Some(error);
+            event_loop.exit();
+        }
+    }
+    fn window_event(&mut self, event_loop: &ActiveEventLoop, _: WindowId, event: WindowEvent) {
+        let result: Result<(), String> = (|| {
+            match event {
+                WindowEvent::CloseRequested => event_loop.exit(),
+                WindowEvent::Focused(false) => {
+                    self.keys.clear();
+                    *self.runtime.shared.controls.lock().unwrap() = Controls::default();
+                }
+                WindowEvent::KeyboardInput { event, .. } => {
+                    if let PhysicalKey::Code(code) = event.physical_key {
+                        if event.state == ElementState::Pressed {
+                            self.keys.insert(code);
+                            if !event.repeat {
+                                self.key(code);
+                            }
+                        } else {
+                            self.keys.remove(&code);
+                        }
+                        if code == KeyCode::Escape {
+                            event_loop.exit();
+                        }
+                        *self.runtime.shared.controls.lock().unwrap() = Controls {
+                            dx: (self.keys.contains(&KeyCode::KeyD) as i8
+                                - self.keys.contains(&KeyCode::KeyA) as i8)
+                                as f32,
+                            dy: (self.keys.contains(&KeyCode::KeyS) as i8
+                                - self.keys.contains(&KeyCode::KeyW) as i8)
+                                as f32,
+                        };
+                    }
+                }
+                WindowEvent::CursorMoved { position, .. } => {
+                    self.mouse = [position.x as f32, position.y as f32]
+                }
+                WindowEvent::MouseInput {
+                    state: ElementState::Pressed,
+                    button,
+                    ..
+                } => {
+                    let scale = self.window.as_ref().unwrap().inner_size().width as f32 / 320.;
+                    let x = self.mouse[0] / (8. * scale);
+                    let y = (self.mouse[1] - TOP) / (8. * scale);
+                    if x >= 0. && y >= 0. && x < runtime::W as f32 && y < runtime::H as f32 {
+                        match button {
+                            MouseButton::Left => self.send(Edit::Break(x as u32, y as u32)),
+                            MouseButton::Right => {
+                                self.send(Edit::Place(x as u32, y as u32, self.selected))
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                WindowEvent::RedrawRequested => {
+                    self.draw()?;
+                    if self.gpu_check && self.frames >= 12 {
+                        println!(
+                            "GPU initialization, atlas upload, custom shader, failure recovery, resize, draw OK"
+                        );
+                        event_loop.exit();
+                    }
+                }
+                _ => {}
+            }
+            Ok(())
+        })();
+        if let Err(error) = result {
+            self.error = Some(error);
+            event_loop.exit();
+        }
+    }
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        let now = Instant::now();
+        if now >= self.next_frame {
+            if let Some(window) = &self.window {
+                window.request_redraw();
+            }
+            self.next_frame = now + Duration::from_secs_f64(1. / 60.);
+        }
+        event_loop.set_control_flow(ControlFlow::WaitUntil(self.next_frame));
+    }
+}
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let args: Vec<_> = std::env::args().collect();
+    if args.iter().any(|s| s == "--smoke-test") {
+        return runtime::smoke();
+    }
+    let hz = args
+        .iter()
+        .position(|s| s == "--compute-hz")
+        .map(|i| {
+            args.get(i + 1)
+                .ok_or("missing compute rate")?
+                .parse::<u32>()
+                .map_err(|_| "invalid compute rate")
+        })
+        .transpose()?
+        .unwrap_or(60);
+    let coupled = cfg!(feature = "bridge") && !args.iter().any(|s| s == "--tilemap-only");
+    let runtime = Runtime::start(hz, coupled)?;
+    let mut lab = Lab {
+        runtime,
+        window: None,
+        renderer: None,
+        keys: HashSet::new(),
+        mouse: [0.; 2],
+        selected: TileId(0),
+        next_frame: Instant::now(),
+        frames: 0,
+        error: None,
+        gpu_check: args.iter().any(|s| s == "--gpu-check"),
+        shader_tint: false,
+        compute_hz: hz,
+        coupled,
+        atlas: Atlas {
+            texture: 1,
+            size: [32, 8],
+            tile_size: [8, 8],
+        },
+        images: Assets::default(),
+        image_handle: None,
+    };
+    let event_loop = EventLoop::new()?;
+    event_loop.run_app(&mut lab)?;
+    lab.runtime.shutdown()?;
+    if let Some(handle) = lab.image_handle.take() {
+        lab.images.unload(handle);
+        if let Some(renderer) = &mut lab.renderer {
+            renderer.remove_texture(TextureId(1));
+        }
+    }
+    if let Some(error) = lab.error {
+        return Err(error.into());
+    }
+    Ok(())
+}

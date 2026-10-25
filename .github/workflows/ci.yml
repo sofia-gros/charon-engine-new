@@ -39,6 +39,8 @@ jobs:
         run: python scripts/check_physics_profiles.py
       - name: Core dependency boundary
         run: python scripts/check_core_dependencies.py
+      - name: M3 optional dependency boundaries
+        run: python scripts/check_m3_dependencies.py
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Unit, integration, sample, and doc tests
@@ -47,6 +49,23 @@ jobs:
         run: cargo run --locked -p charon-m1-sample --no-default-features -- --smoke-test
       - name: Sand plugin sample (no window)
         run: cargo run --locked -p charon-m2-sample --no-default-features -- --smoke-test
+      - name: M3 coupled and tile-only clock / transaction smoke
+        run: cargo run --locked -p charon-m3-sample -- --smoke-test
+      - name: M3 without any Falling Sand dependency
+        run: cargo run --locked -p charon-m3-sample --no-default-features -- --smoke-test
+      - name: Install Linux GPU window test dependencies
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers
+      - name: Linux GPU shader diagnostics and resize
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m3-sample -- --gpu-check
+      - name: Linux GPU tile-only mode
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m3-sample --no-default-features -- --gpu-check
       - name: Empty Core
         run: cargo run --locked -p charon-core --example empty
       - name: Release build

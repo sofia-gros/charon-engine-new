@@ -18,6 +18,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
+    "m3": ("charon-m3-sample", "Charon M3 / World Lab", "M3 complete"),
+    "m3-tilemap": ("charon-m3-sample", "Charon M3 / World Lab", "M3 tilemap-only example"),
     "m2": ("charon-m2-sample", "Charon M2 / Falling Sand Lab", "M2 complete"),
 }
 
@@ -139,7 +141,8 @@ def record(milestone,output,xvfb,display):
                         time.sleep(0.1)
                 if connection is None:
                     raise RuntimeError("Xvfb did not become ready")
-                app = subprocess.Popen([str(executable)],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
+                app_args = ["--tilemap-only"] if milestone == "m3-tilemap" else []
+                app = subprocess.Popen([str(executable), *app_args],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
                 window = None
                 for _ in range(100):
                     if app.poll() is not None:
@@ -173,6 +176,20 @@ def record(milestone,output,xvfb,display):
                     action("Resume (P)",lambda:connection.key("p"))
                     action("Restart (R)",lambda:connection.key("r"))
                     time.sleep(0.8)
+                elif milestone.startswith("m3"):
+                    action("Move right and collect first gem (D)",lambda:connection.key("d",0.52))
+                    time.sleep(0.4)
+                    action("Break sand tile (LMB)",lambda:connection.paint(x+10*24+12,y+72+10*24+12,0.08))
+                    time.sleep(0.4)
+                    action("Select water tile (3)",lambda:connection.key("3"))
+                    action("Place water tile (RMB)",lambda:connection.paint(x+18*24+12,y+72+6*24+12,0.08,3))
+                    action("Custom shader parameters (L)",lambda:connection.key("l"))
+                    time.sleep(0.6)
+                    action("Open stone platform (G)",lambda:connection.key("g"))
+                    action("Break all sand/water blocks (B)",lambda:connection.key("b"))
+                    time.sleep(2.0)
+                    action("Restore shader parameters (L)",lambda:connection.key("l"))
+                    time.sleep(0.6)
                 else:
                     time.sleep(0.7)
                     action("Paint sand with left mouse button",lambda:connection.paint(x+32+160*3,y+88+65*3,0.7))
@@ -215,7 +232,7 @@ def record(milestone,output,xvfb,display):
                     "sample_commit":subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip(),
                     "recorded_at":datetime.now(timezone(timedelta(hours=9))).isoformat(timespec="seconds"),
                     "environment":platform.platform(),"display":"Linux Xvfb; actual native window and XTest input",
-                    "windows_11_verified":False,"sample_command":f"cargo run --release -p {binary}",
+                    "windows_11_verified":False,"sample_command":f"cargo run --release -p {binary}" + (" -- --tilemap-only" if app_args else ""),
                     "gif_fps":12,"gif_width":768,"actions":actions,
                 }
                 output.with_suffix(".json").write_text(json.dumps(metadata,indent=2,ensure_ascii=False)+"\n",encoding="utf-8")
