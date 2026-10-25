@@ -10,6 +10,8 @@ charon-engine は、軽量かつ高性能な Falling Sand エンジンを目指�
 
 ## 開発状況
 
+大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
+
 現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、物理コアを独立したライブラリとして取り出した段階です。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
 
 | 機能 | 状況 |
