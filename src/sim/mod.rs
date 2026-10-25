@@ -8,7 +8,7 @@
 //! so heavier materials sink and lighter ones rise.
 //!
 //! Sub-modules:
-//! - [`material`]: the [`material::Cell`] enum and per-cell color synthesis
+//! - [`material`]: material IDs and per-cell color synthesis
 //! - [`grid`]: storage, double buffer, and per-chunk dirty-rect tracking
 //! - [`physics`]: per-material movement rules
 //! - [`block`]: an interactive rigid block that displaces particles via BFS
@@ -17,4 +17,5 @@ pub mod block;
 pub mod grid;
 pub mod material;
 pub mod physics;
+pub mod rules;
 pub mod simulation;

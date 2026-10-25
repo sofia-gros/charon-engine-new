@@ -1,0 +1,281 @@
+{
+  "measurements": [
+    {
+      "ground": "Flat",
+      "left_degrees": 31.756971083613575,
+      "right_degrees": 31.715993217539637,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 615
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 32.04824163843991,
+      "right_degrees": 31.862036968441515,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 599
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 37.7661837331323,
+      "right_degrees": 38.962842258432794,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 528
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 37.710146019618946,
+      "right_degrees": 38.85235757715335,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 516
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 44.45146932485239,
+      "right_degrees": 45.0,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 443
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 44.761297383550364,
+      "right_degrees": 45.0,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 443
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 58.12384633997938,
+      "right_degrees": 58.175277081417015,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 733
+    },
+    {
+      "ground": "Flat",
+      "left_degrees": 58.45244560530957,
+      "right_degrees": 58.16982934797887,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 747
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 30.312147706800157,
+      "right_degrees": 31.743912486519097,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 539
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 30.544433629756195,
+      "right_degrees": 31.53645050505408,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 537
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 37.974397859337124,
+      "right_degrees": 38.71324250200922,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 476
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 38.00645887361782,
+      "right_degrees": 38.62770938191805,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 477
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 44.11530603028064,
+      "right_degrees": 44.75059856425324,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 401
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 44.11530603028064,
+      "right_degrees": 44.25769339039085,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 421
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 57.74528947313286,
+      "right_degrees": 58.22306765270134,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 780
+    },
+    {
+      "ground": "Slope",
+      "left_degrees": 57.820450897671144,
+      "right_degrees": 58.34786354615314,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 781
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 30.978774726807597,
+      "right_degrees": 30.958938764774693,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 541
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 30.76671882938061,
+      "right_degrees": 31.16406483535589,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 32.0,
+      "ticks": 544
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 37.870643061749455,
+      "right_degrees": 39.05992091921498,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 479
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 37.80416823943847,
+      "right_degrees": 39.24743447887078,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 40.0,
+      "ticks": 481
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 44.71849375229036,
+      "right_degrees": 44.49417285830877,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 416
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 44.590027194304966,
+      "right_degrees": 44.425584332045695,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 45.0,
+      "ticks": 416
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 58.38907613989374,
+      "right_degrees": 57.843344311054246,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 42,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 747
+    },
+    {
+      "ground": "Step",
+      "left_degrees": 58.36167930638822,
+      "right_degrees": 57.92312023765347,
+      "sand_after": 2100,
+      "sand_before": 2100,
+      "seed": 123,
+      "settled": true,
+      "target": 60.0,
+      "ticks": 753
+    }
+  ],
+  "schema": 1,
+  "environment": {
+    "recorded_at": "2026-10-25T13:15:27+09:00",
+    "platform": "Linux-6.18.55-x86_64-with-glibc2.41",
+    "machine": "x86_64",
+    "logical_cpus": 3,
+    "cpu": "AMD EPYC 9V74 80-Core Processor",
+    "rustc": "rustc 1.99.1 (58cf8f9c3 2026-10-13)\nbinary: rustc\ncommit-hash: 58cf8f9c35b355199727627d07ae34a4e2846d67\ncommit-date: 2026-10-13\nhost: x86_64-unknown-linux-gnu\nrelease: 1.99.1\nLLVM version: 23.1.1",
+    "git_head": "d2bdb978a66141a152b98dd64c3294aeff7bc3a7",
+    "dirty": true,
+    "physics_source_sha256": "da0283675bc7c3d40b51a397182487a455daa1cf3246e9903ea48cadb1c5fd82",
+    "physics_sources_sha256": "7753e16bf2d85857b9d383e95f16dc77d3693d2caa3ace3e5da0445d65eb3513"
+  }
+}

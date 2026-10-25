@@ -1,12 +1,15 @@
-//! Optional adapter. The sandengine library remains usable without this crate.
+//! Optional adapter. The charon_physics library remains usable without this crate.
 use charon_core::{Plugin, PluginResult, Step, World};
-pub use sandengine::sim::simulation::{
+pub use charon_physics::sim::simulation::{
     Contact, Operation, Outcome, Receipt, Rect, Request, Simulation, Snapshot,
 };
 use std::sync::{
     Arc, Mutex,
     mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
 };
+
+pub use charon_physics::sim::material::{Cell, CellData, MaterialId};
+pub use charon_physics::sim::rules::{MaterialDefinition, MaterialRegistry, Movement};
 
 pub struct SandState(pub Simulation);
 

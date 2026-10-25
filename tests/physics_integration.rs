@@ -4,12 +4,12 @@
 #[path = "support/scenarios.rs"]
 mod scenarios;
 
+use charon_physics::sim::block::Block;
+use charon_physics::sim::grid::Grid;
+use charon_physics::sim::material::{Cell, CellData};
+use charon_physics::sim::physics;
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use sandengine::sim::block::Block;
-use sandengine::sim::grid::Grid;
-use sandengine::sim::material::{Cell, CellData};
-use sandengine::sim::physics;
 
 /// Mass conservation: with no acid/fire/steam, sand should never appear or
 /// disappear under pure gravity. The block stays rasterized so physics
@@ -132,7 +132,7 @@ fn acid_sinks_through_water() {
 /// permanent-material densities must match real-world buoyancy.
 #[test]
 fn density_ordering_matches_real_physics() {
-    use sandengine::sim::material::Cell as M;
+    use charon_physics::sim::material::Cell as M;
     // Read densities in kg/m³ and verify the chain.
     assert!(M::Steam.density() < M::Air.density() + 1); // both ~1 by rounding
     assert!(M::Oil.density() < M::Water.density());

@@ -12,5 +12,5 @@ window = ["dep:minifb"]
 [dependencies]
 charon-core = { path = "../../crates/charon-core" }
 charon-sand = { path = "../../crates/charon-sand" }
-sandengine = { path = "../.." }
+charon_physics = { path = "../.." }
 minifb = { version = "0.28", default-features = false, features = ["x11"], optional = true }

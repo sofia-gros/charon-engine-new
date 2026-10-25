@@ -8,4 +8,4 @@ repository = "https://github.com/sofia-gros/charon-engine-new"
 
 [dependencies]
 charon-core = { path = "../charon-core" }
-sandengine = { path = "../.." }
+charon_physics = { path = "../.." }

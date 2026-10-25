@@ -8,6 +8,7 @@
 //! keeps a 1280x720 grid (~920k cells) interactive on a single thread.
 
 use super::material::{Cell, CellData};
+use super::rules::MaterialTable;
 
 /// Size of a simulation chunk, in cells. 32 is a good trade-off between
 /// dirty-rect granularity and per-chunk overhead (Noita uses 64).
@@ -20,6 +21,9 @@ fn div_up(a: usize, b: usize) -> usize {
 
 #[derive(Clone)]
 pub struct Grid {
+    pub materials: MaterialTable,
+    surface: Vec<usize>,
+    surface_dirty: Vec<bool>,
     pub w: usize,
     pub h: usize,
     /// Current frame's state (read by rendering and physics).
@@ -48,6 +52,9 @@ impl Grid {
         let chunks_x = div_up(w, CHUNK);
         let chunks_y = div_up(h, CHUNK);
         Self {
+            materials: MaterialTable::default(),
+            surface: vec![h; w],
+            surface_dirty: vec![true; w],
             w,
             h,
             cells: vec![CellData::AIR; n],
@@ -83,6 +90,10 @@ impl Grid {
         if x >= self.w || y >= self.h {
             return;
         }
+        assert!(
+            self.materials.contains(cell.kind),
+            "material ID is not registered in this grid"
+        );
         let i = self.idx(x, y);
         self.cells[i] = cell;
         self.mark_dirty(x, y);
@@ -93,6 +104,7 @@ impl Grid {
     /// chunk boundaries.
     #[inline]
     pub fn mark_dirty(&mut self, x: usize, y: usize) {
+        self.surface_dirty[x] = true;
         let cx = x / CHUNK;
         let cy = y / CHUNK;
         for dy in -1i32..=1 {
@@ -129,6 +141,7 @@ impl Grid {
     }
 
     pub fn clear(&mut self) {
+        self.surface_dirty.fill(true);
         self.cells.fill(CellData::AIR);
         self.next.fill(CellData::AIR);
         self.moved.fill(false);
@@ -138,9 +151,39 @@ impl Grid {
 
     /// Allocated vector payloads, excluding struct headers and allocator overhead.
     pub fn buffer_bytes(&self) -> usize {
-        (self.cells.capacity() + self.next.capacity()) * std::mem::size_of::<CellData>()
+        self.materials.buffer_bytes()
+            + self.surface.capacity() * std::mem::size_of::<usize>()
+            + self.surface_dirty.capacity() * std::mem::size_of::<bool>()
+            + (self.cells.capacity() + self.next.capacity()) * std::mem::size_of::<CellData>()
             + (self.moved.capacity() + self.dirty.capacity() + self.dirty_next.capacity())
                 * std::mem::size_of::<bool>()
+    }
+
+    pub(super) fn surface_y(&mut self, x: usize) -> usize {
+        if self.surface_dirty[x] {
+            self.surface[x] = (0..self.h)
+                .find(|&y| {
+                    let kind = self.next[y * self.w + x].kind;
+                    kind != Cell::Air
+                        && matches!(
+                            self.materials.get(kind).movement,
+                            super::rules::Movement::Solid | super::rules::Movement::Granular
+                        )
+                })
+                .unwrap_or(self.h);
+            self.surface_dirty[x] = false;
+        }
+        self.surface[x]
+    }
+
+    pub fn set_materials(&mut self, materials: MaterialTable) {
+        assert!(
+            self.cells.iter().all(|cell| materials.contains(cell.kind)),
+            "replacement registry is missing active material IDs"
+        );
+        self.materials = materials;
+        self.dirty_next.fill(true);
+        self.surface_dirty.fill(true);
     }
 
     pub fn particle_count(&self) -> usize {

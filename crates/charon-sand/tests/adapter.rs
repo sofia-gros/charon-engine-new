@@ -1,6 +1,6 @@
 use charon_core::App;
+use charon_physics::sim::material::{Cell, CellData};
 use charon_sand::{FallingSandPlugin, Operation, Outcome, Rect, Request, SandState, Simulation};
-use sandengine::sim::material::{Cell, CellData};
 
 fn request(id: u64, operation: Operation) -> Request {
     Request {
@@ -282,4 +282,37 @@ fn contact_notifications_are_opt_in_and_bounded() {
     app.tick().unwrap();
     assert_eq!(app.world().events::<Contact>().len(), 2);
     assert_eq!(app.world().events::<ContactOverflow>().len(), 1);
+}
+
+#[test]
+fn registered_materials_keep_their_ids_palette_and_behavior_through_plugin() {
+    use charon_sand::{MaterialDefinition, MaterialRegistry, Movement};
+    let mut registry = MaterialRegistry::default();
+    let nitrogen = registry
+        .register(MaterialDefinition::new(
+            "Nitrogen",
+            Movement::Gas,
+            1.165,
+            [136, 180, 220, 255],
+        ))
+        .unwrap();
+    let mut direct = Simulation::new(32, 32, 42).with_materials(registry.clone());
+    let (plugin, client) =
+        FallingSandPlugin::new(Simulation::new(32, 32, 42).with_materials(registry), 8).unwrap();
+    let mut app = App::new();
+    app.add_plugin(plugin).unwrap();
+    app.start().unwrap();
+    let command = request(1, brush(8, 25, CellData::new(nitrogen, 0)));
+    direct.apply(command.clone());
+    client.try_send(command).unwrap();
+    for _ in 0..20 {
+        direct.step();
+        app.tick().unwrap();
+    }
+    assert_eq!(*client.snapshot(), direct.snapshot());
+    assert_eq!(
+        client.snapshot().palette[usize::from(nitrogen.id())].name,
+        "Nitrogen"
+    );
+    app.shutdown().unwrap();
 }

@@ -1,30 +1,41 @@
 //! Cell kinds and per-cell color synthesis.
 //!
-//! Each cell is two bytes: a `Cell` discriminant and an 8-bit `extra` field.
+//! Each cell is two bytes: a material ID and an 8-bit `extra` field.
 //! `extra` is overloaded by material — for granulars it's a randomness seed
 //! for color variation, for fire/steam/acid it's the remaining life counter.
 //! Two bytes per cell keeps a 1280x720 grid at ~1.8 MB, which fits in any
 //! modern L2/L3 cache and is essential for the ~5 GB/s memory throughput
 //! that the inner physics sweep requires.
 
-#[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
-pub enum Cell {
-    #[default]
-    Air = 0,
-    Sand = 1,
-    Block = 2,
-    Water = 3,
-    Stone = 4,
-    Fire = 5,
-    Steam = 6,
-    Oil = 7,
-    Gravel = 8,
-    Acid = 9,
+/// Registry-local material ID. Ten standard IDs are reserved; custom IDs are
+/// returned by MaterialRegistry::register. IDs must use the owning registry.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Hash)]
+pub struct Cell(pub(crate) u8);
+
+/// Material IDs are local to the registry that allocated them.
+pub type MaterialId = Cell;
+
+#[allow(non_upper_case_globals)]
+impl Cell {
+    pub const Air: Self = Self(0);
+    pub const Sand: Self = Self(1);
+    pub const Block: Self = Self(2);
+    pub const Water: Self = Self(3);
+    pub const Stone: Self = Self(4);
+    pub const Fire: Self = Self(5);
+    pub const Steam: Self = Self(6);
+    pub const Oil: Self = Self(7);
+    pub const Gravel: Self = Self(8);
+    pub const Acid: Self = Self(9);
+    pub fn id(self) -> u8 {
+        self.0
+    }
 }
 
 impl Cell {
-    /// Reference density in **kg / m³**, used as an integer in
+    /// Standard-preset reference density (custom definitions use MaterialRegistry).
+    /// These integer values are retained as preset metadata for
     /// `can_displace`. Values are rounded approximations from the
     /// Engineering Toolbox and CRC Handbook; comments cite the source
     /// material so the displacement ordering is auditable.
@@ -50,6 +61,7 @@ impl Cell {
             Cell::Gravel => 1680,    // 1680 kg/m³ — typical washed pea gravel
             Cell::Stone => 2691,     // 2691 kg/m³ — granite (CRC Handbook 95th ed.)
             Cell::Block => u16::MAX, // sentinel: immovable user-controlled solid
+            _ => 1,                  // custom properties live in the owning registry
         }
     }
 
@@ -65,6 +77,7 @@ impl Cell {
             Cell::Oil => "Oil",
             Cell::Gravel => "Gravel",
             Cell::Acid => "Acid",
+            _ => "Custom",
         }
     }
 
@@ -92,6 +105,9 @@ impl CellData {
             kind: Cell::Sand,
             extra: seed,
         }
+    }
+    pub fn new(kind: Cell, extra: u8) -> Self {
+        Self { kind, extra }
     }
     pub fn gravel(seed: u8) -> Self {
         Self {
@@ -236,6 +252,7 @@ impl CellData {
             }
 
             Cell::Block => [56, 60, 78, 255],
+            _ => [255, 0, 255, 255], // use registry.color() for custom materials
         }
     }
 }

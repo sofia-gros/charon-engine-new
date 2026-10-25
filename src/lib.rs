@@ -1,12 +1,12 @@
-//! `sandengine` — a 2D falling-sand cellular automaton.
+//! `charon_physics` — a 2D falling-sand cellular automaton.
 //!
 //! The crate is structured so that the simulation core ([`sim`]) is
 //! independent of the windowing / GPU stack. You can use it headlessly:
 //!
 //! ```
-//! use sandengine::sim::grid::Grid;
-//! use sandengine::sim::material::CellData;
-//! use sandengine::sim::physics;
+//! use charon_physics::sim::grid::Grid;
+//! use charon_physics::sim::material::CellData;
+//! use charon_physics::sim::physics;
 //! use rand::SeedableRng;
 //!
 //! let mut grid = Grid::new(64, 64);

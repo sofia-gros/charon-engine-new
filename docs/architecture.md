@@ -19,10 +19,10 @@ M1のworkspaceは次の構成です。
 | package | 役割 | 依存 |
 | --- | --- | --- |
 | `charon-core` | 最小実行基盤 | なし（stdのみ） |
-| `sandengine` | 既存の独立した物理ライブラリ | rand / glam |
+| `charon_physics` | 既存の独立した物理ライブラリ | rand / glam |
 | `charon-m1-sample` | M1のゲームとサンプル専用の表示 | charon-core / minifb（任意） |
 
-`sandengine` の Plugin 化はM2です。M1サンプルのソフトウェア表示・入力は、M3以降の正式な描画・入力APIの実装を意味しません。将来の機能はCoreへ直接追加せず、それぞれのライブラリと登録用Pluginとして作ります。
+`charon_physics` の Plugin 化はM2です。M1サンプルのソフトウェア表示・入力は、M3以降の正式な描画・入力APIの実装を意味しません。将来の機能はCoreへ直接追加せず、それぞれのライブラリと登録用Pluginとして作ります。
 
 ## 標準のスレッド構成
 

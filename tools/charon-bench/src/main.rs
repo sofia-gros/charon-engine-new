@@ -1,9 +1,11 @@
 //! Fixed-window profiling; timings are observations, never CI speed assertions.
+#[path = "../../../tests/support/repose_measurement.rs"]
+mod repose_measurement;
 mod scenes;
 use charon_core::App;
+use charon_physics::sim::{grid::Grid, physics, simulation::Simulation};
 use charon_sand::{FallingSandPlugin, SandClient, SandState};
 use rand::{SeedableRng, rngs::StdRng};
-use sandengine::sim::{grid::Grid, physics, simulation::Simulation};
 use serde::Serialize;
 use std::hint::black_box;
 use std::time::Instant;
@@ -87,7 +89,7 @@ impl Runner {
 }
 fn checksum(grid: &Grid) -> u64 {
     grid.cells.iter().fold(0xcbf29ce484222325, |hash, cell| {
-        let hash = (hash ^ cell.kind as u64).wrapping_mul(0x100000001b3);
+        let hash = (hash ^ u64::from(cell.kind.id())).wrapping_mul(0x100000001b3);
         (hash ^ cell.extra as u64).wrapping_mul(0x100000001b3)
     })
 }
@@ -143,7 +145,7 @@ fn run(scene: &str, layer: &str, w: usize, h: usize, trials: usize, ticks: usize
         snapshot_cell_bytes: if layer == "kernel" {
             0
         } else {
-            w * h * std::mem::size_of::<sandengine::sim::material::CellData>()
+            w * h * std::mem::size_of::<charon_physics::sim::material::CellData>()
         },
         state_checksum: format!("{:016x}", final_checksum.unwrap()),
         within_60hz_half_budget: p95 <= 1000.0 / 60.0 * 0.5,
@@ -157,6 +159,31 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             .position(|arg| arg == flag)
             .and_then(|i| args.get(i + 1))
     };
+    if args.iter().any(|arg| arg == "--repose") {
+        let output = value("--output").ok_or("--output path is required")?;
+        let mut measurements = Vec::new();
+        for ground in [
+            repose_measurement::Ground::Flat,
+            repose_measurement::Ground::Slope,
+            repose_measurement::Ground::Step,
+        ] {
+            for target in [32.0, 40.0, 45.0, 60.0] {
+                for seed in [42, 123] {
+                    let m = repose_measurement::measure(target, ground, seed);
+                    measurements.push(serde_json::json!({"ground":format!("{ground:?}"),"seed":seed,
+                    "target":m.target,"left_degrees":m.left_degrees,"right_degrees":m.right_degrees,
+                    "ticks":m.ticks,"sand_before":m.sand_before,"sand_after":m.sand_after,"settled":m.settled}));
+                }
+            }
+        }
+        std::fs::write(
+            output,
+            serde_json::to_string_pretty(
+                &serde_json::json!({"schema":1,"measurements":measurements}),
+            )? + "\n",
+        )?;
+        return Ok(());
+    }
     let trials = value("--trials")
         .map(|s| s.parse())
         .transpose()?

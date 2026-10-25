@@ -1,5 +1,5 @@
+use charon_physics::sim::{grid::Grid, material::CellData, physics};
 use rand::{SeedableRng, rngs::StdRng};
-use sandengine::sim::{grid::Grid, material::CellData, physics};
 
 pub const SEED: u64 = 0x4348_4152_4f4e;
 pub const SIZES: [(usize, usize); 3] = [(365, 365), (640, 360), (1280, 720)];

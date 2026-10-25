@@ -97,26 +97,67 @@ fn update_cell(grid: &mut Grid, x: usize, y: usize, rng: &mut impl Rng) {
         return;
     }
     let cell = grid.next[i];
+    // These reserved presets cannot have a custom updater. Custom solids/gases
+    // still go through the registry dispatch below.
+    if matches!(cell.kind, Cell::Air | Cell::Block | Cell::Stone) {
+        return;
+    }
+    let properties = grid.materials.get(cell.kind);
+    if let Some(update) = properties.custom_update {
+        let mut context = ParticleContext {
+            grid,
+            x,
+            y,
+            i,
+            keep_awake: true,
+        };
+        update(&mut context, rng);
+        if context.keep_awake {
+            context.grid.mark_dirty(context.x, context.y);
+        }
+        return;
+    }
     match cell.kind {
         Cell::Sand | Cell::Gravel => update_granular(grid, x, y, i, cell, rng),
-        Cell::Water => update_liquid(grid, x, y, i, cell, 5, rng),
+        Cell::Water => update_liquid(
+            grid,
+            x,
+            y,
+            i,
+            cell,
+            grid.materials.get(cell.kind).lateral_spread as i32,
+            rng,
+        ),
         Cell::Oil => update_oil(grid, x, y, i, cell, rng),
         Cell::Acid => update_acid(grid, x, y, i, cell, rng),
         Cell::Fire => update_fire(grid, x, y, i, cell, rng),
         Cell::Steam => update_steam(grid, x, y, i, cell, rng),
-        _ => {}
+        _ => match properties.movement {
+            super::rules::Movement::Granular => update_granular(grid, x, y, i, cell, rng),
+            super::rules::Movement::Liquid => update_liquid(
+                grid,
+                x,
+                y,
+                i,
+                cell,
+                i32::from(properties.lateral_spread),
+                rng,
+            ),
+            super::rules::Movement::Gas => update_gas(grid, x, y, i, cell, rng),
+            _ => {}
+        },
     }
 }
 
 #[inline]
-fn can_displace(mover: Cell, target: Cell) -> bool {
+fn can_displace(grid: &Grid, mover: Cell, target: Cell) -> bool {
     if target == Cell::Air {
         return true;
     }
-    if target == Cell::Block || target == Cell::Stone {
+    if grid.materials.get(target).movement == super::rules::Movement::Solid {
         return false;
     }
-    mover.density() > target.density()
+    grid.materials.get(mover).density > grid.materials.get(target).density
 }
 
 fn swap_cells(grid: &mut Grid, i: usize, j: usize) {
@@ -152,7 +193,7 @@ fn update_granular(
 ) {
     if y + 1 < grid.h {
         let below = grid.idx(x, y + 1);
-        if can_displace(cell.kind, grid.next[below].kind) {
+        if can_displace(grid, cell.kind, grid.next[below].kind) {
             swap_cells(grid, i, below);
             return;
         }
@@ -164,11 +205,37 @@ fn update_granular(
             let nx = x as i32 + dx;
             if nx >= 0 && (nx as usize) < grid.w {
                 let di = grid.idx(nx as usize, y + 1);
-                if can_displace(cell.kind, grid.next[di].kind) {
+                let properties = grid.materials.get(cell.kind);
+                let steep_enough = properties.repose_degrees() <= 45.0
+                    || grid.surface_y(nx as usize)
+                        > y + properties.static_friction().round() as usize;
+                if steep_enough && can_displace(grid, cell.kind, grid.next[di].kind) {
                     swap_cells(grid, i, di);
                     return;
                 }
             }
+        }
+    }
+    let properties = grid.materials.get(cell.kind);
+    if properties.allowed_drop == super::rules::REPOSE_SPAN || grid.surface_y(x) != y {
+        return;
+    }
+    let left_first: bool = rng.random();
+    for direction in if left_first { [-1isize, 1] } else { [1, -1] } {
+        let target_x = x as isize + direction;
+        let far_x = x as isize + direction * super::rules::REPOSE_SPAN as isize;
+        if target_x < 0 || target_x >= grid.w as isize || far_x < 0 || far_x >= grid.w as isize {
+            continue;
+        }
+        let target_x = target_x as usize;
+        let target = grid.idx(target_x, y);
+        if grid.next[target].kind != Cell::Air || grid.surface_y(target_x) <= y {
+            continue;
+        }
+        let far_surface = grid.surface_y(far_x as usize);
+        if far_surface > y + properties.allowed_drop {
+            swap_cells(grid, i, target);
+            return;
         }
     }
 }
@@ -186,7 +253,7 @@ fn update_liquid(
 ) {
     if y + 1 < grid.h {
         let below = grid.idx(x, y + 1);
-        if can_displace(cell.kind, grid.next[below].kind) {
+        if can_displace(grid, cell.kind, grid.next[below].kind) {
             swap_cells(grid, i, below);
             return;
         }
@@ -198,7 +265,7 @@ fn update_liquid(
             let nx = x as i32 + dx;
             if nx >= 0 && (nx as usize) < grid.w {
                 let di = grid.idx(nx as usize, y + 1);
-                if can_displace(cell.kind, grid.next[di].kind) {
+                if can_displace(grid, cell.kind, grid.next[di].kind) {
                     swap_cells(grid, i, di);
                     return;
                 }
@@ -206,6 +273,9 @@ fn update_liquid(
         }
     }
 
+    if spread == 0 {
+        return;
+    }
     let amt: i32 = rng.random_range(1..=spread);
     let dir: i32 = if rng.random() { -1 } else { 1 };
     for s in 1..=amt {
@@ -220,7 +290,7 @@ fn update_liquid(
             place(grid, i, CellData::AIR);
             return;
         }
-        if sk != Cell::Water {
+        if sk != cell.kind {
             break;
         }
     }
@@ -244,7 +314,7 @@ fn update_oil(grid: &mut Grid, x: usize, y: usize, i: usize, cell: CellData, rng
 
     if y + 1 < grid.h {
         let below = grid.idx(x, y + 1);
-        if grid.next[below].kind == Cell::Air {
+        if can_displace(grid, cell.kind, grid.next[below].kind) {
             swap_cells(grid, i, below);
             return;
         }
@@ -256,7 +326,7 @@ fn update_oil(grid: &mut Grid, x: usize, y: usize, i: usize, cell: CellData, rng
             let nx = x as i32 + dx;
             if nx >= 0 && (nx as usize) < grid.w {
                 let di = grid.idx(nx as usize, y + 1);
-                if grid.next[di].kind == Cell::Air {
+                if can_displace(grid, cell.kind, grid.next[di].kind) {
                     swap_cells(grid, i, di);
                     return;
                 }
@@ -266,14 +336,16 @@ fn update_oil(grid: &mut Grid, x: usize, y: usize, i: usize, cell: CellData, rng
 
     if y > 0 {
         let above = grid.idx(x, y - 1);
-        if grid.next[above].kind == Cell::Water {
+        if grid.next[above].kind == Cell::Water
+            && grid.materials.get(Cell::Oil).density < grid.materials.get(Cell::Water).density
+        {
             swap_cells(grid, i, above);
             return;
         }
     }
 
     let dir: i32 = if rng.random() { -1 } else { 1 };
-    for s in 1..=4i32 {
+    for s in 1..=i32::from(grid.materials.get(Cell::Oil).lateral_spread) {
         let nx = x as i32 + dir * s;
         if nx < 0 || (nx as usize) >= grid.w {
             break;
@@ -373,7 +445,7 @@ fn update_acid(grid: &mut Grid, x: usize, y: usize, i: usize, cell: CellData, rn
     }
 
     let dir: i32 = if rng.random() { -1 } else { 1 };
-    for s in 1..=3i32 {
+    for s in 1..=i32::from(grid.materials.get(Cell::Acid).lateral_spread) {
         let nx = x as i32 + dir * s;
         if nx < 0 || (nx as usize) >= grid.w {
             break;
@@ -593,3 +665,135 @@ mod tests {
 #[cfg(test)]
 #[path = "../../tests/support/copy_equivalence.rs"]
 mod copy_equivalence;
+
+/// Restricted, bounds-checked operations available to custom material callbacks.
+pub struct ParticleContext<'a> {
+    grid: &'a mut Grid,
+    x: usize,
+    y: usize,
+    i: usize,
+    keep_awake: bool,
+}
+impl ParticleContext<'_> {
+    /// Allow this cell to sleep after a no-change callback. Changes still wake neighbors.
+    pub fn sleep(&mut self) {
+        self.keep_awake = false;
+    }
+    pub fn position(&self) -> (usize, usize) {
+        (self.x, self.y)
+    }
+    pub fn material_named(&self, name: &str) -> Option<Cell> {
+        self.grid.materials.find(name)
+    }
+    pub fn properties(&self, kind: Cell) -> Option<super::rules::MaterialProperties> {
+        self.grid
+            .materials
+            .contains(kind)
+            .then(|| self.grid.materials.get(kind))
+    }
+    pub fn transform_neighbor(&mut self, dx: i32, dy: i32, cell: CellData) -> bool {
+        if !(-1..=1).contains(&dx)
+            || !(-1..=1).contains(&dy)
+            || !self.grid.materials.contains(cell.kind)
+        {
+            return false;
+        }
+        let (x, y) = (self.x as i32 + dx, self.y as i32 + dy);
+        if !self.grid.in_bounds(x, y) {
+            return false;
+        }
+        let index = self.grid.idx(x as usize, y as usize);
+        if self.grid.next[index].kind == Cell::Block {
+            return false;
+        }
+        place(self.grid, index, cell);
+        true
+    }
+    pub fn cell(&self) -> CellData {
+        self.grid.next[self.i]
+    }
+    pub fn neighbor(&self, dx: i32, dy: i32) -> Option<CellData> {
+        let (x, y) = (self.x as i64 + i64::from(dx), self.y as i64 + i64::from(dy));
+        (x >= 0 && y >= 0 && x < self.grid.w as i64 && y < self.grid.h as i64)
+            .then(|| self.grid.next[self.grid.idx(x as usize, y as usize)])
+    }
+    pub fn try_move(&mut self, dx: i32, dy: i32) -> bool {
+        if !(-1..=1).contains(&dx) || !(-1..=1).contains(&dy) {
+            return false;
+        }
+        let (x, y) = (self.x as i32 + dx, self.y as i32 + dy);
+        if !self.grid.in_bounds(x, y) {
+            return false;
+        }
+        let target = self.grid.idx(x as usize, y as usize);
+        if !can_displace(self.grid, self.cell().kind, self.grid.next[target].kind) {
+            return false;
+        }
+        swap_cells(self.grid, self.i, target);
+        self.x = x as usize;
+        self.y = y as usize;
+        self.i = target;
+        true
+    }
+    pub fn replace(&mut self, cell: CellData) -> bool {
+        if !self.grid.materials.contains(cell.kind) {
+            return false;
+        }
+        place(self.grid, self.i, cell);
+        true
+    }
+    pub fn spawn(&mut self, dx: i32, dy: i32, cell: CellData) -> bool {
+        if !self.grid.materials.contains(cell.kind)
+            || !(-1..=1).contains(&dx)
+            || !(-1..=1).contains(&dy)
+        {
+            return false;
+        }
+        let (x, y) = (self.x as i32 + dx, self.y as i32 + dy);
+        if !self.grid.in_bounds(x, y) {
+            return false;
+        }
+        let target = self.grid.idx(x as usize, y as usize);
+        if self.grid.next[target].kind != Cell::Air {
+            return false;
+        }
+        place(self.grid, target, cell);
+        true
+    }
+}
+
+fn update_gas(grid: &mut Grid, x: usize, y: usize, i: usize, cell: CellData, rng: &mut impl Rng) {
+    let direction = if grid.materials.get(cell.kind).density < grid.materials.get(Cell::Air).density
+    {
+        -1
+    } else {
+        1
+    };
+    let sideways = if rng.random::<bool>() { -1 } else { 1 };
+    for (dx, dy) in [
+        (0, direction),
+        (sideways, direction),
+        (-sideways, direction),
+        (sideways, 0),
+    ] {
+        let (nx, ny) = (x as i32 + dx, y as i32 + dy);
+        if !grid.in_bounds(nx, ny) {
+            continue;
+        }
+        let target = grid.idx(nx as usize, ny as usize);
+        let other = grid.next[target].kind;
+        let density = grid.materials.get(other).density;
+        if grid.materials.get(other).movement == super::rules::Movement::Solid {
+            continue;
+        }
+        let vertical = if direction < 0 {
+            density > grid.materials.get(cell.kind).density
+        } else {
+            density < grid.materials.get(cell.kind).density
+        };
+        if (dy != 0 && vertical) || (dy == 0 && other == Cell::Air) {
+            swap_cells(grid, i, target);
+            return;
+        }
+    }
+}

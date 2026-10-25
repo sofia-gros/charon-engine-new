@@ -6,7 +6,7 @@ license = "MIT"
 publish = false
 
 [dependencies]
-sandengine = { path = "../.." }
+charon_physics = { path = "../.." }
 charon-core = { path = "../../crates/charon-core" }
 charon-sand = { path = "../../crates/charon-sand" }
 rand = "0.10.1"

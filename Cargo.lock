@@ -92,8 +92,8 @@ version = "0.1.0"
 dependencies = [
  "charon-core",
  "charon-sand",
+ "charon_physics",
  "rand",
- "sandengine",
  "serde",
  "serde_json",
 ]
@@ -116,8 +116,8 @@ version = "0.1.0"
 dependencies = [
  "charon-core",
  "charon-sand",
+ "charon_physics",
  "minifb",
- "sandengine",
 ]
 
 [[package]]
@@ -125,7 +125,16 @@ name = "charon-sand"
 version = "0.1.0"
 dependencies = [
  "charon-core",
- "sandengine",
+ "charon_physics",
+]
+
+[[package]]
+name = "charon_physics"
+version = "0.2.0"
+dependencies = [
+ "criterion",
+ "glam",
+ "rand",
 ]
 
 [[package]]
@@ -755,15 +764,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "93fc1dc3aaa9bfed95e02e6eadabb4baf7e3078b0bd1b4d7b6b0b68378900502"
 dependencies = [
  "winapi-util",
-]
-
-[[package]]
-name = "sandengine"
-version = "0.2.0"
-dependencies = [
- "criterion",
- "glam",
- "rand",
 ]
 
 [[package]]

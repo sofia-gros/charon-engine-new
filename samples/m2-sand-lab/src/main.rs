@@ -1,7 +1,7 @@
 mod draw;
 mod runtime;
+use charon_physics::sim::material::Cell;
 use runtime::{Controls, Lab, WIDTH};
-use sandengine::sim::material::Cell;
 use std::time::{Duration, Instant};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -30,9 +30,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 #[cfg(feature = "window")]
 fn window(hz: u32) -> Result<(), Box<dyn std::error::Error>> {
+    use charon_physics::sim::material::CellData;
     use minifb::{Key, KeyRepeat, MouseButton, MouseMode, Window, WindowOptions};
     use runtime::Brush;
-    use sandengine::sim::material::CellData;
     let mut lab = Lab::start(hz)?;
     let mut window = Window::new(
         "Charon M2 / Falling Sand Lab",
@@ -60,6 +60,18 @@ fn window(hz: u32) -> Result<(), Box<dyn std::error::Error>> {
             ] {
                 if window.is_key_pressed(key, KeyRepeat::No) {
                     cell = material;
+                }
+            }
+            for (key, name) in [(Key::Key9, "Soil"), (Key::C, "Cloud"), (Key::N, "Nitrogen")] {
+                if window.is_key_pressed(key, KeyRepeat::No)
+                    && let Some(view) = lab
+                        .client
+                        .snapshot()
+                        .palette
+                        .iter()
+                        .find(|view| view.name == name)
+                {
+                    cell = CellData::new(view.kind, 17);
                 }
             }
             if let Some((_, scroll)) = window.get_scroll_wheel() {
@@ -98,8 +110,14 @@ fn window(hz: u32) -> Result<(), Box<dyn std::error::Error>> {
             pause: active && window.is_key_pressed(Key::P, KeyRepeat::No),
             gate: active && window.is_key_pressed(Key::G, KeyRepeat::No),
             release: active && window.is_key_pressed(Key::B, KeyRepeat::No),
+            angle: (active && window.is_key_pressed(Key::A, KeyRepeat::No)).then_some(cell.kind),
         })?;
-        canvas.render(&lab.client.snapshot(), &lab.status(), hz, cell.kind, radius);
+        let latest = lab.client.snapshot();
+        window.set_title(&format!(
+            "Charon M2 / Falling Sand Lab | {}",
+            latest.palette[usize::from(cell.kind.id())].name
+        ));
+        canvas.render(&latest, &lab.status(), hz, cell.kind, radius);
         window.update_with_buffer(&canvas.pixels, draw::WINDOW_W, draw::WINDOW_H)?;
     }
     lab.shutdown()

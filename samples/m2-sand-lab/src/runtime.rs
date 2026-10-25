@@ -1,6 +1,6 @@
 use charon_core::{App, Plugin, PluginResult, Step, Worker, WorkerConfig, World};
+use charon_physics::sim::material::CellData;
 use charon_sand::{FallingSandPlugin, Operation, Rect, Request, SandClient, Simulation};
-use sandengine::sim::material::CellData;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex, mpsc::TrySendError};
 
@@ -48,7 +48,32 @@ pub fn boundaries() -> [Operation; 4] {
     ]
 }
 pub fn initial_sim() -> Simulation {
-    let mut sim = Simulation::new(WIDTH, HEIGHT, 42);
+    use charon_physics::sim::rules::{MaterialDefinition, MaterialRegistry, Movement};
+    let mut registry = MaterialRegistry::default();
+    registry
+        .register(
+            MaterialDefinition::new("Soil", Movement::Granular, 1600.0, [125, 84, 48, 255])
+                .with_repose(38.0)
+                .unwrap(),
+        )
+        .unwrap();
+    registry
+        .register(MaterialDefinition::new(
+            "Cloud",
+            Movement::Gas,
+            0.7,
+            [205, 222, 240, 255],
+        ))
+        .unwrap();
+    registry
+        .register(MaterialDefinition::new(
+            "Nitrogen",
+            Movement::Gas,
+            1.165,
+            [136, 180, 220, 255],
+        ))
+        .unwrap();
+    let mut sim = Simulation::new(WIDTH, HEIGHT, 42).with_materials(registry);
     for (i, operation) in boundaries()
         .into_iter()
         .chain([
@@ -90,6 +115,7 @@ pub struct Controls {
     pub pause: bool,
     pub gate: bool,
     pub release: bool,
+    pub angle: Option<charon_physics::sim::material::Cell>,
 }
 #[derive(Default, Clone)]
 pub struct Status {
@@ -164,6 +190,13 @@ impl Plugin for GameCommands {
             } else if std::mem::take(&mut input.pause) {
                 self.paused = !self.paused;
                 vec![Operation::SetPaused(self.paused)]
+            } else if let Some(kind) = input.angle.take() {
+                let snapshot = self.client.snapshot();
+                let current = snapshot.palette[usize::from(kind.id())]
+                    .repose_degrees
+                    .unwrap_or(32.0);
+                let degrees = if current < 40.0 { 45.0 } else { 32.0 };
+                vec![Operation::SetRepose { kind, degrees }]
             } else if std::mem::take(&mut input.release) {
                 vec![Operation::Release {
                     rect: GATE,
@@ -249,6 +282,9 @@ impl Lab {
         shared.pause |= input.pause;
         shared.gate |= input.gate;
         shared.release |= input.release;
+        if input.angle.is_some() {
+            shared.angle = input.angle;
+        }
         Ok(())
     }
     pub fn status(&self) -> Status {

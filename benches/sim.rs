@@ -9,12 +9,12 @@
 //! number of active chunks. The full cell copy has been removed; publishing
 //! a separate simulation snapshot still copies cells (profile with charon-bench).
 
+use charon_physics::sim::grid::Grid;
+use charon_physics::sim::material::CellData;
+use charon_physics::sim::physics;
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use rand::SeedableRng;
 use rand::rngs::StdRng;
-use sandengine::sim::grid::Grid;
-use sandengine::sim::material::CellData;
-use sandengine::sim::physics;
 
 fn bench_saturated(c: &mut Criterion) {
     let mut group = c.benchmark_group("physics_step_640x360");

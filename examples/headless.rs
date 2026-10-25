@@ -1,6 +1,6 @@
 //! Run the physics core without a window or renderer.
+use charon_physics::sim::{grid::Grid, material::Cell, material::CellData, physics};
 use rand::{SeedableRng, rngs::StdRng};
-use sandengine::sim::{grid::Grid, material::Cell, material::CellData, physics};
 
 fn main() {
     let mut grid = Grid::new(365, 365);

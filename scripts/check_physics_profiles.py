@@ -31,3 +31,20 @@ for key, a in left.items():
         if a[field] != b[field]:
             raise SystemExit(f"Profile comparison differs: {key} {field}")
 print("36 before/after profile cases: seeds, state checksums, chunk schedules, and buffer sizes match")
+
+final = json.loads((folder / "m2-final.json").read_text(encoding="utf-8"))
+current = keyed(final)
+for width, height in [(365,365),(640,360),(1280,720)]:
+    for scene in ["falling_sand","settled_stone","liquid","reactions"]:
+        cases = [current[(width,height,scene,layer)] for layer in ["kernel","simulation_snapshot","plugin_snapshot"]]
+        if len({case["state_checksum"] for case in cases}) != 1:
+            raise SystemExit("Final kernel / simulation / plugin state mismatch")
+repose = json.loads((folder / "m2-repose.json").read_text(encoding="utf-8"))["measurements"]
+if len(repose) != 24:
+    raise SystemExit("Incomplete repose matrix")
+for case in repose:
+    if not case["settled"] or case["sand_before"] != case["sand_after"]:
+        raise SystemExit("Repose mass or settling failure")
+    if max(abs(case["left_degrees"]-case["target"]),abs(case["right_degrees"]-case["target"])) > 4:
+        raise SystemExit("Repose exceeds the tested four-degree tolerance")
+print("M2 final: 36 profiles agree across APIs; 24 repose cases preserve mass, settle, and meet tolerance")

@@ -16,7 +16,7 @@ pub struct Rect {
     pub h: u32,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Operation {
     /// Fill empty cells only. Air erases simulation cells explicitly; external
     /// colliders are never painted over. Radius is measured in simulation cells.
@@ -36,11 +36,15 @@ pub enum Operation {
         rect: Rect,
         cell: CellData,
     },
+    SetRepose {
+        kind: Cell,
+        degrees: f32,
+    },
     SetPaused(bool),
     Reset,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Request {
     /// Strictly increasing per Simulation, including failed requests.
     pub id: u64,
@@ -54,6 +58,7 @@ pub enum Outcome {
     StaleRevision,
     DuplicateOrOutOfOrder,
     Occupied,
+    InvalidSettings,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -73,7 +78,7 @@ pub struct Contact {
     pub material: Cell,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     pub width: usize,
     pub height: usize,
@@ -84,6 +89,8 @@ pub struct Snapshot {
     pub revision: u64,
     pub active_chunks: usize,
     pub paused: bool,
+    pub sand_repose_degrees: f32,
+    pub palette: Vec<super::rules::MaterialView>,
 }
 
 pub struct Simulation {
@@ -117,6 +124,10 @@ impl Simulation {
     }
 
     /// Read-only access keeps external solid / particle occupancy consistent.
+    pub fn with_materials(mut self, registry: super::rules::MaterialRegistry) -> Self {
+        self.grid.set_materials(registry);
+        self
+    }
     pub fn grid(&self) -> &Grid {
         &self.grid
     }
@@ -160,6 +171,10 @@ impl Simulation {
         }
         match request.operation {
             Operation::Brush { x, y, radius, cell } => {
+                if !self.grid.materials.contains(cell.kind) {
+                    receipt.outcome = Outcome::InvalidSettings;
+                    return receipt;
+                }
                 let r = i64::from(radius);
                 let x0 = (i64::from(x) - r).clamp(0, self.grid.w as i64) as usize;
                 let y0 = (i64::from(y) - r).clamp(0, self.grid.h as i64) as usize;
@@ -215,6 +230,10 @@ impl Simulation {
                 }
             }
             Operation::Release { rect, cell } => {
+                if !self.grid.materials.contains(cell.kind) {
+                    receipt.outcome = Outcome::InvalidSettings;
+                    return receipt;
+                }
                 let (x0, y0, x1, y1) = self.bounds(rect);
                 for y in y0..y1 {
                     for x in x0..x1 {
@@ -224,6 +243,17 @@ impl Simulation {
                             receipt.changed += 1;
                         }
                     }
+                }
+            }
+            Operation::SetRepose { kind, degrees } => {
+                let mut materials = self.grid.materials.clone();
+                if materials.set_repose(kind, degrees).is_err() {
+                    receipt.outcome = Outcome::InvalidSettings;
+                    return receipt;
+                }
+                if self.grid.materials.get(kind).repose_degrees() != degrees {
+                    self.grid.set_materials(materials);
+                    receipt.changed = 1;
                 }
             }
             Operation::SetPaused(paused) => {
@@ -296,6 +326,8 @@ impl Simulation {
             revision: self.revision,
             active_chunks: self.grid.dirty_chunk_count(),
             paused: self.paused,
+            palette: self.grid.materials.palette(),
+            sand_repose_degrees: self.grid.materials.get(Cell::Sand).repose_degrees(),
         }
     }
 }

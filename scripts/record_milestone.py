@@ -18,7 +18,7 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
-    "m2": ("charon-m2-sample", "Charon M2 / Falling Sand Lab", "M2 in progress"),
+    "m2": ("charon-m2-sample", "Charon M2 / Falling Sand Lab", "M2 complete"),
 }
 
 
@@ -64,7 +64,7 @@ class X11:
             if self.x.XFetchName(self.display,children[i],c.byref(name)) and name.value:
                 text = c.string_at(name).decode(errors="replace")
                 self.x.XFree(name)
-                if text == title:
+                if text.startswith(title):
                     result = children[i]
                     break
         if children:
@@ -188,6 +188,15 @@ def record(milestone,output,xvfb,display):
                     time.sleep(0.6)
                     action("Resume (P)",lambda:connection.key("p"))
                     time.sleep(0.5)
+                    action("Register-demo cloud: select C",lambda:connection.key("c"))
+                    action("Paint cloud gas",lambda:connection.paint(x+32+200*3,y+88+155*3,0.4))
+                    action("Register-demo nitrogen: select N",lambda:connection.key("n"))
+                    action("Paint nitrogen gas",lambda:connection.paint(x+32+230*3,y+88+155*3,0.4))
+                    time.sleep(0.6)
+                    action("Select registered soil (9)",lambda:connection.key("9"))
+                    action("Paint soil near floor",lambda:connection.paint(x+32+100*3,y+88+185*3,0.5))
+                    action("Change selected material repose (A)",lambda:connection.key("a"))
+                    time.sleep(0.8)
                 if recorder.poll() is not None:
                     raise RuntimeError("screen recorder exited early")
                 recorder.communicate(b"q\n",timeout=10)

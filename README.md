@@ -16,14 +16,15 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 
 大きな目標と実装ごとの小さな目標は、[ロードマップ](./ROADMAP.md)にまとめています。
 
-現在は、[Sandengine](https://github.com/Ijtihed/sandengine) を土台に、Falling Sand の物理処理を独立したライブラリとして取り出した段階です。独立した `charon-core` に、最小のPlugin実行基盤を実装しました。M2ではFalling SandのPlugin接続と外部コリジョン・生成要求のAPIを実装し、性能・物理表現の改善を進めています。描画・GUI・入力・履歴保存は切り離してあり、画面なしでシミュレーションを実行できます。
+M2までの基盤を実装しています。Core、独立した物理ライブラリ `charon_physics`、Falling Sand Plugin、API経由の物質登録と独自更新、物質ごとの安息角を利用できます。物理実装の出発点は[Sandengine](https://github.com/Ijtihed/sandengine)で、元のMIT表記を保持しています。
 
 | 機能 | 状況 |
 | --- | --- |
 | セル単位の物理演算、密度による移動、燃焼・蒸発・溶解などの反応 | 実装済み |
 | 2バイトのセルデータ、32×32チャンクによる更新対象の管理 | 実装済み |
 | 粒子を押しのける可動ブロック | 実装済み |
-| Falling Sand Plugin、外部コリジョン・生成要求・結果・接触API | M2の最初の実装単位として実装済み |
+| Falling Sand Plugin、外部コリジョン・生成要求・結果・接触API | M2実装済み |
+| API経由の物質登録、独自コールバック、物質ごとの安息角 | M2実装済み |
 | 独立した Tilemap / Sprite Plugins と、Falling SandとのBridge | 計画中 |
 | Assets Plugin によるアセットの読み込み・管理 | 計画中 |
 | Rendering Plugin と Shader、交換可能なGPUバックエンド | 計画中 |
@@ -33,7 +34,7 @@ charon-engine は、軽量かつ高性能な、Plugins を組み合わせて使�
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
 | Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
 
-軽量・高性能はエンジン全体の開発目標です。物理更新時の全セルコピーを削除し、固定seedでの[性能測定基準](./docs/performance/README.md)を用意しました。公開用snapshotのコピーなど、引き続き最適化の余地があります。また、砂の自然な安息角、セル単位の速度、温度伝導、粘性・表面張力は未実装です。
+軽量・高性能はエンジン全体の開発目標です。物理更新時の全セルコピーを削除し、固定seedでの[性能測定基準](./docs/performance/README.md)を用意しました。公開用snapshotのコピーなど、引き続き最適化の余地があります。安息角は物質ごとに設定でき、砂の標準値は32°です。セル単位の速度、温度伝導、粘性・表面張力は今後の拡張です。
 
 ## M実装事例
 
@@ -53,9 +54,9 @@ cargo run --release -p charon-m1-sample
 
 各マイルストーンの実装完了時に、ゲームサンプルと操作GIFを用意し、GIFをGit管理してこの節に埋め込みます。
 
-### M2：Falling Sand Plugin・物理サンプル（進行中）
+### M2：Falling Sand・物質登録・安息角
 
-![M2進行中：砂・水の配置、障壁の解除、砂への変換、一時停止](./docs/demos/m2-demo.gif)
+![M2：砂・水・雲・窒素・土の操作、障壁変換、安息角設定](./docs/demos/m2-demo.gif)
 
 [録画環境・対象コミット・操作内容](./docs/demos/m2-demo.json)
 
@@ -65,49 +66,20 @@ cargo run --release -p charon-m1-sample
 cargo run --release -p charon-m2-sample
 ```
 
-[APIと制約](./docs/falling-sand-api.md)を公開しています。安息角・性能最適化は未完了で、M2は進行中です。
+[物理API](./docs/falling-sand-api.md)と[物質の登録・独自更新API](./docs/materials.md)を公開しています。Cで雲、Nで窒素、9で土を選択し、Aで選択中の粒状物質の安息角を切り替えられます。
 
-## 導入
+## 開発環境
 
-Edition 2024 に対応した最新の stable Rust を使用してください。
+Edition 2024に対応した最新のstable Rustを使用してください。ゲームサンプルの起動コマンドは上の各実装事例に記載しています。
 
-現在の crate 名は、既存の物理APIとの互換性を保つため `sandengine` です。
-
-```toml
-[dependencies]
-sandengine = { git = "https://github.com/sofia-gros/charon-engine-new" }
-rand = "0.10.1"
-```
-
-## 使用例
-
-グリッドに砂を置き、物理演算を120 tick進める最小の例です。ウィンドウやGPUは必要ありません。
-
-```rust
-use rand::{SeedableRng, rngs::StdRng};
-use sandengine::sim::{grid::Grid, material::CellData, physics};
-
-let mut grid = Grid::new(365, 365);
-let mut rng = StdRng::seed_from_u64(42);
-grid.set(182, 10, CellData::sand(0));
-
-for _ in 0..120 {
-    physics::step(&mut grid, &mut rng);
-}
-```
-
-リポジトリ内の [headless サンプル](./examples/headless.rs) も実行できます。
-
-```sh
-cargo run --release --example headless
-```
+物理ライブラリのcrate名は `charon_physics` です。APIの利用方法は[物理APIドキュメント](./docs/falling-sand-api.md)を参照してください。
 
 ## ドキュメント
 
 現在の物理ライブラリは、次のモジュールから構成されています。
 
 - [Grid](./src/sim/grid.rs)：セルの格納、ダブルバッファ、チャンクの更新管理
-- [Material](./src/sim/material.rs)：セルの種類、密度、色の取得
+- [MaterialRegistry](./docs/materials.md)：物質の登録、密度・移動・色・安息角・独自更新
 - [Physics](./src/sim/physics.rs)：物質ごとの移動と反応
 - [Block](./src/sim/block.rs)：可動ブロックと粒子の押し出し
 

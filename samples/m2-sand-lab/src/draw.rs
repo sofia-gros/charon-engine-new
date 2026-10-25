@@ -1,6 +1,6 @@
 use crate::runtime::{HEIGHT, Status, WIDTH};
+use charon_physics::sim::material::Cell;
 use charon_sand::Snapshot;
-use sandengine::sim::material::Cell;
 pub const WINDOW_W: usize = 1024;
 pub const WINDOW_H: usize = 760;
 pub const LEFT: i32 = 32;
@@ -50,10 +50,15 @@ impl Canvas {
         self.pixels.fill(0x0b1020);
         self.rect(0, 0, WINDOW_W as i32, 4, 0x56e5b2);
         self.text(32, 24, "CHARON / M2 SAND LAB", 3, 0xe8efff);
+        let selected = &snapshot.palette[usize::from(material.id())];
+        let angle = selected
+            .repose_degrees
+            .map(|degrees| format!(" / {degrees} DEG"))
+            .unwrap_or_default();
         self.text(
             520,
             24,
-            &format!("{} / BRUSH {}", material.name(), radius).to_uppercase(),
+            &format!("{} / BRUSH {}{}", selected.name, radius, angle).to_uppercase(),
             2,
             0xffd778,
         );
@@ -78,7 +83,11 @@ impl Canvas {
             if cell.kind == Cell::Air {
                 continue;
             }
-            let [r, g, b, _] = cell.to_rgba();
+            let [r, g, b, _] = if cell.kind.id() < 10 {
+                cell.to_rgba()
+            } else {
+                snapshot.palette[usize::from(cell.kind.id())].color
+            };
             let color = ((r as u32) << 16) | ((g as u32) << 8) | b as u32;
             self.rect(
                 LEFT + (i % WIDTH) as i32 * SCALE,
@@ -99,17 +108,24 @@ impl Canvas {
         }
         self.text(
             32,
-            704,
+            700,
             "1 SAND 2 WATER 3 STONE 4 GRAVEL 5 FIRE 6 OIL 7 ACID 8 STEAM",
             2,
             0xc4d0e9,
         );
         self.text(
             32,
-            729,
+            720,
+            "9 SOIL / C CLOUD / N NITROGEN / A REPOSE",
+            2,
+            0x56e5b2,
+        );
+        self.text(
+            32,
+            740,
             "LMB PAINT / RMB ERASE / WHEEL SIZE / P PAUSE / R RESET / G GATE / B BREAK",
             1,
-            0x56e5b2,
+            0xc4d0e9,
         );
         let result = if snapshot.paused {
             "PAUSED"
@@ -120,7 +136,7 @@ impl Canvas {
         };
         self.text(
             32,
-            746,
+            751,
             &format!(
                 "{} / ACTIVE {} / GAME STEPS {}",
                 result, snapshot.active_chunks, status.game_steps
@@ -171,6 +187,7 @@ fn glyph(c: char) -> [u8; 7] {
         '+' => [0, 4, 4, 31, 4, 4, 0],
         '/' => [1, 1, 2, 4, 8, 16, 16],
         '>' => [16, 8, 4, 2, 4, 8, 16],
+        '.' => [0, 0, 0, 0, 0, 6, 6],
         '!' => [4, 4, 4, 4, 4, 0, 4],
         '-' => [0, 0, 0, 31, 0, 0, 0],
         _ => [0; 7],

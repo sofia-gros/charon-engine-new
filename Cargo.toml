@@ -3,7 +3,7 @@ members = [".", "crates/charon-core", "samples/m1-plugin-game", "crates/charon-s
 resolver = "3"
 
 [package]
-name = "sandengine"
+name = "charon_physics"
 version = "0.2.0"
 edition = "2024"
 license = "MIT"
@@ -35,5 +35,5 @@ name = "sim"
 harness = false
 
 [lib]
-name = "sandengine"
+name = "charon_physics"
 path = "src/lib.rs"

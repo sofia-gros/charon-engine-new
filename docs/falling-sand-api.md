@@ -1,6 +1,6 @@
-# M2：Falling Sand API（最初の実装単位）
+# M2：Falling Sand API
 
-物理を単体利用する `sandengine` と、Coreへ接続する `charon-sand` を分けています。描画・Tilemap・GPUへの依存はありません。M2全体の完了ではなく、Plugin化と外部連携の土台を実装した段階です。
+物理を単体利用する `charon_physics` と、Coreへ接続する `charon-sand` を分けています。描画・Tilemap・GPUへの依存はありません。M2では物質登録・独自更新・安息角も実装しています。[物質API](./materials.md)を参照してください。
 
 ## 独立した物理API
 
@@ -23,8 +23,9 @@
 | `Brush` | 円形範囲の空セルに物質を置く。Airを指定すると物理セルを明示的に消去。外部固体は消去しない |
 | `Collider` | 矩形範囲の外部固体を追加・解除。追加先に粒子がある場合は全体を拒否 |
 | `Release` | 矩形内に存在する外部固体を、1位置につき1セルの指定物質に変換 |
+| `SetRepose` | 登録した粒状物質の角度を変更し、休止領域を起こす。無効な値はInvalidSettings |
 | `SetPaused` | 物理のtick進行を停止・再開。停止中も編集要求は処理する |
-| `Reset` | セルと外部固体を消去し、乱数seedとtick数を初期化。要求IDの履歴は維持 |
+| `Reset` | セルと外部固体を消去し、乱数seedとtick数を初期化。要求IDと登録定義・物質設定は維持 |
 
 矩形やブラシはワールドの範囲でクリップします。座標の変換や複数セルからなるタイルは、呼び出す側が担当します。
 
@@ -55,14 +56,14 @@ ReceiptにはID・確定revision・結果・変更数・ブラシで処理でき
 
 ゲーム144Hz、描画60Hz、計算30〜60Hzは独立しています。現時点の物理は従来のtick単位のセルオートマトンで、計算Hzを変えると実時間あたりの落下速度や寿命も変わります。時間幅に合わせた物理パラメータの補正は未実装です。
 
-物理内部の全セルコピーは削除し、休止時はセルの走査を省きます。公開用スナップショットは毎計算tickで引き続きコピーします。描画側のArc取得は小さな操作ですが、発行側のメモリ処理はグリッドサイズに比例します。固定シーンの[性能測定結果](./performance/README.md)を記録していますが、ゲーム全体や全環境での性能目標を達成済みとはしません。安息角、マテリアル設定、公開snapshotの最適化はM2の残項目です。
+物理内部の全セルコピーは削除し、休止時はセルの走査を省きます。公開用スナップショットは毎計算tickで引き続きコピーし、登録名・色・移動特性・角度のpaletteも含みます。描画側のArc取得は小さな操作ですが、発行側のメモリ処理はグリッドサイズに比例します。固定シーンの[性能測定結果](./performance/README.md)を記録していますが、ゲーム全体や全環境での性能目標を達成済みとはしません。安息角・マテリアル設定はM2で実装済みです。公開snapshotの最適化、速度・温度などの追加物理は今後の拡張です。
 
 ## 検証
 
 ```powershell
 cargo test -p charon-sand
 cargo run -p charon-m2-sample --no-default-features -- --smoke-test
-cargo tree -p sandengine --edges normal
+cargo tree -p charon_physics --edges normal
 cargo tree -p charon-core
 ```
 
