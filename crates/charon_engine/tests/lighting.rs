@@ -123,3 +123,27 @@ fn cpu_plugin_respects_light_rate_and_cleanup() {
     app.shutdown().unwrap();
     assert!(app.world().get::<Lighting>().is_none());
 }
+
+#[test]
+fn replacing_the_low_level_scene_at_the_same_revision_cannot_reuse_cached_light() {
+    let mut l = lighting();
+    l.solve_cpu().unwrap();
+    assert!(l.sample_world([2., 38.]).is_some());
+    let mut replacement = Scene::new(l.scene().geometry(), l.scene().settings()).unwrap();
+    replacement
+        .set_light(
+            2,
+            PointLight {
+                position: [20., 40.],
+                color: [0., 1., 0.],
+                intensity: 1.,
+            },
+        )
+        .unwrap();
+    assert_eq!(replacement.revision(), l.scene().revision());
+    *l.scene_mut() = replacement;
+    assert!(l.field().is_none());
+    assert!(l.sample_world([2., 38.]).is_none());
+    l.solve_cpu().unwrap();
+    assert_eq!(l.sample_world([20., 40.]).unwrap()[0], 0.);
+}

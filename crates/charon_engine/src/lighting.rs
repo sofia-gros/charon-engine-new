@@ -98,7 +98,10 @@ impl Lighting {
     pub fn scene(&self) -> &Scene {
         &self.scene
     }
+    /// Invalidate even when the caller replaces the scene with another scene
+    /// having the same revision. Outstanding backend jobs remain scene-scoped.
     pub fn scene_mut(&mut self) -> &mut Scene {
+        self.field = None;
         &mut self.scene
     }
     pub fn update_hz(&self) -> u32 {

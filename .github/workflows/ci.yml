@@ -274,7 +274,15 @@ jobs:
         if: steps.media.outputs.needed == 'true'
       - name: Install recording dependencies
         if: steps.media.outputs.needed == 'true'
-        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0 libxtst6 ffmpeg
+        timeout-minutes: 5
+        shell: bash
+        run: |
+          if command -v Xvfb && command -v ffmpeg && python -c "import ctypes.util,glob; assert all(ctypes.util.find_library(n) for n in ['X11','Xtst','xkbcommon-x11','vulkan']); assert glob.glob('/usr/share/vulkan/icd.d/*lvp*.json')"; then
+            echo "Recording dependencies already available"
+          else
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 update
+            sudo apt-get -o Acquire::Retries=1 -o Acquire::http::Timeout=20 -o Acquire::https::Timeout=20 install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0 libxtst6 ffmpeg
+          fi
       - name: Build and record actual native windows
         if: steps.media.outputs.needed == 'true'
         env:
