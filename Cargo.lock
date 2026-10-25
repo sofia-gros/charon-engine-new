@@ -87,6 +87,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-bench"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+ "charon-sand",
+ "rand",
+ "sandengine",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "charon-core"
 version = "0.1.0"
 

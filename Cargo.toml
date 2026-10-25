@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/charon-core", "samples/m1-plugin-game", "crates/charon-sand", "samples/m2-sand-lab"]
+members = [".", "crates/charon-core", "samples/m1-plugin-game", "crates/charon-sand", "samples/m2-sand-lab", "tools/charon-bench"]
 resolver = "3"
 
 [package]

@@ -6,7 +6,8 @@
 //! On a 640×360 grid (≈230k cells) we measure cells-per-second by running
 //! `physics::step` and dividing by the elapsed time. The chunked dirty-rect
 //! scheduler (see `grid.rs`) means that wall-clock cost scales with the
-//! number of active chunks, but each tick still copies the full cell buffer.
+//! number of active chunks. The full cell copy has been removed; publishing
+//! a separate simulation snapshot still copies cells (profile with charon-bench).
 
 use criterion::{BatchSize, Criterion, Throughput, criterion_group, criterion_main};
 use rand::SeedableRng;

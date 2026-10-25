@@ -99,8 +99,13 @@ pub struct Simulation {
 
 impl Simulation {
     pub fn new(width: usize, height: usize, seed: u64) -> Self {
+        Self::from_grid(Grid::new(width, height), seed)
+    }
+
+    /// Take ownership of an existing grid; the external collision layer starts empty.
+    pub fn from_grid(grid: Grid, seed: u64) -> Self {
         Self {
-            grid: Grid::new(width, height),
+            grid,
             solids: BTreeSet::new(),
             rng: StdRng::seed_from_u64(seed),
             seed,

@@ -2,7 +2,8 @@
 //!
 //! ## Update order
 //!
-//! Each tick we copy `cells` into `next` and sweep `next` bottom-to-top. For
+//! Each active tick we hand `cells` to the working buffer without copying, then
+//! sweep `next` bottom-to-top. For
 //! each row the horizontal direction is randomised; without this, sequential
 //! left-to-right updates produce a clearly visible bias (everything drifts
 //! right). Hankinson, *"Making Sandspiel"* (2020) and the Powder Toy source
@@ -50,7 +51,12 @@ use rand::RngExt;
 /// Step the simulation one tick using only chunks marked dirty.
 pub fn step(grid: &mut Grid, rng: &mut impl Rng) {
     grid.rotate_dirty();
-    grid.next.copy_from_slice(&grid.cells);
+    if !grid.dirty.iter().any(|&active| active) {
+        return;
+    }
+    // Every update rule reads/writes `next`; `cells` is not observed during
+    // the exclusive sweep. Hand off the current allocation instead of copying.
+    std::mem::swap(&mut grid.cells, &mut grid.next);
     grid.moved.fill(false);
 
     for cy in (0..grid.chunks_y).rev() {
@@ -583,3 +589,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "../../tests/support/copy_equivalence.rs"]
+mod copy_equivalence;

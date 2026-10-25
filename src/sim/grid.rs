@@ -18,12 +18,14 @@ fn div_up(a: usize, b: usize) -> usize {
     a.div_ceil(b)
 }
 
+#[derive(Clone)]
 pub struct Grid {
     pub w: usize,
     pub h: usize,
     /// Current frame's state (read by rendering and physics).
     pub cells: Vec<CellData>,
-    /// Next frame's working buffer used during a sweep.
+    /// Working/spare allocation used during a sweep. This is scratch storage,
+    /// not a snapshot of the previous frame.
     pub next: Vec<CellData>,
     /// Per-cell flag: set by `physics::step` when a cell has been written this
     /// sweep so it isn't moved twice in the same tick.
@@ -132,6 +134,13 @@ impl Grid {
         self.moved.fill(false);
         self.dirty.fill(true);
         self.dirty_next.fill(true);
+    }
+
+    /// Allocated vector payloads, excluding struct headers and allocator overhead.
+    pub fn buffer_bytes(&self) -> usize {
+        (self.cells.capacity() + self.next.capacity()) * std::mem::size_of::<CellData>()
+            + (self.moved.capacity() + self.dirty.capacity() + self.dirty_next.capacity())
+                * std::mem::size_of::<bool>()
     }
 
     pub fn particle_count(&self) -> usize {
