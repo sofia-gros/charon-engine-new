@@ -162,6 +162,16 @@ def record(milestone,output,xvfb,display):
                     time.sleep(0.1)
                 if not window:
                     raise RuntimeError("sample window not found")
+                # Creating a window precedes GPU/pipeline setup. Start the recording
+                # and input only after Scene Lab has submitted its first real frame.
+                if milestone.startswith("m5"):
+                    deadline = time.monotonic() + 30
+                    while "M5 READY: first frame presented" not in (temporary/"app.log").read_text():
+                        if app.poll() is not None:
+                            raise RuntimeError("sample exited before its first frame")
+                        if time.monotonic() >= deadline:
+                            raise RuntimeError("sample first-frame readiness timed out")
+                        time.sleep(0.1)
                 x,y,width,height = connection.geometry(window)
                 connection.focus(window)
                 video = temporary/"screen.mkv"

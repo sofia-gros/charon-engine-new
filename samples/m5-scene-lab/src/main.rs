@@ -118,6 +118,9 @@ impl Host {
             let frame = scenes::draw(self.manager.as_mut().unwrap(), &mut renderer, size)?;
             renderer.render(&frame)?;
         }
+        if self.frames == 0 {
+            println!("M5 READY: first frame presented");
+        }
         self.frames += 1;
         self.gpu_check(event_loop)
     }
