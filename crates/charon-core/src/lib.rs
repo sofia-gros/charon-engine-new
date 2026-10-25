@@ -196,6 +196,9 @@ impl App {
     }
 
     pub fn add_plugin<P: Plugin>(&mut self, plugin: P) -> Result<&mut Self, CoreError> {
+        self.add_boxed_plugin(Box::new(plugin))
+    }
+    pub fn add_boxed_plugin(&mut self, plugin: Box<dyn Plugin>) -> Result<&mut Self, CoreError> {
         if self.state != State::Configuring {
             return Err(CoreError::InvalidState(self.state));
         }
@@ -205,7 +208,7 @@ impl App {
         if self.plugins.iter().any(|item| item.name() == plugin.name()) {
             return Err(CoreError::DuplicatePlugin(plugin.name()));
         }
-        self.plugins.push(Box::new(plugin));
+        self.plugins.push(plugin);
         Ok(self)
     }
 

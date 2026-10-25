@@ -45,6 +45,8 @@ jobs:
         run: python scripts/check_m3_dependencies.py
       - name: M4 lighting dependency boundaries
         run: python scripts/check_m4_dependencies.py
+      - name: M5 optional input camera scene boundaries
+        run: python scripts/check_m5_dependencies.py
       - name: Clippy
         run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
       - name: Unit, integration, sample, and doc tests
@@ -96,6 +98,27 @@ jobs:
         env:
           XDG_RUNTIME_DIR: /tmp
         run: xvfb-run -a cargo run --locked -p charon-m4-sample --no-default-features -- --gpu-check
+      - name: M5 scoped scenes and worker/input cleanup
+        run: cargo run --locked -p charon-m5-sample -- --smoke-test
+      - name: M5 without Falling Sand
+        run: cargo run --locked -p charon-m5-sample --no-default-features --features lighting -- --smoke-test
+      - name: M5 without Lighting or Falling Sand
+        run: cargo run --locked -p charon-m5-sample --no-default-features -- --smoke-test
+      - name: M5 native camera input light alignment and GPU cleanup
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m5-sample -- --gpu-check
+      - name: M5 native Tilemap scene
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m5-sample --no-default-features --features lighting -- --gpu-check
+      - name: M5 native scene without Lighting
+        if: runner.os == 'Linux'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: xvfb-run -a cargo run --locked -p charon-m5-sample --no-default-features -- --gpu-check
       - name: Empty Core
         run: cargo run --locked -p charon-core --example empty
       - name: Release build
@@ -146,3 +169,49 @@ jobs:
           path: |
             docs/demos/m4-demo.*
             docs/demos/m4-tilemap-demo.*
+
+  record-m5:
+    name: Record native M5 operation examples
+    needs: build-test
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check whether examples already exist
+        id: media
+        shell: bash
+        run: |
+          if test -f docs/demos/m5-demo.gif && test -f docs/demos/m5-tilemap-demo.gif; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "needed=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        if: steps.media.outputs.needed == 'true'
+      - uses: Swatinem/rust-cache@v2
+        if: steps.media.outputs.needed == 'true'
+      - name: Install recording dependencies
+        if: steps.media.outputs.needed == 'true'
+        run: sudo apt-get update && sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0 libxtst6 ffmpeg
+      - name: Build and record actual native windows
+        if: steps.media.outputs.needed == 'true'
+        env:
+          XDG_RUNTIME_DIR: /tmp
+        run: |
+          cargo build --locked --release -p charon-m5-sample
+          python scripts/record_milestone.py m5
+          python scripts/record_milestone.py m5-tilemap
+      - name: Store immutable media blobs for reviewed publication
+        if: steps.media.outputs.needed == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python scripts/publish_demo_blobs.py m5
+      - uses: actions/upload-artifact@v4
+        if: steps.media.outputs.needed == 'true'
+        with:
+          name: m5-native-operation-examples
+          path: |
+            docs/demos/m5-demo.*
+            docs/demos/m5-tilemap-demo.*

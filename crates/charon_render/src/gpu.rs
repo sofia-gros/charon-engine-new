@@ -33,6 +33,7 @@ pub struct GpuRenderer {
     texture_layout: wgpu::BindGroupLayout,
     params_layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
+    next_resource_id: u64,
     pub adapter_name: String,
 }
 impl GpuRenderer {
@@ -109,6 +110,7 @@ impl GpuRenderer {
             params_layout,
             sampler,
             adapter_name,
+            next_resource_id: 100,
         };
         renderer
             .register_pass(
@@ -119,6 +121,34 @@ impl GpuRenderer {
             .await?;
         renderer.upload(TextureId(0), &Image::new(1, 1, vec![255; 4])?)?;
         Ok(renderer)
+    }
+    fn allocate_id(&mut self) -> Result<u64, String> {
+        loop {
+            let id = self.next_resource_id;
+            self.next_resource_id = id.checked_add(1).ok_or("render IDs exhausted")?;
+            if !self.textures.contains_key(&TextureId(id))
+                && !self.passes.iter().any(|p| p.id == PassId(id))
+            {
+                return Ok(id);
+            }
+        }
+    }
+    pub fn allocate_texture_id(&mut self) -> Result<TextureId, String> {
+        self.allocate_id().map(TextureId)
+    }
+    pub fn allocate_pass_id(&mut self) -> Result<PassId, String> {
+        self.allocate_id().map(PassId)
+    }
+    pub fn resource_counts(&self) -> (usize, usize) {
+        (self.textures.len(), self.passes.len())
+    }
+    pub fn remove_pass(&mut self, id: PassId) -> bool {
+        if id == PassId(0) {
+            return false;
+        }
+        let before = self.passes.len();
+        self.passes.retain(|p| p.id != id);
+        self.passes.len() != before
     }
     pub fn device(&self) -> &wgpu::Device {
         &self.device
@@ -494,6 +524,20 @@ impl Backend for GpuRenderer {
                 if !ordered.iter().any(|q| q.pass == pipeline.id) {
                     continue;
                 }
+                let clip = frame.clips.get(&pipeline.id).copied().unwrap_or([
+                    0,
+                    0,
+                    frame.size[0],
+                    frame.size[1],
+                ]);
+                let x = clip[0].min(frame.size[0]);
+                let y = clip[1].min(frame.size[1]);
+                let w = clip[2].min(frame.size[0] - x);
+                let h = clip[3].min(frame.size[1] - y);
+                if w == 0 || h == 0 {
+                    continue;
+                }
+                pass.set_scissor_rect(x, y, w, h);
                 if let Some(id) = pipeline.sampled {
                     let texture = self.textures.get(&id).ok_or("sampled pass image removed")?;
                     pass.set_bind_group(2, &texture.bind, &[]);
@@ -525,4 +569,9 @@ impl Backend for GpuRenderer {
         output.present();
         Ok(())
     }
+}
+
+/// Explicit diagnostic wait; normal rendering remains asynchronous.
+pub fn wait_for_completion() -> wgpu::PollType {
+    wgpu::PollType::Wait
 }

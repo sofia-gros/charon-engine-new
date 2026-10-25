@@ -367,6 +367,27 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon-m5-sample"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+ "charon-m3-sample",
+ "charon-m4-sample",
+ "charon_assets",
+ "charon_camera",
+ "charon_camera_render",
+ "charon_input",
+ "charon_input_winit",
+ "charon_physics",
+ "charon_render",
+ "charon_sand_render",
+ "charon_scene",
+ "charon_tilemap",
+ "charon_tilemap_render",
+ "pollster",
+]
+
+[[package]]
 name = "charon-sand"
 version = "0.1.0"
 dependencies = [
@@ -389,6 +410,36 @@ dependencies = [
  "charon-core",
  "charon_physics",
  "charon_tilemap",
+]
+
+[[package]]
+name = "charon_camera"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+]
+
+[[package]]
+name = "charon_camera_render"
+version = "0.1.0"
+dependencies = [
+ "charon_camera",
+ "charon_render",
+]
+
+[[package]]
+name = "charon_input"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
+]
+
+[[package]]
+name = "charon_input_winit"
+version = "0.1.0"
+dependencies = [
+ "charon_input",
+ "winit",
 ]
 
 [[package]]
@@ -452,6 +503,13 @@ dependencies = [
  "charon_assets",
  "charon_physics",
  "charon_render",
+]
+
+[[package]]
+name = "charon_scene"
+version = "0.1.0"
+dependencies = [
+ "charon-core",
 ]
 
 [[package]]

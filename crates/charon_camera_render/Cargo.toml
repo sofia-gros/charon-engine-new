@@ -1,0 +1,9 @@
+[package]
+name = "charon_camera_render"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[dependencies]
+charon_camera = { path = "../charon_camera" }
+charon_render = { path = "../charon_render" }

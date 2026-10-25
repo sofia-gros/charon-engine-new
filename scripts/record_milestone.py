@@ -18,6 +18,8 @@ import time
 ROOT = Path(__file__).resolve().parents[1]
 SAMPLES = {
     "m1": ("charon-m1-sample", "Charon M1 / Gem Run", "M1 implementation example"),
+    "m5": ("charon-m5-sample", "Charon M5 / Scene Lab", "M5 complete"),
+    "m5-tilemap": ("charon-m5-sample", "Charon M5 / Scene Lab", "M5 tilemap-only scene example"),
     "m4": ("charon-m4-sample", "Charon M4 / Cave Light", "M4 complete"),
     "m4-tilemap": ("charon-m4-sample", "Charon M4 / Cave Light", "M4 tilemap-only lighting example"),
     "m3": ("charon-m3-sample", "Charon M3 / World Lab", "M3 complete"),
@@ -97,6 +99,11 @@ class X11:
         self.x.XFlush(self.display)
         time.sleep(0.1)
 
+    def move(self,x,y):
+        self.t.XTestFakeMotionEvent(self.display,-1,x,y,0)
+        self.x.XFlush(self.display)
+        time.sleep(0.08)
+
     def paint(self,x,y,seconds,button=1):
         self.t.XTestFakeMotionEvent(self.display,-1,x,y,0)
         self.t.XTestFakeButtonEvent(self.display,button,1,0)
@@ -143,7 +150,7 @@ def record(milestone,output,xvfb,display):
                         time.sleep(0.1)
                 if connection is None:
                     raise RuntimeError("Xvfb did not become ready")
-                app_args = ["--tilemap-only"] if milestone in ("m3-tilemap", "m4-tilemap") else []
+                app_args = ["--tilemap-only"] if milestone in ("m3-tilemap", "m4-tilemap", "m5-tilemap") else []
                 app = subprocess.Popen([str(executable), *app_args],cwd=ROOT,env=env,stdout=app_log,stderr=subprocess.STDOUT)
                 window = None
                 for _ in range(100):
@@ -178,6 +185,25 @@ def record(milestone,output,xvfb,display):
                     action("Resume (P)",lambda:connection.key("p"))
                     action("Restart (R)",lambda:connection.key("r"))
                     time.sleep(0.8)
+                elif milestone.startswith("m5"):
+                    action("Start game scene (Enter)",lambda:connection.key("Return"))
+                    time.sleep(0.6)
+                    action("Move player (D)",lambda:connection.key("d",0.25))
+                    action("Pan camera right (ArrowRight)",lambda:connection.key("Right",0.25))
+                    action("Zoom camera at pointer (E)",lambda:(connection.move(x+480,y+360),connection.key("e",0.28)))
+                    action("Dig through transformed viewport (LMB)",lambda:connection.paint(x+135,y+305,0.08))
+                    time.sleep(0.4)
+                    action("Fit whole world (Space)",lambda:connection.key("space"))
+                    action("Release sand/water blocks (B)",lambda:connection.key("b"))
+                    time.sleep(0.7)
+                    action("Restart scene and resources (R)",lambda:connection.key("r"))
+                    time.sleep(0.4)
+                    action("Return to menu (Tab)",lambda:connection.key("Tab"))
+                    time.sleep(0.4)
+                    action("Open tilemap-only scene (T)",lambda:connection.key("t"))
+                    time.sleep(0.5)
+                    action("Return to menu (Tab)",lambda:connection.key("Tab"))
+                    time.sleep(0.4)
                 elif milestone.startswith("m4"):
                     action("Move torch with player and collect gem (D)",lambda:connection.key("d",0.52))
                     action("Disable carried torch (T)",lambda:connection.key("t"))
@@ -245,8 +271,8 @@ def record(milestone,output,xvfb,display):
                 app.wait(timeout=5)
                 if app.returncode:
                     raise RuntimeError("sample did not shut down successfully")
-                gif_fps = 10 if milestone.startswith("m4") else 12
-                gif_width = 640 if milestone.startswith("m4") else 768
+                gif_fps = 10 if milestone.startswith(("m4", "m5")) else 12
+                gif_width = 640 if milestone.startswith(("m4", "m5")) else 768
                 filters = f"fps={gif_fps},scale={gif_width}:-1:flags=lanczos"
                 palette = temporary/"palette.png"
                 subprocess.run(["ffmpeg","-hide_banner","-loglevel","error","-y","-i",str(video),"-vf",filters+",palettegen=max_colors=128",str(palette)],check=True)

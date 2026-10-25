@@ -299,6 +299,14 @@ impl Runtime {
         coupled: bool,
         map: Tilemap,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_game_plugins(hz, coupled, map, |_| Vec::new())
+    }
+    pub fn start_with_game_plugins(
+        hz: u32,
+        coupled: bool,
+        map: Tilemap,
+        build: impl FnOnce(&Shared) -> Vec<Box<dyn Plugin + Send>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         if map.dimensions() != [W, H] || map.tile_size() != [CELL, CELL] {
             return Err("sample world must be 40x24 tiles of size 8".into());
         }
@@ -338,10 +346,14 @@ impl Runtime {
             player: Player::default(),
             gem: 0,
         };
+        let plugins = build(&shared);
         let game = Worker::spawn(
             WorkerConfig::new("charon-game", 144),
             move |delta| {
                 let mut app = App::with_timing(delta, 8)?;
+                for plugin in plugins {
+                    app.add_boxed_plugin(plugin)?;
+                }
                 app.add_plugin(game)?;
                 Ok(app)
             },

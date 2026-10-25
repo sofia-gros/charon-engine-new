@@ -1,9 +1,9 @@
 use charon_m3_sample::runtime;
 #[cfg(feature = "lighting")]
-mod illumination;
+use charon_m4_sample::illumination;
 mod ui;
-mod world;
 use charon_assets::{Assets, Image, ShaderSource};
+use charon_m4_sample::world;
 use charon_render::{
     Backend, DrawFrame, PassId, TextureId,
     gpu::GpuRenderer,

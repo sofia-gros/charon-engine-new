@@ -6,7 +6,7 @@ use charon_core::{Plugin, PluginResult, Step, World};
 pub use winit;
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct TextureId(pub u64);
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct PassId(pub u64);
 #[derive(Clone, Debug)]
 pub struct Quad {
@@ -22,6 +22,7 @@ pub struct DrawFrame {
     pub size: [u32; 2],
     pub clear: [f64; 4],
     pub quads: Vec<Quad>,
+    pub clips: std::collections::BTreeMap<PassId, [u32; 4]>,
 }
 impl DrawFrame {
     pub fn new(size: [u32; 2]) -> Self {
@@ -29,6 +30,7 @@ impl DrawFrame {
             size,
             clear: [0.035, 0.06, 0.12, 1.],
             quads: Vec::new(),
+            clips: Default::default(),
         }
     }
 }

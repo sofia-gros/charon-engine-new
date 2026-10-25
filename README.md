@@ -30,7 +30,7 @@ M4までの基盤を実装しています。Core、独立した物理ライブ�
 | Rendering Plugin、汎用描画パケット、wgpu、カスタムShader・診断 | M3実装済み |
 | 共通光学データ、遮光・伝播・AO・発光、独立したGPU計算と描画合成 | M4実装済み |
 | 低レベルAPIの整備と高レベルAPIの公開 | 物理コアのAPIを公開済み。全体の整備は計画中 |
-| Phaser に影響を受けた Camera / Scene Plugins | 計画中 |
+| Input、Cameraの移動・ズーム・逆変換、Sceneとリソース所有権 | M5実装・完了検証中 |
 | Coreによる静的Pluginの登録・依存解決・更新・終了、型付きリソースとイベント | M1実装済み |
 | Windows 11向けM1ゲームサンプル（宝石収集ゲーム） | ソース・起動コマンド・自動確認を用意。実機確認待ち |
 
@@ -102,6 +102,17 @@ cargo run --release -p charon-m4-sample --no-default-features --features lightin
 ```
 
 [照明API](./docs/lighting-api.md) / [CPU・GPUの数値・画像・計測記録](./docs/performance/m4-lighting.md)。Tは松明、Oは鉱石、Gは通路、VはAO、Lは照明合成の切り替えです。
+
+### M5：Input・Camera・Scene
+
+[Scene Lab](./samples/m5-scene-lab/README.md)では、開始画面とゲームの切り替え、Cameraの移動・ズーム、変換後の地形編集、Scene再開始を確認できます。旧Sceneのworkerを停止し、入力・アセット・GPUリソースを解放します。
+
+```sh
+cargo run --release -p charon-m5-sample
+cargo run --release -p charon-m5-sample --no-default-features --features lighting
+```
+
+[Input / Camera / Scene API](./docs/input-camera-scene-api.md)。現在は完了検証と操作GIFの反映を進めています。
 
 ## 開発環境
 

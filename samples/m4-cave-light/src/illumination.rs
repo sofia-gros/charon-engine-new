@@ -20,9 +20,19 @@ pub struct Illumination {
     pub ao: bool,
     pub sky: bool,
     pub cell_size: f32,
+    image: TextureId,
+    pass: PassId,
 }
 impl Illumination {
     pub fn new(renderer: &mut GpuRenderer, cell_size: f32) -> Result<Self, String> {
+        Self::new_with_ids(renderer, cell_size, TextureId(3), PassId(2))
+    }
+    pub fn new_with_ids(
+        renderer: &mut GpuRenderer,
+        cell_size: f32,
+        image: TextureId,
+        pass: PassId,
+    ) -> Result<Self, String> {
         let geometry = Geometry {
             width: (320. / cell_size) as u32,
             height: (192. / cell_size) as u32,
@@ -35,12 +45,12 @@ impl Illumination {
             renderer.queue().clone(),
             geometry,
         ))?;
-        renderer.bind_texture(TextureId(3), gpu.texture().clone(), true)?;
+        renderer.bind_texture(image, gpu.texture().clone(), true)?;
         pollster::block_on(renderer.register_sampled_pass(
-            PassId(2),
+            pass,
             &ShaderSource(charon_lighting_render::SHADER.into()),
             [0., 72., 960., 576.],
-            TextureId(3),
+            image,
         ))?;
         Ok(Self {
             scene,
@@ -54,10 +64,17 @@ impl Illumination {
             ao: true,
             sky: true,
             cell_size,
+            image,
+            pass,
         })
     }
     pub fn quality(&mut self, renderer: &mut GpuRenderer) -> Result<(), String> {
-        let mut next = Self::new(renderer, if self.cell_size == 4. { 2. } else { 4. })?;
+        let mut next = Self::new_with_ids(
+            renderer,
+            if self.cell_size == 4. { 2. } else { 4. },
+            self.image,
+            self.pass,
+        )?;
         next.enabled = self.enabled;
         next.torch = self.torch;
         next.ore = self.ore;
@@ -75,7 +92,7 @@ impl Illumination {
         hz: u32,
     ) -> Result<(), String> {
         renderer.set_parameters(
-            PassId(2),
+            self.pass,
             [0., 72., size[0] as f32, size[0] as f32 / 320. * 192.],
         )?;
         if !self.enabled {

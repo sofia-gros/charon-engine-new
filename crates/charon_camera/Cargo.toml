@@ -1,0 +1,12 @@
+[package]
+name = "charon_camera"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[features]
+default = []
+plugin = ["dep:charon-core"]
+
+[dependencies]
+charon-core = { path = "../charon-core", optional = true }
