@@ -64,3 +64,9 @@ cargo run -p charon-m2-sample --no-default-features -- --smoke-test
 スモークテストは30Hzと60Hzの両方で、ゲーム用Workerから障壁変換を要求し、砂の生成量と終了を確認します。画面・マウス入力の確認の代わりにはなりません。
 
 [APIと現在の制約](../../docs/falling-sand-api.md)も参照してください。安息角は従来のままで、M2全体の完了ではありません。
+
+## 操作GIF
+
+![M2サンプルの画面操作](../../docs/demos/m2-demo.gif)
+
+Linuxの仮想ディスプレイ上で実際のウィンドウを操作した記録です。Windows 11実機確認とは区別します。[録画情報](../../docs/demos/m2-demo.json)を併せて保存しています。

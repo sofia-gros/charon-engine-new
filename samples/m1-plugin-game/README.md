@@ -78,3 +78,9 @@ cargo run -p charon-m1-sample --no-default-features -- --smoke-test
 ```powershell
 cargo run -p charon-m1-sample --no-default-features -- --snapshot m1.ppm
 ```
+
+## 操作GIF
+
+![M1サンプルの画面操作](../../docs/demos/m1-demo.gif)
+
+Linuxの仮想ディスプレイ上で実際のウィンドウを操作した記録です。Windows 11実機確認とは区別します。[録画情報](../../docs/demos/m1-demo.json)を併せて保存しています。

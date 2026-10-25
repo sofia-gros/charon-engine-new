@@ -33,6 +33,8 @@ jobs:
           python-version: '3.x'
       - name: Format
         run: cargo fmt --all -- --check
+      - name: Milestone demo assets
+        run: python scripts/check_demo_assets.py
       - name: Core dependency boundary
         run: python scripts/check_core_dependencies.py
       - name: Clippy

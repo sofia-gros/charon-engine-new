@@ -1,0 +1,38 @@
+{
+  "milestone": "m1",
+  "status": "M1 implementation example",
+  "sample_commit": "154aba191a29348841b3ed75db55b26f86d48c00",
+  "recorded_at": "2026-10-25T11:47:04+09:00",
+  "environment": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m1-sample",
+  "gif_fps": 12,
+  "gif_width": 768,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Move right (D)"
+    },
+    {
+      "seconds": 1.16,
+      "action": "Move down and collect gem (S)"
+    },
+    {
+      "seconds": 1.88,
+      "action": "Move toward wall (D)"
+    },
+    {
+      "seconds": 2.53,
+      "action": "Pause (P)"
+    },
+    {
+      "seconds": 3.41,
+      "action": "Resume (P)"
+    },
+    {
+      "seconds": 3.59,
+      "action": "Restart (R)"
+    }
+  ]
+}

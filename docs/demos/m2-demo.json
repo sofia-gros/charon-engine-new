@@ -1,0 +1,46 @@
+{
+  "milestone": "m2",
+  "status": "M2 in progress",
+  "sample_commit": "154aba191a29348841b3ed75db55b26f86d48c00",
+  "recorded_at": "2026-10-25T11:47:42+09:00",
+  "environment": "Linux-6.18.55-x86_64-with-glibc2.41",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-m2-sample",
+  "gif_fps": 12,
+  "gif_width": 768,
+  "actions": [
+    {
+      "seconds": 1.5,
+      "action": "Paint sand with left mouse button"
+    },
+    {
+      "seconds": 2.2,
+      "action": "Select water (2)"
+    },
+    {
+      "seconds": 2.38,
+      "action": "Paint water with left mouse button"
+    },
+    {
+      "seconds": 2.98,
+      "action": "Open barrier (G)"
+    },
+    {
+      "seconds": 4.56,
+      "action": "Reset (R)"
+    },
+    {
+      "seconds": 5.09,
+      "action": "Convert barrier into sand (B)"
+    },
+    {
+      "seconds": 6.47,
+      "action": "Pause (P)"
+    },
+    {
+      "seconds": 7.26,
+      "action": "Resume (P)"
+    }
+  ]
+}
