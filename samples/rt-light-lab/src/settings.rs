@@ -5,6 +5,7 @@ use charon_m5_sample::ui;
 use charon_render::{DrawFrame, PassId, Quad, TextureId};
 use charon_tracing::{Mode, Quality};
 use charon_tracing_gpu::{LightingDevice, SwitchRequest, TracingSlot};
+const DEMO_UI_PASS: PassId = PassId(u64::MAX);
 const OPTIONS: [Selection; 4] = [
     Selection::Rtx,
     Selection::Path,
@@ -138,6 +139,16 @@ pub fn frame(
     frame: &mut DrawFrame,
 ) -> Result<(), String> {
     let world = scenes::world_mut(manager).ok_or("lighting scene missing")?;
+    if world.get::<Settings>().is_none() {
+        // Passes execute in registration order. Reappend the demo overlay after
+        // the newly created world's composition pass, including scene restarts.
+        renderer.remove_pass(DEMO_UI_PASS);
+        pollster::block_on(renderer.register_pass(
+            DEMO_UI_PASS,
+            &charon_assets::ShaderSource(charon_render::DEFAULT_SHADER.into()),
+            [1., 0., 0., 0.],
+        ))?;
+    }
     let mut state = world.remove::<Settings>().unwrap_or_else(|| {
         let prefs = preferences();
         let device = LightingDevice::new(renderer.device().clone(), renderer.queue().clone())
@@ -351,6 +362,7 @@ fn draw(
         }
         state.status = "APPLIES WHEN GAME STARTS".into();
     }
+    let ui_start = frame.quads.len();
     ui::text(
         frame,
         500.,
@@ -433,6 +445,9 @@ fn draw(
         for q in &mut frame.quads[overlay_start + 1..] {
             q.layer = 110;
         }
+    }
+    for quad in &mut frame.quads[ui_start..] {
+        quad.pass = DEMO_UI_PASS;
     }
     Ok(())
 }

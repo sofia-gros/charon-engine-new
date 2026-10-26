@@ -32,7 +32,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             },
         )?;
         let mut grid = OpticalGrid::new(g)?;
-        if case > 0 {
+        if case > 0 && case != 4 {
             for y in 0..g.height {
                 if case != 2 || y != 6 {
                     grid.set(
@@ -51,8 +51,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
+        if case == 4 {
+            for y in 3..9 {
+                for x in 6..10 {
+                    grid.set(
+                        x,
+                        y,
+                        Optical {
+                            emission_color: [0.2, 0.6, 1.],
+                            emission_strength: 1.,
+                            ..Optical::OPAQUE
+                        },
+                    )?;
+                }
+            }
+        }
         scene.set_layer(1, grid)?;
-        if case > 0 {
+        if case > 0 && case != 4 {
             scene.set_light(
                 1,
                 PointLight {
@@ -71,6 +86,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         let actual = gpu.readback()?;
         let expected = expected.unwrap();
+        if case == 4 {
+            for (x, y) in [(2, 2), (13, 2), (2, 9), (13, 9)] {
+                assert!(
+                    actual.rgba[y * g.width as usize + x][2] > 0.01,
+                    "opaque emission self-shadowed"
+                );
+            }
+        }
         let differences: Vec<_> = actual
             .rgba
             .iter()

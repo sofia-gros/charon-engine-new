@@ -150,7 +150,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         renderer,
         frame_hook: Some(settings::frame),
         input_filter: Some(settings::input),
-        input_filter: Some(settings::input),
         cpu_pool: CPU_POOL.get().cloned(),
         ..Default::default()
     });

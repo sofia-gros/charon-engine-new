@@ -165,22 +165,62 @@ impl TraceScene {
     pub fn emitters(&self) -> Vec<Emitter> {
         use std::collections::BTreeMap;
         let g = self.input.geometry;
+        let mut candidates = Vec::new();
+        for (index, color) in self.input.sources.iter().enumerate() {
+            if color.iter().all(|v| *v == 0.) {
+                continue;
+            }
+            let x = (index as u32 % g.width) as i32;
+            let y = (index as u32 / g.width) as i32;
+            let center = [
+                g.origin[0] + (x as f32 + 0.5) * g.cell_size,
+                g.origin[1] + (y as f32 + 0.5) * g.cell_size,
+            ];
+            let mut points = Vec::new();
+            if self.input.optics[index].opacity >= 0.999 {
+                // Opaque emissive matter radiates from exposed faces, not from
+                // a representative buried inside its own occluding volume.
+                for (face, (dx, dy)) in [(-1, 0), (1, 0), (0, -1), (0, 1)].into_iter().enumerate() {
+                    let (nx, ny) = (x + dx, y + dy);
+                    if nx < 0 || ny < 0 || nx >= g.width as i32 || ny >= g.height as i32 {
+                        continue;
+                    }
+                    if self.input.optics[ny as usize * g.width as usize + nx as usize].opacity
+                        >= 0.999
+                    {
+                        continue;
+                    }
+                    let point = [
+                        center[0] + dx as f32 * g.cell_size * 0.5001,
+                        center[1] + dy as f32 * g.cell_size * 0.5001,
+                    ];
+                    points.push((face as u8 + 1, point));
+                }
+            } else {
+                points.push((0, center));
+            }
+            let energy = g.cell_size * g.cell_size / (64. * points.len().max(1) as f32);
+            for (face, position) in points {
+                candidates.push((
+                    face,
+                    Emitter {
+                        position,
+                        radiance: color.map(|c| c * energy),
+                    },
+                ));
+            }
+        }
         let mut width = 8_f32;
         let bins = loop {
-            let mut bins: BTreeMap<(i32, i32), (f32, Emitter)> = BTreeMap::new();
-            for (index, color) in self.input.sources.iter().enumerate() {
-                if color.iter().all(|v| *v == 0.) {
-                    continue;
-                }
-                let position = [
-                    g.origin[0] + (index as u32 % g.width) as f32 * g.cell_size + g.cell_size * 0.5,
-                    g.origin[1] + (index as u32 / g.width) as f32 * g.cell_size + g.cell_size * 0.5,
-                ];
+            let mut bins: BTreeMap<(i32, i32, u8), (f32, Emitter)> = BTreeMap::new();
+            for (face, emitter) in &candidates {
+                let position = emitter.position;
                 let key = (
                     (position[0] / width).floor() as i32,
                     (position[1] / width).floor() as i32,
+                    *face,
                 );
-                let brightness = color.iter().sum::<f32>();
+                let brightness = emitter.radiance.iter().sum::<f32>();
                 let value = bins.entry(key).or_insert((
                     brightness,
                     Emitter {
@@ -192,8 +232,8 @@ impl TraceScene {
                     value.0 = brightness;
                     value.1.position = position;
                 }
-                for (out, c) in value.1.radiance.iter_mut().zip(color) {
-                    *out += c * g.cell_size * g.cell_size / 64.;
+                for (out, c) in value.1.radiance.iter_mut().zip(emitter.radiance) {
+                    *out += c;
                 }
             }
             if bins.len() <= 64 - self.point_lights.len() {

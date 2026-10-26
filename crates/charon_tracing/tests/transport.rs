@@ -226,3 +226,43 @@ fn moving_subcell_lights_have_sample_independent_direct_illumination() {
         );
     }
 }
+
+#[test]
+fn opaque_emission_radiates_from_both_exposed_sides_without_self_shadow_wedges() {
+    let mut s = scene();
+    let mut grid = OpticalGrid::new(s.geometry()).unwrap();
+    for y in 2..6 {
+        for x in 4..8 {
+            grid.set(
+                x,
+                y,
+                Optical {
+                    emission_color: [0.2, 0.6, 1.],
+                    emission_strength: 1.,
+                    ..Optical::OPAQUE
+                },
+            )
+            .unwrap();
+        }
+    }
+    s.set_layer(1, grid).unwrap();
+    let input = TraceScene::new(s.prepare()).unwrap();
+    for e in input.emitters() {
+        let i = input.input.geometry.index(e.position).unwrap();
+        assert!(input.input.optics[i].opacity < 0.999);
+    }
+    let field = solve_sample(
+        &input,
+        Quality {
+            bounces: 0,
+            ..Quality::for_mode(Mode::Path)
+        },
+    )
+    .unwrap();
+    for (x, y) in [(1, 1), (10, 1), (1, 6), (10, 6)] {
+        assert!(
+            field.rgba[y * 12 + x][2] > 0.01,
+            "emission missing at {x},{y}"
+        );
+    }
+}
