@@ -5,10 +5,12 @@ edition = "2024"
 license = "MIT"
 publish = false
 [features]
-default = ["bridge", "rtx"]
-bridge = ["charon-m5-sample/bridge"]
+default = ["bridge", "rtx", "parallel"]
+parallel = ["bridge", "charon-m5-sample/parallel"]
+bridge = ["charon-m5-sample/bridge", "dep:charon_sand_lighting", "dep:charon_physics"]
 rtx = ["charon_tracing_gpu/rtx"]
 [dependencies]
+charon_tasks = {path = "../../crates/charon_tasks"}
 charon-m5-sample = { path = "../m5-scene-lab", default-features = false, features = ["lighting"] }
 charon_core = { path = "../../crates/charon_core" }
 charon_scene = { path = "../../crates/charon_scene", features = ["plugin"] }
@@ -20,3 +22,9 @@ charon_tracing_gpu = { path = "../../crates/charon_tracing_gpu", features = ["pl
 pollster = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+charon_tilemap_lighting = {path = "../../crates/charon_tilemap_lighting"}
+charon_tilemap = {path = "../../crates/charon_tilemap"}
+charon_sand_lighting = {path = "../../crates/charon_sand_lighting", optional = true}
+charon_physics = {path = "../..", optional = true}
+charon-m3-sample = {path = "../m3-world-lab", default-features = false}
+charon_camera = {path = "../../crates/charon_camera"}

@@ -78,6 +78,7 @@ impl Quality {
 pub struct TraceScene {
     pub input: Prepared,
     pub reflectance: Vec<[f32; 3]>,
+    pub point_lights: Vec<charon_lighting::PointLight>,
 }
 impl TraceScene {
     pub fn new(input: Prepared) -> Result<Self, String> {
@@ -86,6 +87,7 @@ impl TraceScene {
         Ok(Self {
             input,
             reflectance: vec![[0.65; 3]; n],
+            point_lights: Vec::new(),
         })
     }
     /// Conservatively resample both tile and particle optics in world units.
@@ -130,6 +132,15 @@ impl TraceScene {
     }
     pub fn validate(&self) -> Result<(), String> {
         self.input.validate()?;
+        if self.point_lights.len() > 32 {
+            return Err("maximum 32 explicit point lights".into());
+        }
+        for light in &self.point_lights {
+            light.validate()?;
+            if self.input.geometry.index(light.position).is_none() {
+                return Err("point light outside trace domain".into());
+            }
+        }
         if self.reflectance.len() != self.input.geometry.len()
             || self
                 .reflectance
@@ -141,26 +152,70 @@ impl TraceScene {
         }
         Ok(())
     }
-    /// Compare payload as well as revision: scene-local revisions are not global IDs.
+    /// Compare optical payload; revision-only notifications do not reset accumulation.
     pub fn same_input(&self, other: &Self) -> bool {
         self.input.geometry == other.input.geometry
             && self.input.settings == other.input.settings
             && self.input.optics == other.input.optics
             && self.input.sources == other.input.sources
-            && self.input.revision == other.input.revision
             && self.reflectance == other.reflectance
+            && self.point_lights == other.point_lights
     }
-    pub fn emitters(&self) -> Vec<u32> {
-        self.input
-            .sources
-            .iter()
-            .enumerate()
-            .filter_map(|(i, c)| c.iter().any(|v| *v > 0.).then_some(i as u32))
-            .collect()
+    /// Bounded deterministic aggregation; point lights retain sub-cell positions.
+    pub fn emitters(&self) -> Vec<Emitter> {
+        use std::collections::BTreeMap;
+        let g = self.input.geometry;
+        let mut width = 8_f32;
+        let bins = loop {
+            let mut bins: BTreeMap<(i32, i32), (f32, Emitter)> = BTreeMap::new();
+            for (index, color) in self.input.sources.iter().enumerate() {
+                if color.iter().all(|v| *v == 0.) {
+                    continue;
+                }
+                let position = [
+                    g.origin[0] + (index as u32 % g.width) as f32 * g.cell_size + g.cell_size * 0.5,
+                    g.origin[1] + (index as u32 / g.width) as f32 * g.cell_size + g.cell_size * 0.5,
+                ];
+                let key = (
+                    (position[0] / width).floor() as i32,
+                    (position[1] / width).floor() as i32,
+                );
+                let brightness = color.iter().sum::<f32>();
+                let value = bins.entry(key).or_insert((
+                    brightness,
+                    Emitter {
+                        position,
+                        radiance: [0.; 3],
+                    },
+                ));
+                if brightness > value.0 {
+                    value.0 = brightness;
+                    value.1.position = position;
+                }
+                for (out, c) in value.1.radiance.iter_mut().zip(color) {
+                    *out += c * g.cell_size * g.cell_size / 64.;
+                }
+            }
+            if bins.len() <= 64 - self.point_lights.len() {
+                break bins;
+            }
+            width *= 2.;
+        };
+        let mut emitters: Vec<_> = bins.into_values().map(|v| v.1).collect();
+        emitters.extend(self.point_lights.iter().map(|l| Emitter {
+            position: l.position,
+            radiance: l.color.map(|c| c * l.intensity),
+        }));
+        emitters
     }
 }
 /// Exact running mean with a finite sample cap. Any input/configuration change
 /// clears history rather than blending old occlusion/light into the new world.
+#[derive(Clone, Copy, Debug)]
+pub struct Emitter {
+    pub position: [f32; 2],
+    pub radiance: [f32; 3],
+}
 #[derive(Default)]
 pub struct Accumulator {
     scene: Option<TraceScene>,
@@ -212,13 +267,21 @@ impl Accumulator {
             &scene.input.optics,
             scene.input.settings.ao_strength,
         )?;
-        let rgba = self
+        let mut indirect: Vec<[f32; 3]> = self
             .sum
             .iter()
+            .map(|v| v.map(|c| c / self.samples as f32))
+            .collect();
+        if quality.bounces > 0 {
+            indirect = reference::filter_indirect(scene, &indirect, quality.max_steps);
+        }
+        let rgba = indirect
+            .iter()
             .enumerate()
-            .map(|(i, v)| {
+            .map(|(i, value)| {
+                let direct = reference::direct_primary(scene, quality, &emitters, i as u32);
                 let rgb: [f32; 3] = std::array::from_fn(|c| {
-                    ((v[c] / self.samples as f32 + scene.input.settings.ambient[c]) * ao[i])
+                    ((direct[c] + value[c] + scene.input.settings.ambient[c]) * ao[i])
                         .max(scene.input.sources[i][c])
                         .clamp(0., 1.)
                 });

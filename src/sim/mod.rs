@@ -19,3 +19,6 @@ pub mod material;
 pub mod physics;
 pub mod rules;
 pub mod simulation;
+
+#[cfg(feature = "parallel")]
+pub mod parallel;

@@ -73,3 +73,13 @@ cargo run --release -p charon-rt-sample -- --config samples/rt-light-lab/config/
 - [ ] ドライバーやdeviceの生成条件で失敗した場合は、再起動後もtrueと表示しない。
 
 ハードウェア非対応は再起動待ちとは表示せず、選択不可のままにします。
+
+## 光源移動とCPU構成
+
+PCの照明は専用ワーカーで最大144Hz、ゲーム144Hz・描画60Hz・物理30〜60Hzとは別に実行します。直接光を決定的に計算し、間接光だけを蓄積・平滑化します。CPU数に合わせた共有ジョブプールを使い、8論理CPUなら物理3・照明3、4論理CPUなら各1の予算になります。独立しない物理領域は更新順を保って逐次計算します。詳細は [Tracing API](../../docs/tracing-api.md#動く光源と計算スレッド) を参照してください。
+
+4 CPU相当の追加ワーカーなし構成：
+
+```powershell
+cargo run --release -p charon-rt-sample -- --cpu-budget 4
+```

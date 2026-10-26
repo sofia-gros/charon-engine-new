@@ -338,6 +338,7 @@ dependencies = [
  "charon_physics",
  "charon_render",
  "charon_sand_render",
+ "charon_tasks",
  "charon_tilemap",
  "charon_tilemap_render",
  "pollster",
@@ -378,6 +379,7 @@ dependencies = [
  "charon_render",
  "charon_sand_render",
  "charon_scene",
+ "charon_tasks",
  "charon_tilemap",
  "charon_tilemap_render",
  "pollster",
@@ -396,12 +398,19 @@ dependencies = [
 name = "charon-rt-sample"
 version = "0.1.0"
 dependencies = [
+ "charon-m3-sample",
  "charon-m5-sample",
  "charon_assets",
+ "charon_camera",
  "charon_core",
  "charon_input",
+ "charon_physics",
  "charon_render",
+ "charon_sand_lighting",
  "charon_scene",
+ "charon_tasks",
+ "charon_tilemap",
+ "charon_tilemap_lighting",
  "charon_tracing",
  "charon_tracing_gpu",
  "pollster",
@@ -432,6 +441,7 @@ version = "0.1.0"
 dependencies = [
  "charon_core",
  "charon_physics",
+ "charon_tasks",
  "charon_tilemap",
 ]
 
@@ -518,6 +528,7 @@ dependencies = [
 name = "charon_physics"
 version = "0.2.0"
 dependencies = [
+ "charon_tasks",
  "criterion",
  "glam",
  "rand",
@@ -567,6 +578,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "charon_tasks"
+version = "0.1.0"
+
+[[package]]
 name = "charon_tilemap"
 version = "0.1.0"
 dependencies = [
@@ -606,6 +621,7 @@ version = "0.1.0"
 dependencies = [
  "bytemuck",
  "charon_core",
+ "charon_tasks",
  "charon_tracing",
  "naga",
  "pollster",

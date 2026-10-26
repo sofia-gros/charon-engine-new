@@ -114,86 +114,133 @@ fn visible(scene: &TraceScene, p: [f32; 2], q: [f32; 2], steps: u32) -> [f32; 3]
         [0.; 3]
     }
 }
+fn point(scene: &TraceScene, index: u32) -> [f32; 2] {
+    let g = scene.input.geometry;
+    [
+        (index % g.width) as f32 + 0.5,
+        (index / g.width) as f32 + 0.5,
+    ]
+}
+fn direct(
+    scene: &TraceScene,
+    quality: Quality,
+    emitters: &[Emitter],
+    p: [f32; 2],
+    normal: [f32; 2],
+    range: f32,
+) -> [f32; 3] {
+    let g = scene.input.geometry;
+    let mut light = [0.; 3];
+    for emitter in emitters {
+        let q = std::array::from_fn(|a| (emitter.position[a] - g.origin[a]) / g.cell_size);
+        let v: [f32; 2] = [q[0] - p[0], q[1] - p[1]];
+        let distance = v[0].hypot(v[1]);
+        if distance > range {
+            continue;
+        }
+        let cosine = if normal == [0.; 2] || distance < 1e-5 {
+            1.
+        } else {
+            ((normal[0] * v[0] + normal[1] * v[1]) / distance).max(0.)
+        };
+        let trans = visible(scene, p, q, quality.max_steps);
+        let world = distance * g.cell_size;
+        let weight =
+            cosine * scene.input.settings.falloff_per_unit.powf(world) / (1. + world / 16.);
+        for c in 0..3 {
+            light[c] += trans[c] * emitter.radiance[c] * weight;
+        }
+    }
+    for d in [
+        [-0.8660254, -0.5],
+        [-0.5, -0.8660254],
+        [0., -1.],
+        [0.5, -0.8660254],
+        [0.8660254, -0.5],
+    ] {
+        let cosine = if normal == [0.; 2] {
+            1.
+        } else {
+            (normal[0] * d[0] + normal[1] * d[1]).max(0.)
+        };
+        let hit = walk(scene, p, d, range, quality.max_steps);
+        if hit.escaped {
+            let weight = 0.2
+                * cosine
+                * scene
+                    .input
+                    .settings
+                    .falloff_per_unit
+                    .powf(hit.distance * g.cell_size);
+            for (c, value) in light.iter_mut().enumerate() {
+                *value += hit.trans[c] * scene.input.settings.sky[c] * weight;
+            }
+        }
+    }
+    light
+}
+pub(crate) fn direct_primary(
+    scene: &TraceScene,
+    quality: Quality,
+    emitters: &[Emitter],
+    index: u32,
+) -> [f32; 3] {
+    direct(
+        scene,
+        quality,
+        emitters,
+        point(scene, index),
+        [0.; 2],
+        scene.input.settings.max_distance / scene.input.geometry.cell_size,
+    )
+}
 pub(crate) fn sample(
     scene: &TraceScene,
     quality: Quality,
-    emitters: &[u32],
+    emitters: &[Emitter],
     index: u32,
     sample: u32,
 ) -> [f32; 3] {
+    if quality.bounces == 0 || scene.input.optics[index as usize].opacity >= 0.999 {
+        return [0.; 3];
+    }
     let g = scene.input.geometry;
     let mut rng = index.wrapping_mul(747796405) ^ sample.wrapping_mul(2891336453) ^ 0x9e3779b9;
     if rng == 0 {
         rng = 1;
     }
-    let mut pos = [
-        (index % g.width) as f32 + 0.5,
-        (index / g.width) as f32 + 0.5,
-    ];
+    let mut pos = point(scene, index);
     let angle = random(&mut rng) * std::f32::consts::TAU;
     let mut dir = [angle.cos(), angle.sin()];
-    let mut radiance = scene.input.sources[index as usize];
     let mut throughput = [1.; 3];
+    let mut radiance = [0.; 3];
     let mut range = scene.input.settings.max_distance / g.cell_size;
-    for bounce in 0..=quality.bounces {
-        if !emitters.is_empty() {
-            let source = emitters
-                [((random(&mut rng) * emitters.len() as f32) as usize).min(emitters.len() - 1)]
-                as usize;
-            let q = [
-                (source as u32 % g.width) as f32 + 0.5,
-                (source as u32 / g.width) as f32 + 0.5,
-            ];
-            let dist = (q[0] - pos[0]).hypot(q[1] - pos[1]);
-            if dist > 0.001 && dist <= range {
-                let trans = visible(scene, pos, q, quality.max_steps);
-                let weight = emitters.len() as f32
-                    * scene
-                        .input
-                        .settings
-                        .falloff_per_unit
-                        .powf(dist * g.cell_size)
-                    / (1. + dist);
-                for c in 0..3 {
-                    radiance[c] +=
-                        throughput[c] * trans[c] * scene.input.sources[source][c] * weight;
-                }
-            }
-        }
+    for _ in 0..quality.bounces {
         let hit = walk(scene, pos, dir, range, quality.max_steps);
+        let Some(cell) = hit.index else {
+            break;
+        };
+        range -= hit.distance;
+        if range <= 0.001 {
+            break;
+        }
         for (c, value) in throughput.iter_mut().enumerate() {
             *value *= hit.trans[c]
+                * scene.reflectance[cell][c]
                 * scene
                     .input
                     .settings
                     .falloff_per_unit
                     .powf(hit.distance * g.cell_size);
         }
-        if hit.escaped {
-            if dir[1] < 0. {
-                for c in 0..3 {
-                    radiance[c] += throughput[c] * scene.input.settings.sky[c];
-                }
-            }
-            break;
-        }
-        let Some(cell) = hit.index else {
-            break;
-        };
-        if bounce == quality.bounces {
-            break;
-        }
-        for (c, value) in throughput.iter_mut().enumerate() {
-            *value *= scene.reflectance[cell][c];
-        }
-        range -= hit.distance;
-        if range < 0.001 {
-            break;
-        }
         pos = [
             hit.pos[0] + hit.normal[0] * 0.001,
             hit.pos[1] + hit.normal[1] * 0.001,
         ];
+        let bounce = direct(scene, quality, emitters, pos, hit.normal, range);
+        for c in 0..3 {
+            radiance[c] += throughput[c] * bounce[c];
+        }
         let tangent = [-hit.normal[1], hit.normal[0]];
         let s = random(&mut rng) * 2. - 1.;
         let c = (1. - s * s).sqrt();
@@ -203,6 +250,51 @@ pub(crate) fn sample(
         ];
     }
     radiance
+}
+pub(crate) fn filter_indirect(
+    scene: &TraceScene,
+    values: &[[f32; 3]],
+    steps: u32,
+) -> Vec<[f32; 3]> {
+    let g = scene.input.geometry;
+    values
+        .iter()
+        .enumerate()
+        .map(|(index, value)| {
+            if scene.input.optics[index].opacity >= 0.999 {
+                return *value;
+            }
+            let p = point(scene, index as u32);
+            let mut sum = *value;
+            let mut weight = 1.;
+            for dy in -2_i32..=2 {
+                for dx in -2_i32..=2 {
+                    if dx == 0 && dy == 0 {
+                        continue;
+                    }
+                    let x = index as i32 % g.width as i32 + dx;
+                    let y = index as i32 / g.width as i32 + dy;
+                    if x < 0 || y < 0 || x >= g.width as i32 || y >= g.height as i32 {
+                        continue;
+                    }
+                    let j = (y as u32 * g.width + x as u32) as usize;
+                    if scene.input.optics[j].opacity >= 0.999 {
+                        continue;
+                    }
+                    let q = point(scene, j as u32);
+                    if visible(scene, p, q, steps).iter().any(|v| *v < 0.05) {
+                        continue;
+                    }
+                    let w = 1. / (1. + (dx * dx + dy * dy) as f32);
+                    for (c, value) in sum.iter_mut().enumerate() {
+                        *value += values[j][c] * w;
+                    }
+                    weight += w;
+                }
+            }
+            sum.map(|v| v / weight)
+        })
+        .collect()
 }
 pub fn solve_sample(scene: &TraceScene, quality: Quality) -> Result<LightField, String> {
     Accumulator::default().update(scene, quality)

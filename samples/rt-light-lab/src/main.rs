@@ -1,4 +1,5 @@
 mod config;
+mod lighting_input;
 mod settings;
 use charon_assets::AssetsPlugin;
 use charon_core::App;
@@ -15,6 +16,8 @@ use std::{
     path::PathBuf,
     sync::{Arc, Mutex, OnceLock},
 };
+static CPU_BUDGET: OnceLock<charon_tasks::ThreadBudget> = OnceLock::new();
+static CPU_POOL: OnceLock<Arc<charon_tasks::TaskPool>> = OnceLock::new();
 static PREFERENCES: OnceLock<Mutex<Preferences>> = OnceLock::new();
 static CONFIG_PATH: OnceLock<Option<PathBuf>> = OnceLock::new();
 fn preferences() -> Preferences {
@@ -111,6 +114,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             _ => return Err("lighting must be rtx, path, lite_path or m5".into()),
         };
     }
+    let budget = if let Some(i) = args.iter().position(|a| a == "--cpu-budget") {
+        let cpus: usize = args.get(i + 1).ok_or("missing CPU budget")?.parse()?;
+        if cpus < 4 {
+            return Err("demo CPU budget must be at least 4".into());
+        }
+        charon_tasks::ThreadBudget::for_cpus(
+            cpus.min(charon_tasks::ThreadBudget::detected().logical_cpus.max(4)),
+            1,
+            1,
+        )
+    } else {
+        charon_tasks::ThreadBudget::detected()
+    };
+    CPU_BUDGET.set(budget).unwrap();
+    println!(
+        "CPU BUDGET: {budget:?}; shared helpers={}",
+        budget.helpers()
+    );
+    CPU_POOL
+        .set(Arc::new(charon_tasks::TaskPool::new(budget.helpers())))
+        .map_err(|_| "CPU pool already initialized")?;
     prefs.validate()?;
     PREFERENCES.set(Mutex::new(prefs)).unwrap();
     CONFIG_PATH.set(config).unwrap();
@@ -119,13 +143,16 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         println!("Tracing slot lifecycle and Tilemap/Sand workers OK");
         return Ok(());
     }
-    host::run(RunOptions {
+    let result = host::run(RunOptions {
         title: "Charon RT / Lighting Lab",
         ready_marker: "M6 READY: first frame presented",
         manager: factory,
         renderer,
         frame_hook: Some(settings::frame),
         input_filter: Some(settings::input),
+        cpu_pool: CPU_POOL.get().cloned(),
         ..Default::default()
-    })
+    });
+    CPU_POOL.get().unwrap().shutdown();
+    result
 }

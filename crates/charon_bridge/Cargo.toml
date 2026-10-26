@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 license = "MIT"
 
+[features]
+parallel = ["charon_physics/parallel", "dep:charon_tasks"]
+
 [dependencies]
+charon_tasks = {path = "../charon_tasks", optional = true}
 charon_core = { path = "../charon_core" }
 charon_tilemap = { path = "../charon_tilemap" }
 charon_physics = { path = "../.." }

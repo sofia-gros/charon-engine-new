@@ -11,7 +11,7 @@ fn opaque_hit(p:vec2<f32>,d:vec2<f32>,range:f32)->Hit {
 }
 
 // A separate entry point verifies actual hardware hits, never the DDA fallback.
-@group(0) @binding(6) var<storage,read_write> probe_output:array<vec4<f32>>;
+@group(0) @binding(7) var<storage,read_write> probe_output:array<vec4<f32>>;
 @compute @workgroup_size(1)
 fn verify_rtx() {
  let hit=opaque_hit(vec2<f32>(0.5,1.5),vec2<f32>(1.,0.),3.);

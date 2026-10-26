@@ -42,7 +42,7 @@ impl Default for Preferences {
             } else {
                 Selection::Path
             },
-            update_hz: 30,
+            update_hz: 144,
             enable_rtx_device: true,
             pending: None,
         }
@@ -65,8 +65,8 @@ impl Preferences {
         Ok(value)
     }
     pub fn validate(self) -> Result<(), String> {
-        if !(1..=60).contains(&self.update_hz) {
-            return Err("lighting update_hz must be 1..60".into());
+        if !(1..=144).contains(&self.update_hz) {
+            return Err("lighting update_hz must be 1..144".into());
         }
         self.lighting.mode().validate(self.platform())?;
         self.requested().mode().validate(self.platform())

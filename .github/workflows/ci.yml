@@ -52,7 +52,7 @@ jobs:
       - name: Tracing dependency boundaries
         run: python scripts/check_tracing_dependencies.py
       - name: Tracing Tilemap and Sand lifecycle
-        run: cargo run --locked -p charon-rt-sample -- --smoke-test
+        run: cargo run --locked -p charon-rt-sample -- --cpu-budget 4 --smoke-test
       - name: Tracing mobile policy without RTX or Falling Sand
         run: cargo run --locked -p charon-rt-sample --no-default-features -- --mobile --smoke-test
       - name: M6 core-only facade

@@ -37,6 +37,7 @@ pub struct RunOptions {
     pub title: &'static str,
     pub renderer: RendererFactory,
     pub input_filter: Option<InputFilter>,
+    pub cpu_pool: Option<Arc<charon_tasks::TaskPool>>,
     pub ready_marker: &'static str,
     pub manager: ManagerFactory,
     pub frame_hook: Option<FrameHook>,
@@ -48,6 +49,7 @@ impl Default for RunOptions {
             title: "Charon M5 / Scene Lab",
             renderer: |window| pollster::block_on(GpuRenderer::new(window)),
             input_filter: None,
+            cpu_pool: None,
             ready_marker: "M5 READY: first frame presented",
             manager: scenes::manager,
             frame_hook: None,
@@ -339,6 +341,7 @@ impl ApplicationHandler for Host {
                 size: self.size.clone(),
                 hz: self.hz,
                 prefer_sand: self.prefer_sand,
+                cpu_pool: self.options.cpu_pool.clone(),
             })?);
             self.graphics = Some(graphics);
             self.window = Some(window);

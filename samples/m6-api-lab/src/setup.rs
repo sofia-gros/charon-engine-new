@@ -74,6 +74,7 @@ fn state(
         size: Rc::new(Cell::new([960, 696])),
         hz,
         prefer_sand: coupled,
+        cpu_pool: None,
     };
     let mut manager = factory(ctx)?;
     scenes::pulse(&manager, charon_engine::input::keys::ENTER)?;

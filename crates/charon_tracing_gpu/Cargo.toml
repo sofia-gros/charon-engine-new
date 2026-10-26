@@ -15,5 +15,7 @@ wgpu = "26"
 bytemuck = { version = "1", features = ["derive"] }
 pollster = "0.4"
 
+charon_tasks = { path = "../charon_tasks" }
+
 [dev-dependencies]
 naga = { version = "26", features = ["wgsl-in"] }

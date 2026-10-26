@@ -7,10 +7,12 @@ publish = false
 
 [features]
 default = ["bridge", "lighting"]
+parallel = ["bridge", "charon-m3-sample/parallel"]
 bridge = ["charon-m3-sample/bridge", "charon-m4-sample/bridge", "dep:charon_physics", "dep:charon_sand_render"]
 lighting = ["charon-m4-sample/lighting"]
 
 [dependencies]
+charon_tasks = {path = "../../crates/charon_tasks"}
 charon_core = { path = "../../crates/charon_core" }
 charon_input = { path = "../../crates/charon_input", features = ["plugin"] }
 charon_input_winit = { path = "../../crates/charon_input_winit" }

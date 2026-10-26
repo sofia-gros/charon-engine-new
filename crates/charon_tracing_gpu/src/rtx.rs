@@ -209,7 +209,7 @@ pub async fn verify_device(device: &wgpu::Device, queue: &wgpu::Queue) -> Result
             label: Some("RTX probe data"),
             layout: &pipeline.get_bind_group_layout(0),
             entries: &[wgpu::BindGroupEntry {
-                binding: 6,
+                binding: 7,
                 resource: output.as_entire_binding(),
             }],
         });

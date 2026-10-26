@@ -7,9 +7,11 @@ publish = false
 
 [features]
 default = ["bridge"]
+parallel = ["bridge", "charon_bridge/parallel"]
 bridge = ["dep:charon_bridge", "dep:charon_physics", "dep:charon_sand_render"]
 
 [dependencies]
+charon_tasks = {path = "../../crates/charon_tasks"}
 charon_core = { path = "../../crates/charon_core" }
 charon_assets = { path = "../../crates/charon_assets" }
 charon_tilemap = { path = "../../crates/charon_tilemap" }

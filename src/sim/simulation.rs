@@ -102,6 +102,10 @@ pub struct Simulation {
     revision: u64,
     last_request: Option<u64>,
     paused: bool,
+    #[cfg(feature = "parallel")]
+    cpu_pool: Option<std::sync::Arc<charon_tasks::TaskPool>>,
+    #[cfg(feature = "parallel")]
+    parallel_jobs: usize,
 }
 
 impl Simulation {
@@ -120,6 +124,10 @@ impl Simulation {
             revision: 0,
             last_request: None,
             paused: false,
+            #[cfg(feature = "parallel")]
+            cpu_pool: None,
+            #[cfg(feature = "parallel")]
+            parallel_jobs: 0,
         }
     }
 
@@ -276,6 +284,14 @@ impl Simulation {
         receipt
     }
 
+    #[cfg(feature = "parallel")]
+    pub fn set_cpu_pool(&mut self, pool: std::sync::Arc<charon_tasks::TaskPool>) {
+        self.cpu_pool = Some(pool);
+    }
+    #[cfg(feature = "parallel")]
+    pub fn parallel_jobs(&self) -> usize {
+        self.parallel_jobs
+    }
     pub fn step(&mut self) {
         if self.paused {
             return;
@@ -286,6 +302,14 @@ impl Simulation {
         for &i in &self.solids {
             self.grid.cells[i] = CellData::block();
         }
+        #[cfg(feature = "parallel")]
+        if let Some(pool) = &self.cpu_pool {
+            self.parallel_jobs = super::parallel::step(&mut self.grid, &mut self.rng, pool);
+        } else {
+            physics::step(&mut self.grid, &mut self.rng);
+            self.parallel_jobs = 1;
+        }
+        #[cfg(not(feature = "parallel"))]
         physics::step(&mut self.grid, &mut self.rng);
         for &i in &self.solids {
             self.grid.cells[i] = CellData::AIR;

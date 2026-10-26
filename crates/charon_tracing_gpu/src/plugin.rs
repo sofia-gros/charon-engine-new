@@ -4,14 +4,14 @@ use std::time::Duration;
 /// A compute-lane resource. Caller owns submitted snapshots and GPU scheduling.
 pub struct Tracing {
     pub tracer: GpuTrace,
-    input: Option<TraceScene>,
+    pub(crate) input: Option<TraceScene>,
     hz: u32,
     elapsed: Duration,
 }
 impl Tracing {
     pub fn new(tracer: GpuTrace, hz: u32) -> Result<Self, String> {
-        if !(1..=120).contains(&hz) {
-            return Err("tracing frequency must be 1..120Hz".into());
+        if !(1..=240).contains(&hz) {
+            return Err("tracing frequency must be 1..240Hz".into());
         }
         Ok(Self {
             tracer,
@@ -48,8 +48,10 @@ impl Tracing {
         Ok(())
     }
 }
+#[derive(Default)]
 pub struct TracingSlot {
     pub active: Option<Tracing>,
+    pub threaded: Option<crate::TracingWorker>,
 }
 /// Explicit caller-supplied rendering parameters; no persistence or preference policy.
 pub struct SwitchRequest {
@@ -107,13 +109,43 @@ impl TracingSlot {
             return Err(error.to_string());
         }
         checked?;
-        self.active = Some(candidate);
+        self.switch(Some(candidate));
         Ok(true)
     }
 
+    pub fn commit_worker(&mut self, worker: crate::TracingWorker) {
+        self.active = None;
+        self.threaded = Some(worker);
+    }
+    pub fn texture(&self) -> Option<wgpu::Texture> {
+        self.threaded
+            .as_ref()
+            .map(|w| w.texture().clone())
+            .or_else(|| self.active.as_ref().map(|r| r.tracer.texture().clone()))
+    }
+    pub fn geometry(&self) -> Option<Geometry> {
+        self.threaded
+            .as_ref()
+            .map(crate::TracingWorker::geometry)
+            .or_else(|| self.active.as_ref().map(|r| r.tracer.readback_geometry()))
+    }
+    pub fn samples(&self) -> u32 {
+        self.threaded.as_ref().map_or_else(
+            || self.active.as_ref().map_or(0, |r| r.tracer.samples()),
+            crate::TracingWorker::samples,
+        )
+    }
+    pub fn readback(&self) -> Result<LightField, String> {
+        if let Some(worker) = &self.threaded {
+            worker.readback()
+        } else {
+            self.active.as_ref().ok_or("no tracer")?.tracer.readback()
+        }
+    }
     /// Commit a backend prepared by the caller. Preparing/validating a candidate
     /// never modifies the active backend. None disables tracing for another plugin.
     pub fn switch(&mut self, candidate: Option<Tracing>) -> Option<Tracing> {
+        self.threaded.take();
         std::mem::replace(&mut self.active, candidate)
     }
 }
@@ -124,7 +156,7 @@ pub struct TracingPlugin {
 impl TracingPlugin {
     pub fn idle() -> Self {
         Self {
-            initial: Some(TracingSlot { active: None }),
+            initial: Some(TracingSlot::default()),
             owns: false,
         }
     }
@@ -132,6 +164,7 @@ impl TracingPlugin {
         Self {
             initial: Some(TracingSlot {
                 active: Some(runtime),
+                threaded: None,
             }),
             owns: false,
         }

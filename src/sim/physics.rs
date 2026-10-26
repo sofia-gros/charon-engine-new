@@ -51,6 +51,9 @@ use rand::RngExt;
 /// Step the simulation one tick using only chunks marked dirty.
 pub fn step(grid: &mut Grid, rng: &mut impl Rng) {
     grid.rotate_dirty();
+    step_active(grid, rng);
+}
+pub(super) fn step_active(grid: &mut Grid, rng: &mut impl Rng) {
     if !grid.dirty.iter().any(|&active| active) {
         return;
     }
@@ -91,7 +94,7 @@ fn step_chunk(grid: &mut Grid, cx: usize, cy: usize, rng: &mut impl Rng) {
     }
 }
 
-fn update_cell(grid: &mut Grid, x: usize, y: usize, rng: &mut impl Rng) {
+pub(super) fn update_cell(grid: &mut Grid, x: usize, y: usize, rng: &mut impl Rng) {
     let i = grid.idx(x, y);
     if grid.moved[i] {
         return;

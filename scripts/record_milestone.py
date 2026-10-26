@@ -221,7 +221,8 @@ def record(milestone,output,xvfb,display):
                     action("Select allowed tracing mode",lambda:connection.key("3" if milestone=="m6-rt-mobile" else "2"))
                     time.sleep(0.7)
                     action("Close settings (C)",lambda:connection.key("c"))
-                    action("Move carried light (D)",lambda:connection.key("d",0.25))
+                    action("Move carried light continuously (D)",lambda:connection.key("d",0.9))
+                    action("Move carried light back (A)",lambda:connection.key("a",0.65))
                     action("Destroy tile blocks and release sand/water (B)",lambda:connection.key("b"))
                     if milestone=="m6-rt":
                         action("Spawn emitting falling-sand fire (F)",lambda:connection.key("f"))

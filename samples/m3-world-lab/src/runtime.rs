@@ -29,6 +29,7 @@ pub struct View {
     pub ticks: u64,
     pub revision: u64,
     pub message: String,
+    pub physics_jobs: usize,
     #[cfg(feature = "bridge")]
     pub sand: Option<charon_physics::sim::simulation::Snapshot>,
 }
@@ -104,6 +105,7 @@ impl Compute {
         rx: Receiver<(u64, Edit)>,
         coupled: bool,
         map: Tilemap,
+        pool: Option<Arc<charon_tasks::TaskPool>>,
     ) -> Result<Self, String> {
         #[cfg(feature = "bridge")]
         let bridge = if coupled {
@@ -114,6 +116,10 @@ impl Compute {
             )?;
             bridge.set_conversion(TileId(1), Some(CellData::sand(19)))?;
             bridge.set_conversion(TileId(2), Some(CellData::water(12)))?;
+            #[cfg(feature = "parallel")]
+            if let Some(pool) = pool.clone() {
+                bridge.set_cpu_pool(pool);
+            }
             Some(bridge)
         } else {
             None
@@ -122,6 +128,7 @@ impl Compute {
         if coupled {
             return Err("bridge feature is not compiled".into());
         }
+        let _ = pool;
         Ok(Self {
             map,
             #[cfg(feature = "bridge")]
@@ -177,6 +184,16 @@ impl Compute {
                 ticks: self.ticks,
                 revision: snap.revision,
                 message: self.message.clone(),
+                physics_jobs: {
+                    #[cfg(feature = "parallel")]
+                    {
+                        bridge.parallel_jobs()
+                    }
+                    #[cfg(not(feature = "parallel"))]
+                    {
+                        1
+                    }
+                },
                 sand: Some(snap.sand),
             };
         }
@@ -185,6 +202,7 @@ impl Compute {
             ticks: self.ticks,
             revision: self.map.revision(),
             message: self.message.clone(),
+            physics_jobs: 0,
             #[cfg(feature = "bridge")]
             sand: None,
         }
@@ -307,6 +325,15 @@ impl Runtime {
         map: Tilemap,
         build: impl FnOnce(&Shared) -> Vec<Box<dyn Plugin + Send>>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        Self::start_with_pool(hz, coupled, map, build, None)
+    }
+    pub fn start_with_pool(
+        hz: u32,
+        coupled: bool,
+        map: Tilemap,
+        build: impl FnOnce(&Shared) -> Vec<Box<dyn Plugin + Send>>,
+        pool: Option<Arc<charon_tasks::TaskPool>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         if map.dimensions() != [W, H] || map.tile_size() != [CELL, CELL] {
             return Err("sample world must be 40x24 tiles of size 8".into());
         }
@@ -319,6 +346,7 @@ impl Runtime {
                 ticks: 0,
                 revision: 0,
                 message: "STARTING".into(),
+                physics_jobs: 0,
                 #[cfg(feature = "bridge")]
                 sand: None,
             }))),
@@ -326,7 +354,7 @@ impl Runtime {
             controls: Arc::new(Mutex::new(Controls::default())),
         };
         let (tx, rx) = mpsc::sync_channel(64);
-        let compute = Compute::make(hz, shared.clone(), rx, coupled, map)?;
+        let compute = Compute::make(hz, shared.clone(), rx, coupled, map, pool)?;
         let compute = Worker::spawn(
             WorkerConfig::new("charon-compute", hz),
             move |delta| {

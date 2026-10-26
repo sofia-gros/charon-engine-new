@@ -294,6 +294,14 @@ impl Bridge {
         receipt.revision = self.revision;
         receipt
     }
+    #[cfg(feature = "parallel")]
+    pub fn set_cpu_pool(&mut self, pool: Arc<charon_tasks::TaskPool>) {
+        self.sand.set_cpu_pool(pool);
+    }
+    #[cfg(feature = "parallel")]
+    pub fn parallel_jobs(&self) -> usize {
+        self.sand.parallel_jobs()
+    }
     pub fn step(&mut self) {
         self.sand.step();
         self.revision = self.revision.saturating_add(1);

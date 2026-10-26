@@ -1,6 +1,6 @@
 //! Independent GPU tracing. The `rtx` feature provides experimental Vulkan ray
 //! queries; portable path modes never request hardware ray tracing features.
-use charon_tracing::charon_lighting::{Geometry, LightField, ambient_occlusion};
+use charon_tracing::charon_lighting::{Geometry, LightField};
 pub use charon_tracing::{Mode, Platform, Quality, TraceScene};
 #[cfg(feature = "plugin")]
 mod plugin;
@@ -9,8 +9,13 @@ mod rtx;
 #[cfg(feature = "plugin")]
 pub use plugin::{SwitchRequest, Tracing, TracingPlugin, TracingSlot};
 mod device;
+mod prepare;
+#[cfg(feature = "plugin")]
+mod worker;
 pub use device::{DeviceCapabilities, LightingDevice};
 pub use wgpu;
+#[cfg(feature = "plugin")]
+pub use worker::TracingWorker;
 pub const COMMON: &str = include_str!("trace.wgsl");
 pub fn shader(mode: Mode) -> String {
     if mode == Mode::Rtx {
@@ -45,6 +50,12 @@ struct Optical {
     source: [f32; 4],
     surface: [f32; 4],
 }
+#[repr(C)]
+#[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
+struct EmitterGpu {
+    position: [f32; 4],
+    color: [f32; 4],
+}
 pub struct GpuTrace {
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -58,9 +69,12 @@ pub struct GpuTrace {
     result: wgpu::Buffer,
     output: wgpu::Texture,
     pipeline: wgpu::ComputePipeline,
+    resolve: wgpu::ComputePipeline,
+    _raw: wgpu::Buffer,
     group: wgpu::BindGroup,
     samples: u32,
     last: Option<TraceScene>,
+    cpu_pool: Option<std::sync::Arc<charon_tasks::TaskPool>>,
     #[cfg(feature = "rtx")]
     acceleration: Option<rtx::Acceleration>,
 }
@@ -160,7 +174,8 @@ impl GpuTrace {
         };
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
         let optics = buffer("trace optical inputs", n * 48, storage);
-        let emitters = buffer("trace emission indices", n * 4, storage);
+        let emitters = buffer("deterministic trace emitters", 64 * 32, storage);
+        let raw = buffer("separate direct and indirect illumination", n * 32, storage);
         let history = buffer("trace radiance accumulation", n * 16, storage);
         let result = buffer(
             "trace result",
@@ -190,11 +205,79 @@ impl GpuTrace {
             label: Some("2D path tracing"),
             source: wgpu::ShaderSource::Wgsl(shader(mode).into()),
         });
+        let entry = |binding, ty| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty,
+            count: None,
+        };
+        let storage_type = |read_only| wgpu::BindingType::Buffer {
+            ty: wgpu::BufferBindingType::Storage { read_only },
+            has_dynamic_offset: false,
+            min_binding_size: None,
+        };
+        let data_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("trace/resolve shared data"),
+            entries: &[
+                entry(
+                    0,
+                    wgpu::BindingType::Buffer {
+                        ty: wgpu::BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                ),
+                entry(1, storage_type(true)),
+                entry(2, storage_type(true)),
+                entry(3, storage_type(false)),
+                entry(4, storage_type(false)),
+                entry(
+                    5,
+                    wgpu::BindingType::StorageTexture {
+                        access: wgpu::StorageTextureAccess::WriteOnly,
+                        format: wgpu::TextureFormat::Rgba8Unorm,
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                    },
+                ),
+                entry(6, storage_type(false)),
+            ],
+        });
+        let ray_layout = (mode == Mode::Rtx).then(|| {
+            device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("ray query acceleration"),
+                entries: &[
+                    entry(
+                        0,
+                        wgpu::BindingType::AccelerationStructure {
+                            vertex_return: false,
+                        },
+                    ),
+                    entry(1, storage_type(true)),
+                ],
+            })
+        });
+        let mut layouts = vec![&data_layout];
+        if let Some(ray) = &ray_layout {
+            layouts.push(ray);
+        }
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("trace/resolve layout"),
+            bind_group_layouts: &layouts,
+            push_constant_ranges: &[],
+        });
         let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
             label: Some("2D diffuse path tracer"),
-            layout: None,
+            layout: Some(&layout),
             module: &module,
             entry_point: Some("trace"),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        let resolve = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("edge-aware indirect resolve"),
+            layout: Some(&layout),
+            module: &module,
+            entry_point: Some("resolve"),
             compilation_options: Default::default(),
             cache: None,
         });
@@ -224,6 +307,10 @@ impl GpuTrace {
                     resource: result.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: raw.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
                     binding: 5,
                     resource: wgpu::BindingResource::TextureView(&view),
                 },
@@ -245,12 +332,18 @@ impl GpuTrace {
             result,
             output,
             pipeline,
+            resolve,
+            _raw: raw,
             group,
             samples: 0,
             last: None,
+            cpu_pool: None,
             #[cfg(feature = "rtx")]
             acceleration: None,
         })
+    }
+    pub fn set_cpu_pool(&mut self, pool: std::sync::Arc<charon_tasks::TaskPool>) {
+        self.cpu_pool = Some(pool);
     }
     pub fn device(&self) -> LightingDevice {
         LightingDevice::new(self.device.clone(), self.queue.clone())
@@ -279,12 +372,17 @@ impl GpuTrace {
         let changed = self.last.as_ref().is_none_or(|old| !old.same_input(scene));
         if changed {
             self.samples = 0;
+        } else if let Some(last) = self.last.as_mut() {
+            last.input.revision = scene.input.revision;
         }
         let count = self
             .quality
             .samples_per_update
             .min(self.quality.max_samples - self.samples);
         if count == 0 {
+            if let Some(last) = self.last.as_mut() {
+                last.input.revision = scene.input.revision;
+            }
             return Ok(false);
         }
         let mut encoder = self
@@ -312,42 +410,19 @@ impl GpuTrace {
         }
         let emitters = scene.emitters();
         if changed {
-            let ao = ambient_occlusion(
-                self.geometry,
-                &scene.input.optics,
-                scene.input.settings.ao_strength,
-            )?;
-            let values: Vec<_> = scene
-                .input
-                .optics
-                .iter()
-                .enumerate()
-                .map(|(i, o)| Optical {
-                    transport: [
-                        o.transmission[0],
-                        o.transmission[1],
-                        o.transmission[2],
-                        o.opacity,
-                    ],
-                    source: [
-                        scene.input.sources[i][0],
-                        scene.input.sources[i][1],
-                        scene.input.sources[i][2],
-                        0.,
-                    ],
-                    surface: [
-                        scene.reflectance[i][0],
-                        scene.reflectance[i][1],
-                        scene.reflectance[i][2],
-                        ao[i],
-                    ],
-                })
-                .collect();
+            let values = prepare::optics(scene, self.cpu_pool.as_ref())?;
             self.queue
                 .write_buffer(&self.optics, 0, bytemuck::cast_slice(&values));
             if !emitters.is_empty() {
+                let lights: Vec<_> = emitters
+                    .iter()
+                    .map(|e| EmitterGpu {
+                        position: [e.position[0], e.position[1], 0., 0.],
+                        color: [e.radiance[0], e.radiance[1], e.radiance[2], 0.],
+                    })
+                    .collect();
                 self.queue
-                    .write_buffer(&self.emitters, 0, bytemuck::cast_slice(&emitters));
+                    .write_buffer(&self.emitters, 0, bytemuck::cast_slice(&lights));
             }
         }
         let s = scene.input.settings;
@@ -375,6 +450,19 @@ impl GpuTrace {
                 timestamp_writes: None,
             });
             pass.set_pipeline(&self.pipeline);
+            pass.set_bind_group(0, &self.group, &[]);
+            #[cfg(feature = "rtx")]
+            if let Some(acceleration) = &self.acceleration {
+                pass.set_bind_group(1, &acceleration.group, &[]);
+            }
+            pass.dispatch_workgroups(g.width.div_ceil(8), g.height.div_ceil(8), 1);
+        }
+        {
+            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: Some("resolve deterministic direct and filtered indirect light"),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(&self.resolve);
             pass.set_bind_group(0, &self.group, &[]);
             #[cfg(feature = "rtx")]
             if let Some(acceleration) = &self.acceleration {

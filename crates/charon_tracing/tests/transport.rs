@@ -194,3 +194,35 @@ fn tilemap_and_particle_layers_both_block_the_same_rays() {
         [1.; 3]
     );
 }
+
+#[test]
+fn moving_subcell_lights_have_sample_independent_direct_illumination() {
+    let mut input = TraceScene::new(scene().prepare()).unwrap();
+    let q = Quality {
+        samples_per_update: 1,
+        max_samples: 16,
+        bounces: 0,
+        ..Quality::for_mode(Mode::Path)
+    };
+    let mut acc = Accumulator::default();
+    for x in [-13.5, -13.4, -13.3] {
+        input.point_lights = vec![PointLight {
+            position: [x, 28.5],
+            color: [1., 0.5, 0.1],
+            intensity: 1.,
+        }];
+        let first = acc.update(&input, q).unwrap();
+        assert_eq!(acc.samples(), 1);
+        for _ in 1..16 {
+            assert_eq!(first.rgba, acc.update(&input, q).unwrap().rgba);
+        }
+        assert!(first.rgba.iter().any(|p| p[0] > 0.));
+        input.input.revision += 1;
+        acc.update(&input, q).unwrap();
+        assert_eq!(
+            acc.samples(),
+            16,
+            "revision-only notification must not destroy history"
+        );
+    }
+}

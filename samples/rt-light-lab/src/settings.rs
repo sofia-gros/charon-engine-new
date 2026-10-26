@@ -3,7 +3,7 @@ use crate::config::Capabilities;
 use charon_input::{Button, InputEvent, Key, keys};
 use charon_m5_sample::ui;
 use charon_render::{DrawFrame, PassId, Quad, TextureId};
-use charon_tracing::{Mode, Quality, TraceScene};
+use charon_tracing::{Mode, Quality};
 use charon_tracing_gpu::{LightingDevice, SwitchRequest, TracingSlot};
 const OPTIONS: [Selection; 4] = [
     Selection::Rtx,
@@ -181,6 +181,23 @@ fn draw(
             let changed = selection != state.active;
             if selection == Selection::M5 {
                 if changed || state.pending.is_some() {
+                    light.resume_inputs();
+                    let shared = &session
+                        .runtime
+                        .as_ref()
+                        .ok_or("world runtime missing")?
+                        .shared;
+                    let view = shared.view.lock().unwrap().clone();
+                    let player = *shared.player.lock().unwrap();
+                    light.update(renderer, &view, player, frame.size, 30)?;
+                    let camera = *session.camera.lock().unwrap();
+                    let domain = camera.project_rect(charon_camera::Rect {
+                        x: 0.,
+                        y: 0.,
+                        width: 320.,
+                        height: 192.,
+                    })?;
+                    renderer.set_parameters(session.ids.lit, domain.array())?;
                     let restored = light
                         .restore_legacy(renderer)
                         .and_then(|()| light.readback())
@@ -198,83 +215,100 @@ fn draw(
                             state.pending = None;
                             state.prefs.lighting = selection;
                             state.prefs.pending = None;
+                            state.status = "APPLIED / TRUE / M5".into();
                         }
                         Err(error) => {
                             state.pending = None;
                             state.status = format!("M5 CHANGE FAILED: {error}");
-                            if let Some(runtime) = slot.active.as_ref() {
-                                renderer.bind_texture(
-                                    session.ids.light,
-                                    runtime.tracer.texture().clone(),
-                                    true,
-                                )?;
+                            if let Some(texture) = slot.texture() {
+                                renderer.bind_texture(session.ids.light, texture, true)?;
                             }
                         }
                     }
                 }
             } else {
                 let mode = selection.mode();
-                let scene = TraceScene::at_resolution(
-                    &light.scene().prepare(),
-                    if mode == Mode::LitePath {
-                        8.
-                    } else {
-                        light.cell_size
-                    },
-                )?;
-                let recreate = changed
-                    || slot
-                        .active
-                        .as_ref()
-                        .is_none_or(|r| r.tracer.readback_geometry() != scene.input.geometry);
+                let cell_size = if mode == Mode::LitePath {
+                    8.
+                } else {
+                    light.cell_size
+                };
+                let geometry = charon_tracing::charon_lighting::Geometry {
+                    width: (320. / cell_size) as u32,
+                    height: (192. / cell_size) as u32,
+                    origin: [0., 0.],
+                    cell_size,
+                };
+                let recreate = changed || slot.geometry() != Some(geometry);
                 if recreate {
+                    let shared = session
+                        .runtime
+                        .as_ref()
+                        .ok_or("world runtime missing")?
+                        .shared
+                        .clone();
+                    let flags = session.flags.clone();
+                    let pool = CPU_POOL.get().unwrap().clone();
+                    let view = shared.view.lock().unwrap().clone();
+                    let player = *shared.player.lock().unwrap();
+                    let values = flags.lock().unwrap().clone();
+                    let scene =
+                        crate::lighting_input::build(view, player, values, geometry, &pool)?;
                     let device = state.device.as_ref().ok_or("lighting device missing")?;
-                    let mut prepared = TracingSlot { active: None };
+                    let mut prepared = TracingSlot::default();
                     let request = SwitchRequest {
                         mode,
                         platform: state.prefs.platform(),
                         quality: Quality::for_mode(mode),
                         hz: state.prefs.update_hz,
                     };
-                    let candidate =
-                        pollster::block_on(prepared.try_switch(device, request, scene.clone()))
-                            .and_then(|changed| {
-                                if !changed {
-                                    return Err("UNSUPPORTED: FALSE".into());
-                                }
-                                let runtime =
-                                    prepared.active.take().ok_or("tracing candidate missing")?;
-                                renderer.bind_texture(
-                                    session.ids.light,
-                                    runtime.tracer.texture().clone(),
-                                    true,
-                                )?;
-                                Ok(runtime)
-                            });
+                    let candidate = pollster::block_on(prepared.try_switch(device, request, scene))
+                        .and_then(|applied| {
+                            if !applied {
+                                return Err("UNSUPPORTED: FALSE".into());
+                            }
+                            let mut runtime =
+                                prepared.active.take().ok_or("tracing candidate missing")?;
+                            runtime.tracer.set_cpu_pool(pool.clone());
+                            let source =
+                                crate::lighting_input::source(shared, flags, geometry, pool);
+                            let worker = charon_tracing_gpu::TracingWorker::spawn(
+                                runtime,
+                                state.prefs.update_hz,
+                                source,
+                            )?;
+                            renderer.bind_texture(
+                                session.ids.light,
+                                worker.texture().clone(),
+                                true,
+                            )?;
+                            Ok(worker)
+                        });
                     match candidate {
-                        Ok(runtime) => {
-                            slot.switch(Some(runtime));
+                        Ok(worker) => {
+                            slot.commit_worker(worker);
                             state.active = selection;
                             state.prefs.lighting = selection;
                             state.prefs.pending = None;
                             state.pending = None;
-                            state.status = "LIGHTING CHANGED".into();
-                            println!("LIGHTING SWITCH: {:?}", state.active);
+                            state.status = "APPLIED / TRUE".into();
+                            println!(
+                                "LIGHTING SWITCH: {:?} on dedicated {}Hz worker",
+                                state.active, state.prefs.update_hz
+                            );
                         }
                         Err(error) => {
                             state.status = format!("CHANGE FAILED: {error}");
                             state.pending = None;
                         }
                     }
-                } else if let Some(runtime) = slot.active.as_mut() {
-                    runtime.submit(scene)?;
                 }
-                if let Some(runtime) = slot.active.as_ref() {
-                    renderer.bind_texture(
-                        session.ids.light,
-                        runtime.tracer.texture().clone(),
-                        true,
-                    )?;
+                if let Some(worker) = slot.threaded.as_ref() {
+                    worker.check()?;
+                    worker.set_enabled(light.enabled);
+                }
+                if let Some(texture) = slot.texture() {
+                    renderer.bind_texture(session.ids.light, texture, true)?;
                 }
             }
             if let Some(shared) = PREFERENCES.get() {
@@ -283,19 +317,20 @@ fn draw(
         }
         let check = std::env::args().any(|a| a == "--gpu-check");
         light.compute_enabled = state.active == Selection::M5 || check;
+        light.defer_inputs = state.active != Selection::M5 && !check;
         if check && state.active != state.prefs.requested() {
             return Err("requested lighting returned false / not applied; this is not an RTX validation success".into());
         }
         if check && !state.checked {
-            if let Some(runtime) = slot.active.as_ref() {
-                let field = runtime.tracer.readback()?;
+            if slot.texture().is_some() {
+                let field = slot.readback()?;
                 if field.rgba.iter().flatten().any(|v| !v.is_finite()) {
                     return Err("non-finite trace sample".into());
                 }
                 println!(
                     "RT sample: {:?}, samples={}, Tilemap/Sand common optics, field finite",
                     state.active,
-                    runtime.tracer.samples()
+                    slot.samples()
                 );
             }
             state.checked = true;
@@ -318,12 +353,13 @@ fn draw(
         &format!("{} / C SETTINGS", label(state.active)),
         [1., 0.8, 0.3, 1.],
     );
-    if let Some(runtime) = slot.active.as_ref() {
+    if slot.texture().is_some() {
+        let budget = *CPU_BUDGET.get().unwrap();
         ui::text(
             frame,
             500.,
             frame.size[1].saturating_sub(20) as f32,
-            &format!("SAMPLES {}", runtime.tracer.samples()),
+            &format!("SAMPLES {} / CPU {}", slot.samples(), budget.logical_cpus),
             [1., 0.8, 0.3, 1.],
         );
     }

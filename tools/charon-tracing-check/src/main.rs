@@ -99,6 +99,50 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             return Err("old light remained after removing all sources".into());
         }
     }
+    // Regression: moving lights must not randomize direct illumination, even at 1 spp.
+    let direct_q = Quality {
+        samples_per_update: 1,
+        max_samples: 16,
+        bounces: 0,
+        ..q
+    };
+    let (mut direct, _) = pollster::block_on(GpuTrace::headless(g, mode, Platform::Pc, direct_q))?;
+    let mut input = TraceScene::new(
+        Scene::new(
+            g,
+            Settings {
+                sky: [0.; 3],
+                ambient: [0.; 3],
+                ao_strength: 0.,
+                ..Settings::default()
+            },
+        )?
+        .prepare(),
+    )?;
+    for x in [-8.5, -8.4, -8.3] {
+        input.point_lights = vec![PointLight {
+            position: [x, 14.5],
+            color: [1., 0.5, 0.1],
+            intensity: 1.,
+        }];
+        direct.render(&input)?;
+        assert_eq!(direct.samples(), 1);
+        let first = direct.readback()?;
+        let expected = solve_sample(&input, direct_q)?;
+        for (a, b) in first
+            .rgba
+            .iter()
+            .flatten()
+            .zip(expected.rgba.iter().flatten())
+        {
+            assert!((a - b).abs() < 0.001);
+        }
+        for _ in 1..16 {
+            direct.render(&input)?;
+        }
+        assert_eq!(first.rgba, direct.readback()?.rgba);
+    }
+    println!("Moving sub-cell direct light: 1/16 spp identical; CPU/GPU parity OK");
     // Run Lite with the actual Mobile policy on the same compute adapter.
     let lite = Quality::for_mode(Mode::LitePath);
     let (mut mobile, _) = pollster::block_on(GpuTrace::headless(
@@ -133,6 +177,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let device = mobile.device();
     let mut slot = TracingSlot {
         active: Some(Tracing::new(mobile, 30)?),
+        ..Default::default()
     };
     let old_samples = slot.active.as_ref().unwrap().tracer.samples();
     let request = SwitchRequest {
@@ -184,6 +229,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         scene.clone()
     ))?);
     assert_eq!(slot.active.as_ref().unwrap().tracer.mode(), Mode::Path);
+    let runtime = slot.active.take().unwrap();
+    let worker = charon_tracing_gpu::TracingWorker::spawn(runtime, 144, || Ok(None))?;
+    worker.set_enabled(false);
+    assert!(
+        worker
+            .readback()?
+            .rgba
+            .iter()
+            .flatten()
+            .all(|v| v.is_finite())
+    );
+    slot.commit_worker(worker);
+    assert!(slot.threaded.is_some());
     let request = SwitchRequest {
         mode: Mode::Legacy,
         platform: Platform::Pc,

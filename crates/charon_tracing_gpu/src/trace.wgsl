@@ -1,12 +1,15 @@
 struct Params { extent:vec4<u32>, budget:vec4<u32>, geometry:vec4<f32>, sky_falloff:vec4<f32>, ambient:vec4<f32> }
+struct Emitter {position:vec4<f32>,color:vec4<f32>}
+struct RawLight {direct:vec4<f32>,indirect:vec4<f32>}
 struct Optical {transport:vec4<f32>,source:vec4<f32>,surface:vec4<f32>}
 struct Hit {index:u32,pos:vec2<f32>,normal:vec2<f32>,trans:vec3<f32>,distance:f32,escaped:bool,found:bool}
 @group(0) @binding(0) var<uniform> params:Params;
 @group(0) @binding(1) var<storage,read> optics:array<Optical>;
-@group(0) @binding(2) var<storage,read> emitters:array<u32>;
+@group(0) @binding(2) var<storage,read> emitters:array<Emitter>;
 @group(0) @binding(3) var<storage,read_write> history:array<vec4<f32>>;
 @group(0) @binding(4) var<storage,read_write> result:array<vec4<f32>>;
 @group(0) @binding(5) var image:texture_storage_2d<rgba8unorm,write>;
+@group(0) @binding(6) var<storage,read_write> raw:array<RawLight>;
 const USE_RTX:bool = false;
 fn empty_hit(p:vec2<f32>,distance:f32)->Hit {return Hit(0xffffffffu,p,vec2<f32>(0.),vec3<f32>(1.),distance,false,false);}
 fn random(state:ptr<function,u32>)->f32 {
@@ -53,25 +56,36 @@ fn visibility(p:vec2<f32>,q:vec2<f32>)->vec3<f32> {
  let hit=walk(p,v/distance,distance);let target_cell=u32(floor(q.y))*params.extent.x+u32(floor(q.x));
  if hit.distance>=distance-0.001 || (hit.found && hit.index==target_cell) {return hit.trans;}return vec3<f32>(0.);
 }
+const SKY_DIRECTIONS:array<vec2<f32>,5>=array<vec2<f32>,5>(vec2<f32>(-0.8660254,-0.5),vec2<f32>(-0.5,-0.8660254),vec2<f32>(0.,-1.),vec2<f32>(0.5,-0.8660254),vec2<f32>(0.8660254,-0.5));
+fn position_of(index:u32)->vec2<f32> {return vec2<f32>(f32(index%params.extent.x)+0.5,f32(index/params.extent.x)+0.5);}
+fn direct_light(p:vec2<f32>,normal:vec2<f32>,range:f32)->vec3<f32> {
+ var light=vec3<f32>(0.);
+ for(var i=0u;i<params.budget.w;i++) {
+  let emitter=emitters[i];let q=(emitter.position.xy-params.geometry.xy)/params.geometry.z;
+  let v=q-p;let distance=length(v);if distance>range {continue;}
+  var cosine=1.;if any(normal!=vec2<f32>(0.))&&distance>=0.00001 {cosine=max(dot(normal,v)/distance,0.);}
+  let trans=visibility(p,q);let world=distance*params.geometry.z;
+  let weight=cosine*pow(params.sky_falloff.w,world)/(1.+world/16.);
+  light+=trans*emitter.color.rgb*weight;
+ }
+ for(var i=0u;i<5u;i++) {
+  let d=SKY_DIRECTIONS[i];var cosine=1.;if any(normal!=vec2<f32>(0.)){cosine=max(dot(normal,d),0.);}
+  let hit=walk(p,d,range);
+  if hit.escaped {light+=hit.trans*params.sky_falloff.rgb*(0.2*cosine*pow(params.sky_falloff.w,hit.distance*params.geometry.z));}
+ }
+ return light;
+}
 fn sample_path(index:u32,sample_index:u32)->vec3<f32> {
+ if params.extent.w==0u || optics[index].transport.w>=0.999 {return vec3<f32>(0.);}
  var state=(index*747796405u)^(sample_index*2891336453u)^0x9e3779b9u;if state==0u{state=1u;}
- var pos=vec2<f32>(f32(index%params.extent.x)+0.5,f32(index/params.extent.x)+0.5);
- let angle=random(&state)*6.28318530718;var dir=vec2<f32>(cos(angle),sin(angle));
- var radiance=optics[index].source.rgb;var throughput=vec3<f32>(1.);var range=params.geometry.w/params.geometry.z;
- for(var bounce=0u;bounce<=params.extent.w;bounce++) {
-  if params.budget.w>0u {
-   let source=emitters[min(u32(random(&state)*f32(params.budget.w)),params.budget.w-1u)];
-   let q=vec2<f32>(f32(source%params.extent.x)+0.5,f32(source/params.extent.x)+0.5);let dist=length(q-pos);
-   if dist>0.001 && dist<=range {
-    let trans=visibility(pos,q);let weight=f32(params.budget.w)*pow(params.sky_falloff.w,dist*params.geometry.z)/(1.+dist);
-    radiance+=throughput*trans*optics[source].source.rgb*weight;
-   }
-  }
-  let hit=walk(pos,dir,range);throughput*=hit.trans*pow(params.sky_falloff.w,hit.distance*params.geometry.z);
-  if hit.escaped {if dir.y<0.{radiance+=throughput*params.sky_falloff.rgb;}break;}
-  if !hit.found || bounce==params.extent.w {break;}
-  throughput*=optics[hit.index].surface.rgb;range-=hit.distance;if range<0.001{break;}
+ var pos=position_of(index);let angle=random(&state)*6.28318530718;var dir=vec2<f32>(cos(angle),sin(angle));
+ var radiance=vec3<f32>(0.);var throughput=vec3<f32>(1.);var range=params.geometry.w/params.geometry.z;
+ for(var bounce=0u;bounce<params.extent.w;bounce++) {
+  let hit=walk(pos,dir,range);if !hit.found {break;}
+  range-=hit.distance;if range<=0.001{break;}
+  throughput*=hit.trans*optics[hit.index].surface.rgb*pow(params.sky_falloff.w,hit.distance*params.geometry.z);
   pos=hit.pos+hit.normal*0.001;
+  radiance+=throughput*direct_light(pos,hit.normal,range);
   let tangent=vec2<f32>(-hit.normal.y,hit.normal.x);let s=random(&state)*2.-1.;let c=sqrt(1.-s*s);dir=hit.normal*c+tangent*s;
  }
  return radiance;
@@ -83,7 +97,23 @@ fn trace(@builtin(global_invocation_id) id:vec3<u32>) {
  if params.budget.x>0u {sum=history[index].rgb;}
  for(var sample=0u;sample<params.extent.z;sample++) {sum+=sample_path(index,params.budget.x+sample);}
  history[index]=vec4<f32>(sum,0.);
- let ao=optics[index].surface.a;
- let rgb=clamp(max((sum/f32(params.budget.x+params.extent.z)+params.ambient.rgb)*ao,optics[index].source.rgb),vec3<f32>(0.),vec3<f32>(1.));
+ raw[index].direct=vec4<f32>(direct_light(position_of(index),vec2<f32>(0.),params.geometry.w/params.geometry.z),optics[index].surface.a);
+ raw[index].indirect=vec4<f32>(sum/f32(params.budget.x+params.extent.z),0.);
+}
+@compute @workgroup_size(8,8)
+fn resolve(@builtin(global_invocation_id) id:vec3<u32>) {
+ if any(id.xy>=params.extent.xy) {return;}
+ let index=id.y*params.extent.x+id.x;let p=position_of(index);var indirect=raw[index].indirect.rgb;var weight=1.;
+ if params.extent.w>0u && optics[index].transport.w<0.999 {
+  for(var dy=-2;dy<=2;dy++) {for(var dx=-2;dx<=2;dx++) {
+   if dx==0&&dy==0{continue;}let q=vec2<i32>(id.xy)+vec2<i32>(dx,dy);
+   if any(q<vec2<i32>(0))||any(q>=vec2<i32>(params.extent.xy)){continue;}
+   let j=u32(q.y)*params.extent.x+u32(q.x);if optics[j].transport.w>=0.999{continue;}
+   if any(visibility(p,position_of(j))<vec3<f32>(0.05)){continue;}
+   let w=1./(1.+f32(dx*dx+dy*dy));indirect+=raw[j].indirect.rgb*w;weight+=w;
+  }}
+ }
+ let ao=raw[index].direct.a;
+ let rgb=clamp(max((raw[index].direct.rgb+indirect/weight+params.ambient.rgb)*ao,optics[index].source.rgb),vec3<f32>(0.),vec3<f32>(1.));
  let value=vec4<f32>(rgb,ao);result[index]=value;textureStore(image,vec2<i32>(id.xy),value);
 }

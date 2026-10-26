@@ -35,6 +35,7 @@ pub struct Context {
     pub size: Rc<Cell<[u32; 2]>>,
     pub hz: u32,
     pub prefer_sand: bool,
+    pub cpu_pool: Option<Arc<charon_tasks::TaskPool>>,
 }
 pub struct Session {
     pub id: SceneId,
@@ -181,7 +182,7 @@ impl SceneLogic for Cave {
         }
         let coupled = self.coupled;
         let sink_for_worker = sink.clone();
-        let runtime = Runtime::start_with_game_plugins(
+        let runtime = Runtime::start_with_pool(
             self.ctx.hz,
             coupled,
             charon_m4_sample::world::map(),
@@ -204,6 +205,7 @@ impl SceneLogic for Cave {
                     Box::new(controller),
                 ]
             },
+            self.ctx.cpu_pool.clone(),
         )
         .map_err(|e| e.to_string())?;
         *sink.lock().unwrap() = Some(runtime.edits.clone());
@@ -513,6 +515,7 @@ pub fn smoke_with(
                 size: Rc::new(Cell::new([960, 696])),
                 hz,
                 prefer_sand: coupled,
+                cpu_pool: None,
             };
             let mut m = factory(ctx)?;
             pulse(&m, keys::ENTER)?;

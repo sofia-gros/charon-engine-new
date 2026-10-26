@@ -16,6 +16,7 @@ pub struct Illumination {
     last_revision: Option<u64>,
     pub enabled: bool,
     pub compute_enabled: bool,
+    pub defer_inputs: bool,
     pub torch: bool,
     pub ore: bool,
     pub ao: bool,
@@ -61,6 +62,7 @@ impl Illumination {
             last_revision: None,
             enabled: true,
             compute_enabled: true,
+            defer_inputs: false,
             torch: true,
             ore: true,
             ao: true,
@@ -79,6 +81,7 @@ impl Illumination {
         )?;
         next.enabled = self.enabled;
         next.compute_enabled = self.compute_enabled;
+        next.defer_inputs = self.defer_inputs;
         next.torch = self.torch;
         next.ore = self.ore;
         next.ao = self.ao;
@@ -98,6 +101,9 @@ impl Illumination {
             self.pass,
             [0., 72., size[0] as f32, size[0] as f32 / 320. * 192.],
         )?;
+        if self.defer_inputs {
+            return Ok(());
+        }
         if !self.enabled {
             return Ok(());
         }
@@ -191,6 +197,11 @@ impl Illumination {
             self.scene.acknowledge(self.scene.revision());
         }
         Ok(())
+    }
+    pub fn resume_inputs(&mut self) {
+        self.defer_inputs = false;
+        self.compute_enabled = true;
+        self.last_update = Instant::now() - Duration::from_secs(1);
     }
     /// Restore the existing backend from the current optical snapshot on a mode switch.
     pub fn restore_legacy(&mut self, renderer: &mut GpuRenderer) -> Result<(), String> {
