@@ -70,7 +70,10 @@ impl TaskPool {
     pub fn shutdown(&self) {
         self.shared.queue.lock().unwrap().stopped = true;
         self.shared.ready.notify_all();
-        for handle in self.workers.lock().unwrap().drain(..) {
+        // Release the handles lock before joining: an in-flight nested map
+        // may still be returning through grow().
+        let handles: Vec<_> = self.workers.lock().unwrap().drain(..).collect();
+        for handle in handles {
             if handle.thread().id() != thread::current().id() {
                 let _ = handle.join();
             }
@@ -78,6 +81,9 @@ impl TaskPool {
     }
     fn grow(&self, desired: usize) {
         let mut handles = self.workers.lock().unwrap();
+        if self.shared.queue.lock().unwrap().stopped {
+            return;
+        }
         while handles.len() < desired.min(self.helpers) {
             let shared = self.shared.clone();
             let name = format!("charon-cpu-{}", handles.len());

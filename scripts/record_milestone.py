@@ -206,21 +206,27 @@ def record(milestone,output,xvfb,display):
                 elif milestone.startswith("m6-rt"):
                     action("Start coupled world (Enter)",lambda:connection.key("Return"))
                     ready = "LIGHTING SWITCH: LitePath" if milestone=="m6-rt-mobile" else "LIGHTING SWITCH: Path"
-                    deadline = time.monotonic() + 30
-                    while ready not in (temporary/"app.log").read_text():
-                        if app.poll() is not None or time.monotonic() >= deadline:
-                            raise RuntimeError("first world tracing dispatch did not become ready")
-                        time.sleep(0.1)
+                    def wait_for(marker, count=1):
+                        deadline = time.monotonic() + 30
+                        while (temporary/"app.log").read_text().count(marker) < count:
+                            if app.poll() is not None or time.monotonic() >= deadline:
+                                raise RuntimeError("native lighting action not confirmed: "+marker)
+                            time.sleep(0.1)
+                    wait_for(ready)
                     time.sleep(0.7)
                     action("Open lighting settings (C)",lambda:connection.key("c"))
+                    wait_for("LIGHTING UI: open")
                     time.sleep(0.6)
                     action("Try disabled RTX option (1)",lambda:connection.key("1"))
                     time.sleep(0.5)
                     action("Select existing M5 lighting (4)",lambda:connection.key("4"))
+                    wait_for("LIGHTING SWITCH: M5")
                     time.sleep(0.5)
                     action("Select allowed tracing mode",lambda:connection.key("3" if milestone=="m6-rt-mobile" else "2"))
+                    wait_for(ready,2)
                     time.sleep(0.7)
                     action("Close settings (C)",lambda:connection.key("c"))
+                    wait_for("LIGHTING UI: closed")
                     action("Move carried light continuously (D)",lambda:connection.key("d",0.9))
                     action("Move carried light back (A)",lambda:connection.key("a",0.65))
                     action("Destroy tile blocks and release sand/water (B)",lambda:connection.key("b"))

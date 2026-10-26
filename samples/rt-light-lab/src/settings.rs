@@ -65,6 +65,10 @@ pub fn input(manager: &mut SceneManager, event: InputEvent) -> Result<bool, Stri
     let mut consumed = false;
     if toggle {
         state.open = !state.open;
+        println!(
+            "LIGHTING UI: {}",
+            if state.open { "open" } else { "closed" }
+        );
         consumed = true;
         if let Some(client) = world.get::<scenes::Frontend>() {
             client
@@ -216,6 +220,7 @@ fn draw(
                             state.prefs.lighting = selection;
                             state.prefs.pending = None;
                             state.status = "APPLIED / TRUE / M5".into();
+                            println!("LIGHTING SWITCH: M5");
                         }
                         Err(error) => {
                             state.pending = None;
