@@ -1,0 +1,62 @@
+{
+  "milestone": "m6-rt-mobile",
+  "status": "Mobile Lite profile on Linux; mobile device verification pending",
+  "sample_commit": "97fae97ef826c026b07b593b6a26a48f5c759b4a",
+  "recorded_at": "2026-10-26T13:19:26+09:00",
+  "environment": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-rt-sample -- --mobile",
+  "gif_fps": 10,
+  "gif_width": 640,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Start coupled world (Enter)"
+    },
+    {
+      "seconds": 1.68,
+      "action": "Open lighting settings (C)"
+    },
+    {
+      "seconds": 2.47,
+      "action": "Try disabled RTX option (1)"
+    },
+    {
+      "seconds": 3.15,
+      "action": "Select existing M5 lighting (4)"
+    },
+    {
+      "seconds": 3.83,
+      "action": "Select allowed tracing mode"
+    },
+    {
+      "seconds": 4.71,
+      "action": "Close settings (C)"
+    },
+    {
+      "seconds": 4.89,
+      "action": "Move carried light continuously (D)"
+    },
+    {
+      "seconds": 5.89,
+      "action": "Move carried light back (A)"
+    },
+    {
+      "seconds": 6.64,
+      "action": "Destroy tile blocks and release sand/water (B)"
+    },
+    {
+      "seconds": 7.62,
+      "action": "Toggle carried light (T)"
+    },
+    {
+      "seconds": 8.4,
+      "action": "Restart scene and light history (R)"
+    },
+    {
+      "seconds": 9.19,
+      "action": "Return to menu (Tab)"
+    }
+  ]
+}

@@ -83,3 +83,13 @@ PCの照明は専用ワーカーで最大144Hz、ゲーム144Hz・描画60Hz・�
 ```powershell
 cargo run --release -p charon-rt-sample -- --cpu-budget 4
 ```
+
+## 操作記録
+
+![PC Path・M5照明の切り替えとタイル・粒子の操作](../../docs/demos/m6-rt-demo.gif)
+
+![Mobile Liteのデスクトッププレビュー](../../docs/demos/m6-rt-mobile-demo.gif)
+
+[PC Path録画情報](../../docs/demos/m6-rt-demo.json) / [Liteプレビュー録画情報](../../docs/demos/m6-rt-mobile-demo.json)
+
+Linux / Xvfb上の実ウィンドウへキー入力を送り、設定画面の未対応項目、方式の切り替え、砂・水ブロックの解放、火の発光、光源の移動・削除、Scene再開始を録画しています。RTXの実行映像やMobile実機の映像ではありません。

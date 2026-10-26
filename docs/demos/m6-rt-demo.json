@@ -1,0 +1,66 @@
+{
+  "milestone": "m6-rt",
+  "status": "PC path tracing and settings example; RTX user verification pending",
+  "sample_commit": "97fae97ef826c026b07b593b6a26a48f5c759b4a",
+  "recorded_at": "2026-10-26T13:19:12+09:00",
+  "environment": "Linux-6.17.0-1022-azure-x86_64-with-glibc2.39",
+  "display": "Linux Xvfb; actual native window and XTest input",
+  "windows_11_verified": false,
+  "sample_command": "cargo run --release -p charon-rt-sample",
+  "gif_fps": 10,
+  "gif_width": 640,
+  "actions": [
+    {
+      "seconds": 0.8,
+      "action": "Start coupled world (Enter)"
+    },
+    {
+      "seconds": 2.38,
+      "action": "Open lighting settings (C)"
+    },
+    {
+      "seconds": 3.17,
+      "action": "Try disabled RTX option (1)"
+    },
+    {
+      "seconds": 3.85,
+      "action": "Select existing M5 lighting (4)"
+    },
+    {
+      "seconds": 4.53,
+      "action": "Select allowed tracing mode"
+    },
+    {
+      "seconds": 5.41,
+      "action": "Close settings (C)"
+    },
+    {
+      "seconds": 5.59,
+      "action": "Move carried light continuously (D)"
+    },
+    {
+      "seconds": 6.59,
+      "action": "Move carried light back (A)"
+    },
+    {
+      "seconds": 7.34,
+      "action": "Destroy tile blocks and release sand/water (B)"
+    },
+    {
+      "seconds": 7.53,
+      "action": "Spawn emitting falling-sand fire (F)"
+    },
+    {
+      "seconds": 8.51,
+      "action": "Toggle carried light (T)"
+    },
+    {
+      "seconds": 9.29,
+      "action": "Restart scene and light history (R)"
+    },
+    {
+      "seconds": 10.07,
+      "action": "Return to menu (Tab)"
+    }
+  ]
+}

@@ -139,6 +139,12 @@ Uでワールド座標の照明を取得し、Zで照明解像度を切り替え
 
 ### M6.1：RTX / Path / Mobile Lite照明
 
+![M6.1：PC Path・M5照明の切り替え、Tilemapと粒子の照明](./docs/demos/m6-rt-demo.gif)
+
+![M6.1：Mobile Liteプレビュー、未対応方式の拒否と切り替え](./docs/demos/m6-rt-mobile-demo.gif)
+
+[PC Path録画情報](./docs/demos/m6-rt-demo.json) / [Mobile Liteプレビュー録画情報](./docs/demos/m6-rt-mobile-demo.json)
+
 [Lighting Lab](./samples/rt-light-lab/README.md)でPCのRTX・Path・既存照明、Mobile向けLite・既存照明を切り替えます。タイルと粒子の両方を共通光学データから照らします。設定画面・ファイル読込・選択判断はデモ側に置き、Pluginは能力取得と切り替えのAPIを公開します。未対応モードの変更はfalseになります。
 
 ```sh
@@ -146,7 +152,9 @@ cargo run --release -p charon-rt-sample
 cargo run --release -p charon-rt-sample --no-default-features -- --mobile
 ```
 
-[APIとRTXの検証分担](./docs/tracing-api.md)。Path/Liteの最終確認と録画を進めています。RTX実機の検証はユーザーが担当します。
+光源移動時の直接光と、発光鉱石の自己遮蔽を修正し、照明を専用ワーカーへ分離しました。PCの照明は最大144Hz、CPUジョブ数は利用可能な論理CPU数に合わせます。
+
+[APIとRTXの検証分担](./docs/tracing-api.md)。Path/LiteのCPU・GPU比較、ネイティブ画面、操作GIFを確認しました。RTX実機の検証はユーザーが担当し、未確認のまま明記しています。
 
 ## 開発環境
 
