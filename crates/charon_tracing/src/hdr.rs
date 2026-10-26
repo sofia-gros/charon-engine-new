@@ -693,13 +693,13 @@ fn stable_surface(s: &TraceScene, q: Quality, index: usize, emitters: &[u32]) ->
     let f = m.fresnel(cosine);
     let mut radiance = [0.; 3];
     if m.specular > 0. {
-        if m.roughness < 0.25 {
+        if m.roughness < 0.25 && s.surface_quality.reflection_bounces > 0 {
             let reflected = normalize(add(incident, scale(n, -2. * dot(incident, n))));
             radiance = scale(
                 surface_trace(s, add(p, scale(n, EPS * 2.)), reflected, emitters, q),
                 f,
             );
-        } else {
+        } else if m.roughness >= 0.25 {
             radiance = stable_direct(
                 s,
                 p,
@@ -711,7 +711,7 @@ fn stable_surface(s: &TraceScene, q: Quality, index: usize, emitters: &[u32]) ->
             );
         }
     }
-    if m.dielectric {
+    if m.dielectric && s.surface_quality.transmission_bounces > 0 {
         let eta = 1. / m.ior;
         let k = 1. - eta * eta * (1. - cosine * cosine);
         if k > 0. {
@@ -735,6 +735,9 @@ fn trace_diffuse(
     emitters: &[u32],
     quality: Quality,
 ) -> V {
+    if quality.bounces == 0 {
+        return [0.; 3];
+    }
     let mut pos = p;
     let mut dir = d;
     let mut throughput = [1.; 3];

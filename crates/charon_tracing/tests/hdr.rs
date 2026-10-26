@@ -352,3 +352,32 @@ fn moving_ash_retains_short_indirect_history_in_surrounding_air() {
     s.input.optics[90] = Optical::OPAQUE;
     assert!(hdr::invalidation(Some(&old), &s).iter().all(|v| *v == 1));
 }
+
+#[test]
+fn zero_bounce_and_surface_budgets_disable_secondary_transport() {
+    let mut s = scene(8, 8, 1.);
+    s.input.settings.sky = [1.; 3];
+    s.input.settings.max_distance = 24.;
+    for y in 0..8 {
+        let j = y * 8 + 6;
+        s.input.optics[j] = Optical::OPAQUE;
+        s.materials[j] = Material::STONE;
+    }
+    s.input.sources[9] = [16., 8., 2.];
+    let i = 4 * 8 + 2;
+    s.materials[i].normal = hdr::normalize([1., 0., 0.01]);
+    let q = Quality {
+        bounces: 0,
+        ..Quality::for_mode(Mode::Path)
+    };
+    for seed in 0..32 {
+        assert_eq!(hdr::sample(&s, q, i as u32, seed).indirect, [0.; 3]);
+    }
+    s.materials[i] = Material {
+        normal: [0., -0.98, 0.19899748],
+        ..Material::WATER
+    };
+    s.surface_quality.reflection_bounces = 0;
+    s.surface_quality.transmission_bounces = 0;
+    assert_eq!(hdr::sample(&s, q, i as u32, 0).specular, [0.; 3]);
+}

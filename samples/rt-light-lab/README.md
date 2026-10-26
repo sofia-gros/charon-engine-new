@@ -99,3 +99,14 @@ cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion
 ```
 
 RTXの行はRTX対応実機専用です。対応検出だけでは成功にせず、実デモサイズの出力readbackまで実行します。RTX 4060のdevice lost報告は、開発環境に実機がないため解消未確認です。
+
+RTXの `--trace-check` は既定で段階診断を先に実行します。`geometry`（BVH構築完了→光線1本の既知交差）、`direct`（直接光）、`diffuse`（間接拡散光）、`surface`（反射・透過）、`combined`（全効果1 sample）、`full`（既定品質）の順です。各段階をGPU readbackで完了確認するので、最後の `TRACE STAGE` / `RTX STAGE` が失敗範囲を示します。成功した段階だけでは全体のRTX検証成功になりません。
+
+```sh
+# まずBVH構築と1本の光線だけを確認。HDRの照明計算は実行しない
+cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion --trace-stage geometry
+# 全段階を確認。失敗した時点で停止する
+cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion --frames 1
+```
+
+単独で確認する場合は `--trace-stage direct|diffuse|surface|combined|full` を指定します。`direct` / `diffuse` は鏡面反射と表面透過を無効にし、光源の積分予算を維持します。診断用の1 sampleを通常プリセットに適用する処理はありません。非RTXのPathでも `--trace-stage all` で照明の段階診断を実行できます（BVH／hardware query検証は含みません）。

@@ -213,16 +213,17 @@ fn stable_surface(i:u32)->vec3<f32> {
  let o=optics[i];let n=o.normal.xyz;let xy=params.geometry.xy+(vec2<f32>(f32(i%params.extent.x),f32(i/params.extent.x))+vec2<f32>(0.5))*params.geometry.z;
  let p=vec3<f32>(xy,select(0.,o.material.w+EPS*2.,occupied(i)));let incident=unit(vec3<f32>(0.,0.85,-0.5268));let cosine=max(-dot(incident,n),0.);let f=fresnel(o,cosine);var radiance=vec3<f32>(0.);
  if o.material.y>0. {
-  if o.material.x<0.25{radiance=surface_trace(p+n*EPS*2.,unit(reflect(incident,n)))*f;}
-  else{radiance=stable_direct(p,n,params.geometry.w,true,o);}
+  if o.material.x<0.25 && params.quality.x>0u{radiance=surface_trace(p+n*EPS*2.,unit(reflect(incident,n)))*f;}
+  else if o.material.x>=0.25{radiance=stable_direct(p,n,params.geometry.w,true,o);}
  }
- if o.absorption.w>0. {
+ if o.absorption.w>0. && params.quality.y>0u {
   let eta=1./o.material.z;let k=1.-eta*eta*(1.-cosine*cosine);
   if k>0.{let dir=unit(eta*incident+(eta*cosine-sqrt(k))*n);radiance+=surface_trace(p+dir*EPS*4.,dir)*(1.-f);}
  }
  return radiance;
 }
 fn trace_diffuse(p:vec3<f32>,d:vec3<f32>,state:ptr<function,u32>)->vec3<f32> {
+ if params.extent.w==0u{return vec3<f32>(0.);}
  var pos=p;var dir=d;var throughput=vec3<f32>(1.);var radiance=vec3<f32>(0.);var remaining=params.geometry.w;
  let limit=params.extent.w;var reflected=0u;var transmitted=0u;
  for(var step=0u;step<limit+params.quality.y+1u;step++) {

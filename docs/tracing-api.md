@@ -88,3 +88,9 @@ cargo run -p charon-tracing-check -- --gallery target/lighting-noise-fix --1080p
 `Tracing::submit` は最新スナップショットを置き換えるだけです。計算は設定Hzの `tick` で行い、前のGPU更新が未完了なら次の投入を保留します。モード切替の初回検証だけは明示的に実行・readbackします。`GpuTrace::render` はオフライン用途の明示的な投入を引き続き許可し、`is_idle` でノンブロッキングに完了を確認できます。
 
 HDRの重いdispatchは8行ずつの独立したsubmissionに分けます。これはGPU watchdogを避けるための実行単位の制限であり、RTX実機でのクラッシュ解消やFPSを保証するものではありません。総サンプル数・形状解像度は維持します。入力が変わらない一次照明・表面反射はキャッシュし、粒子の変更影響範囲は再評価します。空の直接照明は固定quadratureに分離し、Liteも空・直接光を固定積分します。二次拡散輸送は引き続き確率的です。
+
+### RTX障害の段階診断
+
+`GpuTrace::diagnose_rtx_geometry` は診断専用です。実入力のBVH構築完了を待ち、独立した小さなシェーダーで既知の不透明セルの正面へ1本のhardware rayを発射して、距離・セル・法線軸を確認します。HDR照明や性能の検証を代替するものではありません。不透明セルを含むRTX入力を必要とします。
+
+`Quality.bounces=0` はHDR間接拡散輸送を無効にします。`reflection_bounces=0` は鏡面レイ、`transmission_bounces=0` は可視表面からの透過レイを無効にします。粗い表面の直接鏡面ハイライトは、反射レイ予算とは独立した直接光です。

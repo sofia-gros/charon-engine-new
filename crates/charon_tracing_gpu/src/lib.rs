@@ -13,6 +13,7 @@ mod hdr;
 pub use device::{DeviceCapabilities, LightingDevice};
 pub use hdr::{TraceMetrics, hdr_shader};
 pub use wgpu;
+pub const RTX_GEOMETRY_PROBE: &str = include_str!("rtx_probe.wgsl");
 pub const COMMON: &str = include_str!("trace.wgsl");
 pub fn shader(mode: Mode) -> String {
     if mode == Mode::Rtx {
@@ -470,6 +471,22 @@ impl GpuTrace {
         match &self.backend {
             TraceBackend::Legacy(l) => l.device(),
             TraceBackend::Hdr(h) => h.device(),
+        }
+    }
+    /// Diagnostic only: independently fence BVH construction and a single query.
+    pub async fn diagnose_rtx_geometry(&self, scene: &TraceScene) -> Result<(), String> {
+        if self.mode() != Mode::Rtx {
+            return Err("RTX geometry diagnostics require RTX mode".into());
+        }
+        #[cfg(feature = "rtx")]
+        {
+            let d = self.device();
+            rtx::diagnose_geometry(d.raw_device(), d.raw_queue(), scene).await
+        }
+        #[cfg(not(feature = "rtx"))]
+        {
+            let _ = scene;
+            Err("RTX feature is disabled".into())
         }
     }
     pub fn readback_geometry(&self) -> Geometry {

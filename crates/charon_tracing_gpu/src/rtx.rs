@@ -410,3 +410,130 @@ mod tests {
         }
     }
 }
+
+/// Isolate BVH construction and a single hardware query on the actual HDR mesh.
+/// Each phase is fenced before advancing, so a fatal driver loss has a named
+/// last stage instead of being attributed to the entire renderer.
+pub async fn diagnose_geometry(
+    device: &wgpu::Device,
+    queue: &wgpu::Queue,
+    scene: &TraceScene,
+) -> Result<(), String> {
+    scene.validate()?;
+    let mesh = surface_mesh(scene)?;
+    let receiver = (0..scene.input.geometry.len())
+        .find(|&i| scene.input.optics[i].opacity >= 0.999)
+        .ok_or("RTX geometry probe requires an opaque receiver")?;
+    let g = scene.input.geometry;
+    let depth = scene.materials[receiver].depth;
+    let input = [
+        g.origin[0] + (receiver as u32 % g.width) as f32 * g.cell_size + g.cell_size * 0.5,
+        g.origin[1] + (receiver as u32 / g.width) as f32 * g.cell_size + g.cell_size * 0.5,
+        depth + 1.,
+        2. * depth + 2.,
+        0.,
+        0.,
+        -1.,
+        0.,
+    ];
+    println!(
+        "RTX STAGE geometry: compile independent single-ray probe; faces={}; triangles={}",
+        mesh.1.len(),
+        mesh.1.len() * 2
+    );
+    device.push_error_scope(wgpu::ErrorFilter::Validation);
+    let shader = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+        label: Some("independent HDR mesh probe"),
+        source: wgpu::ShaderSource::Wgsl(super::RTX_GEOMETRY_PROBE.into()),
+    });
+    let pipeline = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+        label: Some("single hardware query, no HDR transport"),
+        layout: None,
+        module: &shader,
+        entry_point: Some("main"),
+        compilation_options: Default::default(),
+        cache: None,
+    });
+    let uniform = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("known front-face ray"),
+        contents: bytemuck::cast_slice(&input),
+        usage: wgpu::BufferUsages::UNIFORM,
+    });
+    let output = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("RTX probe output"),
+        size: 16,
+        usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    });
+    let staging = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("RTX stage fence"),
+        size: 16,
+        usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+        mapped_at_creation: false,
+    });
+    let group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("isolated RTX probe parameters"),
+        layout: &pipeline.get_bind_group_layout(0),
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: uniform.as_entire_binding(),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: output.as_entire_binding(),
+            },
+        ],
+    });
+    if let Some(e) = device.pop_error_scope().await {
+        return Err(e.to_string());
+    }
+    let mut encoder = device.create_command_encoder(&Default::default());
+    println!("RTX STAGE geometry: build BLAS/TLAS and wait (no ray dispatch)");
+    let accel = Acceleration::build_mesh(device, &mut encoder, &pipeline, mesh)?;
+    encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, 16);
+    queue.submit([encoder.finish()]);
+    fn fence(device: &wgpu::Device, staging: &wgpu::Buffer) -> Result<[f32; 4], String> {
+        let (tx, rx) = std::sync::mpsc::sync_channel(1);
+        staging
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, move |result| {
+                let _ = tx.send(result);
+            });
+        device
+            .poll(wgpu::PollType::Wait)
+            .map_err(|e| e.to_string())?;
+        rx.recv()
+            .map_err(|e| e.to_string())?
+            .map_err(|e| e.to_string())?;
+        let bytes = staging.slice(..).get_mapped_range();
+        let value = *bytemuck::from_bytes::<[f32; 4]>(&bytes);
+        drop(bytes);
+        staging.unmap();
+        Ok(value)
+    }
+    fence(device, &staging)?;
+    println!("RTX STAGE geometry: BVH build passed; dispatch one front-face query and wait");
+    let mut encoder = device.create_command_encoder(&Default::default());
+    {
+        let mut pass = encoder.begin_compute_pass(&Default::default());
+        pass.set_pipeline(&pipeline);
+        pass.set_bind_group(0, &group, &[]);
+        pass.set_bind_group(1, &accel.group, &[]);
+        pass.dispatch_workgroups(1, 1, 1);
+    }
+    encoder.copy_buffer_to_buffer(&output, 0, &staging, 0, 16);
+    queue.submit([encoder.finish()]);
+    let value = fence(device, &staging)?;
+    if value[0] != 1.
+        || (value[1] - 1.).abs() > 0.001
+        || value[2] != receiver as f32
+        || value[3] != 2.
+    {
+        return Err(format!(
+            "RTX front-face query mismatch: {value:?}; expected receiver={receiver}, distance=1, axis=2"
+        ));
+    }
+    println!("RTX STAGE geometry: single hardware query passed: {value:?}");
+    Ok(())
+}

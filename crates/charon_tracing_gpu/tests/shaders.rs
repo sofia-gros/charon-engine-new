@@ -18,6 +18,7 @@ fn portable_and_rtx_wgsl_parse_and_validate_without_an_rtx_device() {
 #[test]
 fn hdr_composite_and_postprocess_validate() {
     for text in [
+        RTX_GEOMETRY_PROBE,
         include_str!("../../charon_lighting_render/src/hdr_composite.wgsl"),
         include_str!("../../charon_render/src/hdr.wgsl"),
     ] {

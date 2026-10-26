@@ -70,3 +70,18 @@ cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion
 ```
 
 このコマンドはadapterの対応表示だけで成功にせず、実デモサイズの材質・形状・反射計算とreadbackを実行します。起動した場合も、通常windowを使った実行確認は別に必要です。
+
+## RTX実機での再失敗と段階診断
+
+ユーザーのRTX 4060で、処理分割後も `--trace-check --lighting rtx --motion --frames 8` が最初のframe完了前にdevice lostで終了しました。前回の対策では解消していません。window・UIを使わなくても再現することは確認できましたが、BVH構築、ray query、輸送シェーダー、GPU timeoutのどれが原因かは未確定です。
+
+診断を次の順に分離しました。各段階の前後をログに出し、GPU readbackで完了を確認してから進みます。
+
+1. 実デモのHDR prism meshでBLAS/TLASだけを構築し、ray dispatchなしで完了を待つ。
+2. HDRの大きなシェーダーから独立した小さなシェーダーで、既知の壁正面へ光線1本を発射。距離・セル番号・法線軸を検証する。
+3. 実デモサイズで直接光、間接光、表面反射・透過をそれぞれ1 sampleで実行する。
+4. 全効果1 sample、次に元の16 samples/updateのRTX品質で実行する。
+
+これに合わせ、0 bounceでも最初の間接光を計算していた処理と、表面予算0でも最初の反射・透過レイを発射していた処理をCPU/GPU双方で修正しました。通常の非ゼロ品質プリセットは維持します。ゼロ予算の診断が効果を正しく無効化する回帰テストを追加しています。
+
+今回の確認は、152テスト、独立probe WGSLを含む静的検証、Pathでの全照明段階のGPU実行、CPU/GPU整合性、RTXなしビルドです。実RTXでの独立probe・各段階の結果は未取得で、クラッシュ解消は未確認です。

@@ -87,6 +87,76 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn Error>> {
             initial.input.geometry.height,
             initial.emitters().len()
         );
+        let device = gpu.device();
+        device
+            .raw_device()
+            .set_device_lost_callback(|reason, message| {
+                eprintln!("GPU DEVICE LOST: {reason:?}: {message}");
+            });
+        let stage = option("--trace-stage")
+            .map(String::as_str)
+            .unwrap_or(if mode == Mode::Rtx { "all" } else { "full" });
+        if ![
+            "all", "geometry", "direct", "diffuse", "surface", "combined", "full",
+        ]
+        .contains(&stage)
+        {
+            return Err(
+                "invalid --trace-stage (all, geometry, direct, diffuse, surface, combined, full)"
+                    .into(),
+            );
+        }
+        if stage == "geometry" || (stage == "all" && mode == Mode::Rtx) {
+            pollster::block_on(gpu.diagnose_rtx_geometry(&initial))?;
+            if stage == "geometry" {
+                return Ok(());
+            }
+        }
+        for isolated in ["direct", "diffuse", "surface", "combined"] {
+            if stage != "all" && stage != isolated {
+                continue;
+            }
+            let mut input = initial.clone();
+            let mut budget = q;
+            budget.samples_per_update = 1;
+            if isolated == "direct" || isolated == "surface" {
+                budget.bounces = 0;
+            }
+            if isolated == "direct" || isolated == "diffuse" {
+                // Keep the source quadrature budget unchanged. Specular=0
+                // suppresses mirrors without changing RTX's 64-light budget.
+                input.surface_quality.transmission_bounces = 0;
+                for m in &mut input.materials {
+                    m.specular = 0.;
+                }
+            }
+            println!(
+                "TRACE STAGE {isolated}: prepare; {budget:?}; surfaces={:?}",
+                input.surface_quality
+            );
+            let mut candidate = pollster::block_on(device.prepare(
+                input.input.geometry,
+                mode,
+                Platform::Pc,
+                budget,
+            ))?;
+            println!("TRACE STAGE {isolated}: submit");
+            candidate.render(&input)?;
+            println!("TRACE STAGE {isolated}: submitted; wait for GPU readback");
+            let result = candidate.readback()?;
+            if result.rgba.iter().flatten().any(|v| !v.is_finite()) {
+                return Err(format!("{isolated}: non-finite output").into());
+            }
+            println!(
+                "TRACE STAGE {isolated}: passed; faces={}; bytes={}",
+                candidate.metrics().faces,
+                candidate.metrics().estimated_bytes
+            );
+            if stage != "all" {
+                return Ok(());
+            }
+        }
+        println!("TRACE STAGE full: original quality; {q:?}");
         let mut tracing = Tracing::new(gpu, 30)?;
         // Submitting changing snapshots must never bypass the 30 Hz compute lane.
         tracing.submit(initial.clone())?;
@@ -100,7 +170,9 @@ pub fn run(args: &[String]) -> Result<(), Box<dyn Error>> {
             let input = build(frame)?;
             tracing.submit(input)?;
             let start = Instant::now();
+            println!("TRACE STAGE full: frame={frame}; submit");
             tracing.tick(Duration::from_secs_f64(1. / 30.))?;
+            println!("TRACE STAGE full: frame={frame}; submitted; wait for GPU readback");
             let field = tracing.tracer.readback()?;
             if field.rgba.iter().flatten().any(|v| !v.is_finite()) {
                 return Err("non-finite cave output".into());
