@@ -368,6 +368,7 @@ impl LegacyTrace {
 /// Portable Lite keeps its original numerical and rendering contract. Path/RTX
 /// own only HDR resources; switching never allocates a hidden legacy tracer.
 pub struct GpuTrace {
+    in_flight: std::sync::Arc<std::sync::atomic::AtomicUsize>,
     geometry: Geometry,
     backend: TraceBackend,
 }
@@ -459,7 +460,11 @@ impl GpuTrace {
                 LegacyTrace::new(device, queue, geometry, mode, platform, quality).await?,
             )
         };
-        Ok(Self { geometry, backend })
+        Ok(Self {
+            geometry,
+            backend,
+            in_flight: Default::default(),
+        })
     }
     pub fn device(&self) -> LightingDevice {
         match &self.backend {
@@ -496,11 +501,30 @@ impl GpuTrace {
             TraceBackend::Hdr(h) => h.reset(),
         }
     }
+    /// Nonblocking readiness for real-time callers. Explicit/offline render calls
+    /// may still enqueue consecutive updates for reproducible sample counts.
+    pub fn is_idle(&self) -> Result<bool, String> {
+        self.device()
+            .raw_device()
+            .poll(wgpu::PollType::Poll)
+            .map_err(|e| e.to_string())?;
+        Ok(self.in_flight.load(std::sync::atomic::Ordering::Acquire) == 0)
+    }
     pub fn render(&mut self, s: &TraceScene) -> Result<bool, String> {
-        match &mut self.backend {
+        use std::sync::atomic::Ordering;
+        let device = self.device();
+        let submitted = match &mut self.backend {
             TraceBackend::Legacy(l) => l.render(s),
             TraceBackend::Hdr(h) => h.render(s),
+        }?;
+        if submitted {
+            self.in_flight.fetch_add(1, Ordering::AcqRel);
+            let pending = self.in_flight.clone();
+            device.raw_queue().on_submitted_work_done(move || {
+                pending.fetch_sub(1, Ordering::AcqRel);
+            });
         }
+        Ok(submitted)
     }
     pub fn readback(&self) -> Result<LightField, String> {
         match &self.backend {

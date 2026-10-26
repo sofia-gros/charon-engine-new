@@ -53,13 +53,30 @@ fn visibility(p:vec2<f32>,q:vec2<f32>)->vec3<f32> {
  let hit=walk(p,v/distance,distance);let target_cell=u32(floor(q.y))*params.extent.x+u32(floor(q.x));
  if hit.distance>=distance-0.001 || (hit.found && hit.index==target_cell) {return hit.trans;}return vec3<f32>(0.);
 }
+// Primary illumination is deterministic even when edits reset a one-sample
+// Lite frame. Only secondary diffuse transport uses Monte Carlo samples.
+fn stable_primary(pos:vec2<f32>,range:f32)->vec3<f32> {
+ var value=vec3<f32>(0.);let count=min(params.budget.w,16u);
+ for(var j=0u;j<count;j++) {
+  let source=emitters[min(u32((f32(j)+0.5)*f32(params.budget.w)/f32(count)),params.budget.w-1u)];
+  let q=vec2<f32>(f32(source%params.extent.x)+0.5,f32(source/params.extent.x)+0.5);let dist=length(q-pos);
+  if dist>0.001 && dist<=range {value+=visibility(pos,q)*optics[source].source.rgb*f32(params.budget.w)/f32(count)*pow(params.sky_falloff.w,dist*params.geometry.z)/(1.+dist);}
+ }
+ if max(params.sky_falloff.x,max(params.sky_falloff.y,params.sky_falloff.z))>0. {
+  for(var j=0u;j<16u;j++) {
+   let a=3.14159265359+(f32(j)+0.5)*3.14159265359/16.;let d=vec2<f32>(cos(a),sin(a));let h=walk(pos,d,range);
+   if h.escaped {value+=h.trans*params.sky_falloff.rgb*pow(params.sky_falloff.w,h.distance*params.geometry.z)/32.;}
+  }
+ }
+ return value;
+}
 fn sample_path(index:u32,sample_index:u32)->vec3<f32> {
  var state=(index*747796405u)^(sample_index*2891336453u)^0x9e3779b9u;if state==0u{state=1u;}
  var pos=vec2<f32>(f32(index%params.extent.x)+0.5,f32(index/params.extent.x)+0.5);
  let angle=random(&state)*6.28318530718;var dir=vec2<f32>(cos(angle),sin(angle));
- var radiance=optics[index].source.rgb;var throughput=vec3<f32>(1.);var range=params.geometry.w/params.geometry.z;
+ var radiance=optics[index].source.rgb+stable_primary(pos,params.geometry.w/params.geometry.z);var throughput=vec3<f32>(1.);var range=params.geometry.w/params.geometry.z;
  for(var bounce=0u;bounce<=params.extent.w;bounce++) {
-  if params.budget.w>0u {
+  if bounce>0u && params.budget.w>0u {
    let source=emitters[min(u32(random(&state)*f32(params.budget.w)),params.budget.w-1u)];
    let q=vec2<f32>(f32(source%params.extent.x)+0.5,f32(source/params.extent.x)+0.5);let dist=length(q-pos);
    if dist>0.001 && dist<=range {
@@ -68,7 +85,7 @@ fn sample_path(index:u32,sample_index:u32)->vec3<f32> {
    }
   }
   let hit=walk(pos,dir,range);throughput*=hit.trans*pow(params.sky_falloff.w,hit.distance*params.geometry.z);
-  if hit.escaped {if dir.y<0.{radiance+=throughput*params.sky_falloff.rgb;}break;}
+  if hit.escaped {if bounce>0u && dir.y<0.{radiance+=throughput*params.sky_falloff.rgb;}break;}
   if !hit.found || bounce==params.extent.w {break;}
   throughput*=optics[hit.index].surface.rgb;range-=hit.distance;if range<0.001{break;}
   pos=hit.pos+hit.normal*0.001;

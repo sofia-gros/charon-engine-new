@@ -396,6 +396,8 @@ dependencies = [
 name = "charon-rt-sample"
 version = "0.1.0"
 dependencies = [
+ "charon-m3-sample",
+ "charon-m4-sample",
  "charon-m5-sample",
  "charon_assets",
  "charon_core",

@@ -87,3 +87,15 @@ cargo run -p charon-tracing-check -- --gallery target/lighting-gallery-rtx --108
 ```
 
 stage-0は拡散のみ、stage-1は自己発光、stage-2は反射・透過を含みます。実装・互換出力・性能計測範囲は [tracing API](../../docs/tracing-api.md) を参照してください。
+
+## 実デモ入力のヘッドレス確認
+
+小さい合成シーンに加えて、実際の洞窟マップ・粒子アダプター・320×192形状・既定品質・計算スケジューラーを実行します。`--motion` は同じ粒子アダプターに移動する砂・炎のスナップショットを渡します。window描画、カメラ操作、画質の目視判定、長時間の安定性試験は別途必要です。
+
+```sh
+cargo run --release -p charon-rt-sample -- --trace-check --lighting path --motion --frames 8
+cargo run --release -p charon-rt-sample -- --trace-check --lighting lite_path --frames 8
+cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion --frames 8
+```
+
+RTXの行はRTX対応実機専用です。対応検出だけでは成功にせず、実デモサイズの出力readbackまで実行します。RTX 4060のdevice lost報告は、開発環境に実機がないため解消未確認です。

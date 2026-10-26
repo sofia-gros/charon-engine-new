@@ -1,5 +1,6 @@
-mod materials;
 mod config;
+mod diagnostics;
+mod materials;
 mod settings;
 use charon_assets::AssetsPlugin;
 use charon_core::App;
@@ -79,6 +80,10 @@ fn renderer(window: Arc<charon_render::winit::window::Window>) -> Result<GpuRend
 }
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<_> = std::env::args().collect();
+    if args.iter().any(|a| a == "--trace-check") {
+        return diagnostics::run(&args);
+    }
+
     let config = args
         .iter()
         .position(|a| a == "--config")

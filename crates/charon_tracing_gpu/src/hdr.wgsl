@@ -1,5 +1,5 @@
 // All positions, prism depths and extinction coefficients use world units.
-struct Params { extent:vec4<u32>, budget:vec4<u32>, geometry:vec4<f32>, sky_falloff:vec4<f32>, ambient:vec4<f32>, quality:vec4<u32> }
+struct Params { extent:vec4<u32>, budget:vec4<u32>, geometry:vec4<f32>, sky_falloff:vec4<f32>, ambient:vec4<f32>, quality:vec4<u32>, work:vec4<u32> }
 struct Optical { transport:vec4<f32>, source:vec4<f32>, diffuse:vec4<f32>, material:vec4<f32>, absorption:vec4<f32>, normal:vec4<f32>, emission:vec4<f32> }
 struct Emitter {index:u32,cdf:f32,pdf:f32,padding:f32}
 struct Result { diffuse:vec4<f32>, specular:vec4<f32>, emission:vec4<f32>, guide:vec4<f32> }
@@ -35,6 +35,8 @@ fn slab(p:vec3<f32>,d:vec3<f32>,lo:vec3<f32>,hi:vec3<f32>)->BoxHit {
  if enter>=EPS{return BoxHit(enter,en,true);}return BoxHit(exit,ex,true);
 }
 fn software_hit(p:vec3<f32>,d:vec3<f32>,range:f32)->Hit {
+ let depth=bitcast<f32>(params.work.y);let end=p+d*range;
+ if min(p.z,end.z)>depth || max(p.z,end.z)<-depth {return empty_hit(end,range);}
  let size=params.geometry.z;var t=0.;let lower=params.geometry.xy;let upper=lower+vec2<f32>(params.extent.xy)*size;
  for(var k=0u;k<2u;k++) {if p[k]<lower[k] || p[k]>=upper[k] {
   if abs(d[k])<1.e-7{return empty_hit(p,range);}
@@ -43,6 +45,8 @@ fn software_hit(p:vec3<f32>,d:vec3<f32>,range:f32)->Hit {
  var cell=vec2<i32>(floor((p.xy+d.xy*t-lower)/size));
  for(var iteration=0u;iteration<params.budget.z;iteration++) {
   if any(cell<vec2<i32>(0)) || any(cell>=vec2<i32>(params.extent.xy)) || t>range {return empty_hit(p+d*range,range);}
+  let z=p.z+d.z*t;let world_depth=bitcast<f32>(params.work.y);
+  if (z>world_depth && d.z>=0.) || (z < -world_depth && d.z<=0.) {return empty_hit(p+d*range,range);}
   let i=u32(cell.y)*params.extent.x+u32(cell.x);let depth=optics[i].material.w;
   let lo=vec3<f32>(lower+vec2<f32>(cell)*size,-depth);let hi=vec3<f32>(lo.xy+vec2<f32>(size),depth);
   var edges=vec2<f32>(1.e20);
@@ -68,6 +72,8 @@ fn intersect(p:vec3<f32>,d:vec3<f32>,range:f32)->Hit {
  if USE_RTX {return hardware_hit(p,d,range);}return software_hit(p,d,range);
 }
 fn attenuation(p:vec3<f32>,d:vec3<f32>,distance:f32,shadow:bool,endpoint_index:u32)->vec3<f32> {
+ let depth=bitcast<f32>(params.work.y);let end=p+d*distance;
+ if min(p.z,end.z)>depth || max(p.z,end.z)<-depth {return vec3<f32>(1.);}
  var t=0.;var trans=vec3<f32>(1.);
  let lower=params.geometry.xy;let upper=lower+vec2<f32>(params.extent.xy)*params.geometry.z;
  for(var k=0u;k<2u;k++){if p[k]<lower[k] || p[k]>=upper[k] {
@@ -76,7 +82,9 @@ fn attenuation(p:vec3<f32>,d:vec3<f32>,distance:f32,shadow:bool,endpoint_index:u
  }}
  for(var step=0u;step<params.budget.z;step++) {
   if t>=distance-EPS{return trans;}
-  let q=p+d*(t+EPS*0.1);let i=cell_index(q);if i==0xffffffffu{return trans;}
+  let q=p+d*(t+EPS*0.1);
+  if (q.z>depth && d.z>=0.) || (q.z < -depth && d.z<=0.) {return trans;}
+  let i=cell_index(q);if i==0xffffffffu{return trans;}
   let xy=vec2<u32>(i%params.extent.x,i/params.extent.x);var next=distance;
   for(var k=0u;k<2u;k++){if abs(d[k])>1.e-7 {
    let edge=params.geometry[k]+(f32(xy[k])+select(0.,1.,d[k]>0.))*params.geometry.z;
@@ -101,6 +109,17 @@ fn hemisphere(n:vec3<f32>,state:ptr<function,u32>)->vec3<f32> {
  let r=sqrt(random(state));let angle=random(state)*6.28318530718;var tangent=vec3<f32>(1.,0.,0.);
  if abs(n.z)<0.9{tangent=unit(vec3<f32>(-n.y,n.x,0.));}
  let b=cross(n,tangent);return unit(tangent*(r*cos(angle))+b*(r*sin(angle))+n*sqrt(1.-r*r));
+}
+fn stable_sky(p:vec3<f32>,n:vec3<f32>)->vec3<f32> {
+ if max(params.sky_falloff.x,max(params.sky_falloff.y,params.sky_falloff.z))==0. {return vec3<f32>(0.);}
+ var sum=vec3<f32>(0.);var rng=0x51ed270bu;
+ for(var j=0u;j<8u;j++) {
+  let d=hemisphere(n,&rng);
+  if p.y+d.y*params.geometry.w<params.geometry.y {
+   sum+=params.sky_falloff.rgb*max(-d.y,0.)*attenuation(p,d,params.geometry.w,true,0xffffffffu);
+  }
+ }
+ return sum/8.;
 }
 fn point(i:u32,state:ptr<function,u32>)->vec3<f32> {
  let jitter_x=random(state);let jitter_y=random(state);
@@ -135,7 +154,7 @@ fn direct(p:vec3<f32>,n:vec3<f32>,state:ptr<function,u32>,range:f32)->vec3<f32> 
 }
 fn stable_direct(p:vec3<f32>,n:vec3<f32>,range:f32,specular:bool,material:Optical)->vec3<f32> {
  if params.budget.w==0u{return vec3<f32>(0.);}
- let limit=select(32u,64u,params.quality.x>1u);let count=min(params.budget.w,limit);let full=params.budget.w<=limit;var sum=vec3<f32>(0.);
+ let limit=select(8u,64u,params.quality.x>1u);let count=min(params.budget.w,limit);let full=params.budget.w<=limit;var sum=vec3<f32>(0.);
  for(var j=0u;j<count;j++) {
   var selected=emitters[j];var probability=1.;
   if !full{selected=choose_light((f32(j)+0.5)/f32(count));probability=selected.pdf*f32(count);}
@@ -210,7 +229,7 @@ fn trace_diffuse(p:vec3<f32>,d:vec3<f32>,state:ptr<function,u32>)->vec3<f32> {
   if remaining<EPS{break;}
   let h=intersect(pos,dir,remaining);
   if !h.found {
-   if pos.y+dir.y*remaining<params.geometry.y{return radiance+throughput*params.sky_falloff.rgb*max(-dir.y,0.);}
+   if reflected>0u && pos.y+dir.y*remaining<params.geometry.y{return radiance+throughput*params.sky_falloff.rgb*max(-dir.y,0.);}
    return radiance;
   }
   if h.index==0xffffffffu{return radiance;}
@@ -239,15 +258,26 @@ fn trace_diffuse(p:vec3<f32>,d:vec3<f32>,state:ptr<function,u32>)->vec3<f32> {
  return radiance;
 }
 @compute @workgroup_size(8,8)
-fn trace(@builtin(global_invocation_id) id:vec3<u32>) {
+fn trace(@builtin(global_invocation_id) local:vec3<u32>) {
+ let id=local+vec3<u32>(0u,params.work.x,0u);
  if any(id.xy>=params.extent.xy){return;}
  let i=id.y*params.extent.x+id.x;let o=optics[i];var hd=history[i];
- if dirty[i]!=0u{hd=vec4<f32>(0.);}
+ if dirty[i]==1u{hd=vec4<f32>(0.);}
+ else if dirty[i]==2u {
+  let retained=min(hd.a,f32((params.quality.w-1u)*params.extent.z));
+  hd=vec4<f32>(hd.rgb*retained/max(hd.a,1.),retained);
+ }
  let dynamic=o.normal.w>0.;let cap=select(params.budget.y,min(params.budget.y,params.quality.w*params.extent.z),dynamic && dirty[i]!=0u);
  let xy=params.geometry.xy+(vec2<f32>(f32(i%params.extent.x),f32(i/params.extent.x))+vec2<f32>(0.5))*params.geometry.z;
  let center_point=vec3<f32>(xy,select(0.,o.material.w+EPS*2.,occupied(i)));
- let current_direct=stable_direct(center_point,o.normal.xyz,params.geometry.w,false,o);
- let spec=stable_surface(i);
+ // Alpha lanes of the internal result buffer cache primary irradiance.
+ // Display atlas alpha is restored to 1 during resolve.
+ var current_direct=vec3<f32>(result[i].diffuse.a,result[i].specular.a,result[i].emission.a);
+ var spec=result[i].specular.rgb;
+ if dirty[i]!=0u {
+  current_direct=stable_direct(center_point,o.normal.xyz,params.geometry.w,false,o)+stable_sky(center_point,o.normal.xyz);
+  spec=stable_surface(i);
+ }
  let sample_count=min(params.extent.z,params.budget.y-u32(hd.a));
  for(var sample=0u;sample<sample_count;sample++) {
   let sample_index=params.budget.x*params.extent.z+sample;var state=(i*747796405u)^(sample_index*2891336453u)^0x9e3779b9u;state=max(state,1u);
@@ -262,7 +292,7 @@ fn trace(@builtin(global_invocation_id) id:vec3<u32>) {
  }
  history[i]=hd;
  let resolved_direct=current_direct;
- result[i]=Result(vec4<f32>(resolved_direct+hd.rgb/max(hd.a,1.)+params.ambient.rgb,1.),vec4<f32>(spec,1.),vec4<f32>(o.emission.rgb,1.),vec4<f32>(o.normal.xyz,o.material.w+select(0.,256.,occupied(i))+select(0.,512.,o.absorption.w>0.)));
+ result[i]=Result(vec4<f32>(resolved_direct+hd.rgb/max(hd.a,1.)+params.ambient.rgb,current_direct.r),vec4<f32>(spec,current_direct.g),vec4<f32>(o.emission.rgb,current_direct.b),vec4<f32>(o.normal.xyz,o.material.w+select(0.,256.,occupied(i))+select(0.,512.,o.absorption.w>0.)));
 }
 // Spatial filtering reads a completed trace dispatch, so neighboring cells never
 // race their current-frame write. Discontinuities are checked along the kernel.
@@ -288,6 +318,6 @@ fn resolve(@builtin(global_invocation_id) id:vec3<u32>) {
  let xy=vec2<i32>(id.xy);let width=i32(params.extent.x);
  textureStore(image,xy,vec4<f32>(min(diffuse/max(total,1.e-6),vec3<f32>(65504.)),1.));
  textureStore(image,xy+vec2<i32>(width,0),vec4<f32>(min(select(spec/max(total,1.e-6),center.specular.rgb,optics[i].material.x<0.25),vec3<f32>(65504.)),1.));
- textureStore(image,xy+vec2<i32>(width*2,0),center.emission);
+ textureStore(image,xy+vec2<i32>(width*2,0),vec4<f32>(center.emission.rgb,1.));
  textureStore(image,xy+vec2<i32>(width*3,0),center.guide);
 }

@@ -25,3 +25,6 @@ charon_lighting_render = {path="../../crates/charon_lighting_render"}
 charon_tilemap = {path="../../crates/charon_tilemap"}
 charon_tilemap_lighting = {path="../../crates/charon_tilemap_lighting"}
 charon_physics = {path="../..", optional=true}
+
+charon-m3-sample = { path = "../m3-world-lab", default-features = false }
+charon-m4-sample = { path = "../m4-cave-light", default-features = false }

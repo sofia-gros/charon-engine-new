@@ -293,3 +293,62 @@ fn rare_indirect_samples_are_bounded_without_clamping_direct_or_emissive_hdr() {
     }
     assert!(exercised, "fixture must contain an indirect outlier");
 }
+
+#[test]
+fn direct_sky_has_no_sample_seed_noise() {
+    let mut s = scene(12, 8, 1.);
+    s.input.settings.sky = [1., 0.96, 0.88];
+    s.input.settings.max_distance = 24.;
+    let q = Quality {
+        bounces: 0,
+        ..Quality::for_mode(Mode::Path)
+    };
+    let first = hdr::sample(&s, q, 18, 0);
+    for seed in 1..16 {
+        let next = hdr::sample(&s, q, 18, seed);
+        assert_eq!(first.direct, next.direct);
+        assert_eq!(next.indirect, [0.; 3]);
+    }
+    assert!(first.direct[0] > 0.);
+}
+
+#[test]
+fn moving_ash_retains_short_indirect_history_in_surrounding_air() {
+    let mut s = scene(16, 8, 1.);
+    s.input.settings.max_distance = 32.;
+    s.materials[50] = Material {
+        dynamic: true,
+        ..Material::STONE
+    };
+    s.input.optics[50] = Optical::OPAQUE;
+    let q = Quality {
+        samples_per_update: 1,
+        max_samples: 32,
+        ..Quality::for_mode(Mode::Path)
+    };
+    let mut acc = hdr::Accumulator::default();
+    for _ in 0..8 {
+        acc.update(&s, q).unwrap();
+    }
+    let old = s.clone();
+    s.materials[50] = Material::AIR;
+    s.input.optics[50] = Optical::AIR;
+    s.materials[66] = Material {
+        dynamic: true,
+        ..Material::STONE
+    };
+    s.input.optics[66] = Optical::OPAQUE;
+    let mask = hdr::invalidation(Some(&old), &s);
+    assert_eq!(mask[50], 1);
+    assert_eq!(mask[66], 1);
+    assert_eq!(mask[20], 2);
+    acc.update(&s, q).unwrap();
+    assert_eq!(acc.counts()[50], 1);
+    assert_eq!(acc.counts()[66], 1);
+    assert_eq!(acc.counts()[20], s.surface_quality.dynamic_history);
+    // Static wall edits still discard all affected history immediately.
+    let old = s.clone();
+    s.materials[90] = Material::STONE;
+    s.input.optics[90] = Optical::OPAQUE;
+    assert!(hdr::invalidation(Some(&old), &s).iter().all(|v| *v == 1));
+}

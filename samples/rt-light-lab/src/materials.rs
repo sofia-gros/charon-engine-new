@@ -8,6 +8,24 @@ pub fn scene(session: &Session, mode: Mode) -> Result<TraceScene, String> {
     let runtime = session.runtime.as_ref().ok_or("runtime missing")?;
     let view = runtime.shared.view.lock().unwrap().clone();
     let player = *runtime.shared.player.lock().unwrap();
+    from_view(
+        &view,
+        player.position,
+        light.scene().settings(),
+        light.torch,
+        light.ore,
+        mode,
+    )
+}
+/// Shared by the interactive demo and the full-size headless regression check.
+pub fn from_view(
+    view: &charon_m3_sample::runtime::View,
+    player: [f32; 2],
+    mut settings: Settings,
+    torch: bool,
+    ore: bool,
+    mode: Mode,
+) -> Result<TraceScene, String> {
     // Build from original tile and particle storage. Resampling the legacy
     // 2/4-unit grid here would permanently preserve oversized particle shadows.
     let geometry = Geometry {
@@ -16,7 +34,6 @@ pub fn scene(session: &Session, mode: Mode) -> Result<TraceScene, String> {
         origin: [0.; 2],
         cell_size: 1.,
     };
-    let mut settings = light.scene().settings();
     settings.ao_strength = 0.;
     let mut input = Scene::new(geometry, settings)?;
     let properties = HashMap::from([
@@ -32,7 +49,7 @@ pub fn scene(session: &Session, mode: Mode) -> Result<TraceScene, String> {
             TileId(3),
             Optical {
                 emission_color: [0.25, 0.8, 1.],
-                emission_strength: if light.ore { 6. } else { 0. },
+                emission_strength: if ore { 6. } else { 0. },
                 ..Optical::OPAQUE
             },
         ),
@@ -54,7 +71,7 @@ pub fn scene(session: &Session, mode: Mode) -> Result<TraceScene, String> {
         if id == TileId(2) {
             material = Material::WATER;
         }
-        if id == TileId(3) && light.ore {
+        if id == TileId(3) && ore {
             material.emission = [1.5, 4.8, 6.];
         }
         for py in y * th..((y + 1) * th).min(geometry.height) {
@@ -165,11 +182,11 @@ pub fn scene(session: &Session, mode: Mode) -> Result<TraceScene, String> {
         }
         input.set_layer(2, particles)?;
     }
-    if light.torch {
+    if torch {
         input.set_light(
             1,
             PointLight {
-                position: [player.position[0] + 3., player.position[1] + 3.],
+                position: [player[0] + 3., player[1] + 3.],
                 color: [1., 0.6, 0.22],
                 intensity: 14.,
             },

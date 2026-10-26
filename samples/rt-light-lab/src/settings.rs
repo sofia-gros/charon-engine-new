@@ -22,6 +22,7 @@ struct Settings {
     status: String,
     checked: bool,
     device: Option<LightingDevice>,
+    last_scene_update: std::time::Instant,
 }
 fn label(choice: Selection) -> &'static str {
     match choice {
@@ -153,6 +154,7 @@ pub fn frame(
             status: probe_error.unwrap_or_else(|| unavailable.unwrap_or("").to_string()),
             checked: false,
             device: Some(device),
+            last_scene_update: std::time::Instant::now() - std::time::Duration::from_secs(1),
         }
     });
     let mut slot = world
@@ -171,7 +173,18 @@ fn draw(
     frame: &mut DrawFrame,
 ) -> Result<(), String> {
     let requested = state.pending.unwrap_or(state.active);
-    let enhanced_scene = if matches!(requested, Selection::Rtx | Selection::Path) {
+    let ready = match slot.active.as_ref() {
+        Some(r) => r.tracer.is_idle()?,
+        None => true,
+    };
+    let refresh = state.pending.is_some()
+        || (ready
+            && state.last_scene_update.elapsed()
+                >= std::time::Duration::from_secs_f64(1. / state.prefs.update_hz as f64));
+    if refresh {
+        state.last_scene_update = std::time::Instant::now();
+    }
+    let enhanced_scene = if refresh && matches!(requested, Selection::Rtx | Selection::Path) {
         world
             .get::<scenes::Session>()
             .filter(|s| s.light.is_some() && s.runtime.is_some())
@@ -180,7 +193,8 @@ fn draw(
     } else {
         None
     };
-    if let Some(session) = world.get_mut::<scenes::Session>()
+    if refresh
+        && let Some(session) = world.get_mut::<scenes::Session>()
         && let Some(light) = session.light.as_mut()
     {
         let selection = state.pending.unwrap_or(state.active);
@@ -472,6 +486,7 @@ mod tests {
                     status: String::new(),
                     checked: false,
                     device: None,
+                    last_scene_update: std::time::Instant::now(),
                 });
                 Ok(Box::new(ScopedScene::new(app, Empty)))
             })

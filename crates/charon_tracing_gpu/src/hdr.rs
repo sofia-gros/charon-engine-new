@@ -10,6 +10,7 @@ struct HdrParams {
     sky_falloff: [f32; 4],
     ambient: [f32; 4],
     quality: [u32; 4],
+    work: [u32; 4],
 }
 #[repr(C)]
 #[derive(Clone, Copy, bytemuck::Pod, bytemuck::Zeroable)]
@@ -170,7 +171,7 @@ impl HdrGpu {
         let storage = wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST;
         let params = buffer(
             "HDR trace parameters",
-            96,
+            112,
             wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
         );
         let optics = buffer("HDR world materials", n * 112, storage);
@@ -387,7 +388,7 @@ impl HdrGpu {
         let settings = s.input.settings;
         let sq = s.surface_quality;
         let count = self.quality.samples_per_update;
-        let params = HdrParams {
+        let mut params = HdrParams {
             extent: [g.width, g.height, count, self.quality.bounces],
             budget: [
                 self.frame,
@@ -408,6 +409,16 @@ impl HdrGpu {
                 settings.ambient[2],
                 sq.indirect_clamp,
             ],
+            work: [
+                0,
+                s.materials
+                    .iter()
+                    .map(|m| m.depth)
+                    .fold(0_f32, f32::max)
+                    .to_bits(),
+                0,
+                0,
+            ],
             quality: [
                 sq.reflection_bounces,
                 sq.transmission_bounces,
@@ -415,8 +426,7 @@ impl HdrGpu {
                 sq.dynamic_history,
             ],
         };
-        self.queue
-            .write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+        #[allow(unused_mut)] // Mutable only when the optional RTX mesh is built.
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -458,27 +468,51 @@ impl HdrGpu {
             }
         }
         let timed = self.timer.as_ref().is_some_and(|t| t.ready());
-        {
-            let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some("HDR direct, indirect, reflection and refraction"),
-                timestamp_writes: if timed {
-                    Some(wgpu::ComputePassTimestampWrites {
-                        query_set: &self.timer.as_ref().unwrap().queries,
-                        beginning_of_pass_write_index: Some(0),
-                        end_of_pass_write_index: None,
-                    })
-                } else {
-                    None
-                },
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_bind_group(0, &self.group, &[]);
-            #[cfg(feature = "rtx")]
-            if let Some(acceleration) = &self.acceleration {
-                pass.set_bind_group(1, &acceleration.group, &[]);
+        self.queue.submit([encoder.finish()]);
+        // Separate submissions bound each expensive dispatch, rather than one
+        // full-world ray-query workload risking the Windows GPU watchdog.
+        const ROWS: u32 = 8;
+        for row in (0..g.height).step_by(ROWS as usize) {
+            params.work[0] = row;
+            self.queue
+                .write_buffer(&self.params, 0, bytemuck::bytes_of(&params));
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("bounded HDR tracing stripe"),
+                });
+            {
+                let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                    label: Some("HDR direct, indirect, reflection and refraction"),
+                    timestamp_writes: if timed && row == 0 {
+                        Some(wgpu::ComputePassTimestampWrites {
+                            query_set: &self.timer.as_ref().unwrap().queries,
+                            beginning_of_pass_write_index: Some(0),
+                            end_of_pass_write_index: None,
+                        })
+                    } else {
+                        None
+                    },
+                });
+                pass.set_pipeline(&self.pipeline);
+                pass.set_bind_group(0, &self.group, &[]);
+                #[cfg(feature = "rtx")]
+                if let Some(acceleration) = &self.acceleration {
+                    pass.set_bind_group(1, &acceleration.group, &[]);
+                }
+                pass.dispatch_workgroups(
+                    g.width.div_ceil(8),
+                    (g.height - row).min(ROWS).div_ceil(8),
+                    1,
+                );
             }
-            pass.dispatch_workgroups(g.width.div_ceil(8), g.height.div_ceil(8), 1);
+            self.queue.submit([encoder.finish()]);
         }
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("HDR completed-world resolve"),
+            });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
                 label: Some("material-aware HDR reconstruction"),

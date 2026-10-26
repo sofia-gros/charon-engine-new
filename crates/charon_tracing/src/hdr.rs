@@ -283,6 +283,29 @@ fn environment(s: &TraceScene, p: V, d: V, range: f32) -> V {
         [0.; 3]
     }
 }
+// Fixed quadrature for the visible sky; sky visibility must not be a binary
+// per-pixel Monte Carlo event in each freshly invalidated particle frame.
+fn stable_sky(s: &TraceScene, p: V, n: V, steps: u32) -> V {
+    if max3(s.input.settings.sky) == 0. {
+        return [0.; 3];
+    }
+    let mut sum = [0.; 3];
+    let mut rng = 0x51ed270b;
+    for _ in 0..8 {
+        let d = hemisphere(n, &mut rng);
+        let env = environment(s, p, d, s.input.settings.max_distance);
+        if max3(env) > 0. {
+            sum = add(
+                sum,
+                mul(
+                    env,
+                    attenuation(s, p, d, s.input.settings.max_distance, steps, true, None),
+                ),
+            );
+        }
+    }
+    scale(sum, 1. / 8.)
+}
 fn hemisphere(n: V, rng: &mut u32) -> V {
     let r = random(rng).sqrt();
     let angle = random(rng) * std::f32::consts::TAU;
@@ -421,7 +444,7 @@ fn stable_direct(
     let limit = if s.surface_quality.reflection_bounces > 1 {
         64
     } else {
-        32
+        8
     };
     let count = emitters.len().min(limit);
     let full = emitters.len() <= limit;
@@ -727,7 +750,14 @@ fn trace_diffuse(
         let Some(h) = intersect(s, pos, dir, remaining, quality.max_steps) else {
             return add(
                 radiance,
-                mul(throughput, environment(s, pos, dir, remaining)),
+                mul(
+                    throughput,
+                    if reflected > 0 {
+                        environment(s, pos, dir, remaining)
+                    } else {
+                        [0.; 3]
+                    },
+                ),
             );
         };
         if h.index == usize::MAX {
@@ -850,6 +880,7 @@ fn sample_with_emitters(
             None,
         )
     };
+    let direct = add(direct, stable_sky(s, center, n, q.max_steps));
     let mut indirect = trace_diffuse(
         s,
         add(p, scale(n, EPS * 2.)),
@@ -913,6 +944,17 @@ pub fn invalidation(old: Option<&TraceScene>, new: &TraceScene) -> Vec<u32> {
         difference[y1 * stride + x0] -= 1;
         difference[y1 * stride + x1] += 1;
     }
+    let local_changed: Vec<bool> = (0..n)
+        .map(|i| {
+            old.input.optics[i] != new.input.optics[i]
+                || old.input.sources[i] != new.input.sources[i]
+                || old.materials[i] != new.materials[i]
+                || old.reflectance[i] != new.reflectance[i]
+        })
+        .collect();
+    let dynamic_only = (0..n)
+        .filter(|&i| local_changed[i])
+        .all(|i| old.materials[i].dynamic || new.materials[i].dynamic);
     let mut mask = vec![0; n];
     for y in 0..h {
         for x in 0..w {
@@ -925,7 +967,14 @@ pub fn invalidation(old: Option<&TraceScene>, new: &TraceScene) -> Vec<u32> {
                 0
             };
             difference[i] += a + b - c;
-            mask[y * w + x] = u32::from(difference[i] > 0);
+            let j = y * w + x;
+            mask[j] = if difference[i] <= 0 {
+                0
+            } else if dynamic_only && !local_changed[j] {
+                2
+            } else {
+                1
+            };
         }
     }
     mask
@@ -967,7 +1016,18 @@ impl Accumulator {
         };
         let emitters = s.emitters();
         for i in 0..n {
-            if dirty[i] != 0 {
+            if dirty[i] == 2 {
+                // Retain a short, exponentially refreshed indirect history in
+                // cells influenced by moving particles. Direct/surface terms
+                // are always current; changed receiver cells reset immediately.
+                let retained = self.counts[i]
+                    .min((s.surface_quality.dynamic_history - 1) * q.samples_per_update);
+                self.indirect[i] = scale(
+                    self.indirect[i],
+                    retained as f32 / self.counts[i].max(1) as f32,
+                );
+                self.counts[i] = retained;
+            } else if dirty[i] == 1 {
                 self.counts[i] = 0;
                 self.indirect[i] = [0.; 3];
             }
@@ -1017,6 +1077,7 @@ impl Accumulator {
                 s.input.settings.max_distance,
                 None,
             );
+            let direct = add(direct, stable_sky(s, p, m.normal, q.max_steps));
             f.diffuse[i] = add(add(direct, indirect), s.input.settings.ambient);
             f.specular[i] = stable_surface(s, q, i, &emitters);
         }

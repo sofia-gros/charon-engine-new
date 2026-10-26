@@ -114,6 +114,51 @@ fn visible(scene: &TraceScene, p: [f32; 2], q: [f32; 2], steps: u32) -> [f32; 3]
         [0.; 3]
     }
 }
+fn stable_primary(
+    scene: &TraceScene,
+    quality: Quality,
+    emitters: &[u32],
+    pos: [f32; 2],
+    range: f32,
+) -> [f32; 3] {
+    let g = scene.input.geometry;
+    let settings = scene.input.settings;
+    let mut value = [0.; 3];
+    let count = emitters.len().min(16);
+    for j in 0..count {
+        let source = emitters[(((j as f32 + 0.5) * emitters.len() as f32 / count as f32) as usize)
+            .min(emitters.len() - 1)] as usize;
+        let q = [
+            (source as u32 % g.width) as f32 + 0.5,
+            (source as u32 / g.width) as f32 + 0.5,
+        ];
+        let dist = (q[0] - pos[0]).hypot(q[1] - pos[1]);
+        if dist > 0.001 && dist <= range {
+            let trans = visible(scene, pos, q, quality.max_steps);
+            let weight = emitters.len() as f32 / count as f32
+                * settings.falloff_per_unit.powf(dist * g.cell_size)
+                / (1. + dist);
+            for c in 0..3 {
+                value[c] += trans[c] * scene.input.sources[source][c] * weight;
+            }
+        }
+    }
+    if settings.sky.iter().any(|v| *v > 0.) {
+        for j in 0..16 {
+            let a = std::f32::consts::PI + (j as f32 + 0.5) * std::f32::consts::PI / 16.;
+            let h = walk(scene, pos, [a.cos(), a.sin()], range, quality.max_steps);
+            if h.escaped {
+                for c in 0..3 {
+                    value[c] += h.trans[c]
+                        * settings.sky[c]
+                        * settings.falloff_per_unit.powf(h.distance * g.cell_size)
+                        / 32.;
+                }
+            }
+        }
+    }
+    value
+}
 pub(crate) fn sample(
     scene: &TraceScene,
     quality: Quality,
@@ -132,11 +177,18 @@ pub(crate) fn sample(
     ];
     let angle = random(&mut rng) * std::f32::consts::TAU;
     let mut dir = [angle.cos(), angle.sin()];
-    let mut radiance = scene.input.sources[index as usize];
+    let primary = stable_primary(
+        scene,
+        quality,
+        emitters,
+        pos,
+        scene.input.settings.max_distance / g.cell_size,
+    );
+    let mut radiance = std::array::from_fn(|c| scene.input.sources[index as usize][c] + primary[c]);
     let mut throughput = [1.; 3];
     let mut range = scene.input.settings.max_distance / g.cell_size;
     for bounce in 0..=quality.bounces {
-        if !emitters.is_empty() {
+        if bounce > 0 && !emitters.is_empty() {
             let source = emitters
                 [((random(&mut rng) * emitters.len() as f32) as usize).min(emitters.len() - 1)]
                 as usize;
@@ -170,7 +222,7 @@ pub(crate) fn sample(
                     .powf(hit.distance * g.cell_size);
         }
         if hit.escaped {
-            if dir[1] < 0. {
+            if bounce > 0 && dir[1] < 0. {
                 for c in 0..3 {
                     radiance[c] += throughput[c] * scene.input.settings.sky[c];
                 }

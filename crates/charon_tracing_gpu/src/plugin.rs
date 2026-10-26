@@ -25,13 +25,6 @@ impl Tracing {
         if input.input.geometry != self.tracer.geometry {
             return Err("trace input geometry mismatch".into());
         }
-        if self
-            .input
-            .as_ref()
-            .is_none_or(|old| !old.same_input(&input))
-        {
-            self.tracer.render(&input)?;
-        }
         self.input = Some(input);
         Ok(())
     }
@@ -41,7 +34,9 @@ impl Tracing {
         if self.elapsed >= interval {
             self.elapsed =
                 Duration::from_nanos((self.elapsed.as_nanos() % interval.as_nanos()) as u64);
-            if let Some(input) = &self.input {
+            if self.tracer.is_idle()?
+                && let Some(input) = &self.input
+            {
                 self.tracer.render(input)?;
             }
         }
@@ -92,9 +87,11 @@ impl TracingSlot {
         device
             .raw_device()
             .push_error_scope(wgpu::ErrorFilter::Validation);
+        candidate.submit(scene.clone())?;
         let checked = candidate
-            .submit(scene)
-            .and_then(|()| candidate.tracer.readback())
+            .tracer
+            .render(&scene)
+            .and_then(|_| candidate.tracer.readback())
             .and_then(|field| {
                 if field.rgba.iter().flatten().any(|v| !v.is_finite()) {
                     Err("first tracing dispatch produced non-finite output".into())

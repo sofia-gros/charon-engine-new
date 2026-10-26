@@ -44,3 +44,29 @@ cargo run --release -p charon-rt-sample -- --config samples/rt-light-lab/config/
 `--gallery target/lighting-noise-fix --1080p --noise-check` で8 samples/updateの最初の2フレームを保存します。GPUで反射・透過のフレーム間最大差0を確認します。間接色移りの近似についてはtracing APIを参照してください。修正前の参考画像は `target/lighting-before-noise-fix` に保持しています。
 
 修正後の確認：全workspace 148テスト成功・警告なし、Liteビルド成功、Path CPU/GPU比較成功（互換出力の最大差約3.26e-5）。8 samples/updateの反射・透過のフレーム間最大差はGPUで0でした。画像は `target/lighting-noise-fix/low-samples-0.png` と `low-samples-1.png` です。RTX実機の結果ではありません。
+
+## 実デモでのdevice lost・低サンプルノイズ報告への対処
+
+RTX 4060でPath約59.6 ms、動的場面の強いノイズ、RTX起動時の `Parent device is lost` が報告されました。従来の小さい合成シーンと静止反射の検証では、これらの実デモの品質・安定性を保証できていませんでした。**RTX 4060での起動・速度・クラッシュ解消は依然として未確認です。** `Device::poll` のdevice lostはGPU喪失の通知であり、原因がwatchdogかドライバーかをこのログだけでは断定できません。releaseの `panic=abort` により、panic時はプロセスが異常終了します。
+
+今回の変更：
+
+- `submit` の即時計算をやめ、計算HzとGPU完了を確認した `tick` で最新入力だけを投入。
+- HDR dispatchを8行ずつのsubmissionに分割。形状解像度と総サンプル数は維持。
+- 表面の全奥行きより外に出て戻らないレイの探索・透過計算を省略。
+- 変化していない直接光・反射をキャッシュ。デモの材質構築も照明更新頻度に制限。
+- 空の直接光を固定積分。Liteは光源の直接光も固定積分。
+- 動的粒子の周囲では間接光の履歴を短く保持。変化したセルと静的壁編集の影響範囲は即時破棄。間接光には短い応答遅れが残る近似。
+- Pathの固定光源サンプル上限を32から8へ削減。RTXは64を維持。
+
+今回確認した範囲：全workspace 151テスト成功、RTXなしビルド成功、Path CPU/GPU数値比較（互換出力の最大差約3.26e-5）、WGSL検証、実デモのマップ・材質アダプターを使ったPath/LiteのGPU実行、動く砂・炎を与えたPath 4フレームの有限HDR出力、静止反射・透過のフレーム間最大差0。
+
+実デモPathは320×192・65光源、動的入力では66光源です。SwiftShaderで静止初回約3.25秒、次の更新約1.30～1.36秒、動的更新約2.95～3.15秒を計測しました。これは**ソフトウェアGPUの検証値**であり、RTX 4060のFPS改善を示す数値ではありません。windowの表示・編集・モード切替と、RTX実機での長時間試験は未確認です。合成シーンの今回の比較画像は `target/lighting-runtime-fix/low-samples-{0,1}.png` です。
+
+実機用の追加コマンド：
+
+```sh
+cargo run --release -p charon-rt-sample -- --trace-check --lighting rtx --motion --frames 8
+```
+
+このコマンドはadapterの対応表示だけで成功にせず、実デモサイズの材質・形状・反射計算とreadbackを実行します。起動した場合も、通常windowを使った実行確認は別に必要です。

@@ -194,3 +194,40 @@ fn tilemap_and_particle_layers_both_block_the_same_rays() {
         [1.; 3]
     );
 }
+
+#[test]
+fn lite_primary_sky_is_stable_without_temporal_history() {
+    use charon_tracing::charon_lighting::*;
+    let s = charon_tracing::TraceScene::new(
+        Scene::new(
+            Geometry {
+                width: 8,
+                height: 8,
+                origin: [0.; 2],
+                cell_size: 1.,
+            },
+            Settings {
+                sky: [1.; 3],
+                max_distance: 20.,
+                ambient: [0.; 3],
+                ..Default::default()
+            },
+        )
+        .unwrap()
+        .prepare(),
+    )
+    .unwrap();
+    let q = charon_tracing::Quality {
+        bounces: 0,
+        ..charon_tracing::Quality::for_mode(charon_tracing::Mode::LitePath)
+    };
+    let mut acc = charon_tracing::Accumulator::default();
+    let first = acc.update(&s, q).unwrap();
+    assert!(first.rgba[20][0] > 0.);
+    for _ in 1..16 {
+        let next = acc.update(&s, q).unwrap();
+        for (a, b) in first.rgba.iter().flatten().zip(next.rgba.iter().flatten()) {
+            assert!((a - b).abs() < 1e-6);
+        }
+    }
+}
