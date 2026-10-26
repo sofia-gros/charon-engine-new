@@ -143,11 +143,13 @@ pub fn frame(
         // Passes execute in registration order. Reappend the demo overlay after
         // the newly created world's composition pass, including scene restarts.
         renderer.remove_pass(DEMO_UI_PASS);
-        pollster::block_on(renderer.register_pass(
-            DEMO_UI_PASS,
-            &charon_assets::ShaderSource(charon_render::DEFAULT_SHADER.into()),
-            [1., 0., 0., 0.],
-        ))?;
+        if world.get::<scenes::Session>().is_some() {
+            pollster::block_on(renderer.register_pass(
+                DEMO_UI_PASS,
+                &charon_assets::ShaderSource(charon_render::DEFAULT_SHADER.into()),
+                [1., 0., 0., 0.],
+            ))?;
+        }
     }
     let mut state = world.remove::<Settings>().unwrap_or_else(|| {
         let prefs = preferences();
@@ -362,6 +364,11 @@ fn draw(
         }
         state.status = "APPLIES WHEN GAME STARTS".into();
     }
+    let ui_pass = if world.get::<scenes::Session>().is_some() {
+        DEMO_UI_PASS
+    } else {
+        PassId(0)
+    };
     let ui_start = frame.quads.len();
     ui::text(
         frame,
@@ -447,7 +454,7 @@ fn draw(
         }
     }
     for quad in &mut frame.quads[ui_start..] {
-        quad.pass = DEMO_UI_PASS;
+        quad.pass = ui_pass;
     }
     Ok(())
 }
