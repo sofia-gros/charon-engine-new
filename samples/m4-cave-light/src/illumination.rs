@@ -9,6 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 pub struct Illumination {
+    surface_composite: bool,
     scene: Scene,
     gpu: GpuLighting,
     tiles: charon_tilemap_lighting::TilemapInput,
@@ -54,6 +55,7 @@ impl Illumination {
             image,
         ))?;
         Ok(Self {
+            surface_composite: false,
             scene,
             gpu,
             tiles: charon_tilemap_lighting::TilemapInput::new(geometry, [0., 0.])?,
@@ -189,6 +191,31 @@ impl Illumination {
             }
             self.last_revision = Some(self.scene.revision());
             self.scene.acknowledge(self.scene.revision());
+        }
+        Ok(())
+    }
+    pub fn set_surface_composite(
+        &mut self,
+        renderer: &mut GpuRenderer,
+        hdr: bool,
+    ) -> Result<(), String> {
+        if self.surface_composite != hdr {
+            pollster::block_on(
+                renderer.register_sampled_pass(
+                    self.pass,
+                    &ShaderSource(
+                        if hdr {
+                            charon_lighting_render::HDR_SHADER
+                        } else {
+                            charon_lighting_render::SHADER
+                        }
+                        .into(),
+                    ),
+                    renderer.parameters(self.pass)?,
+                    self.image,
+                ),
+            )?;
+            self.surface_composite = hdr;
         }
         Ok(())
     }

@@ -1,5 +1,8 @@
+#[path = "hdr.rs"]
+mod hdr;
 use super::*;
 use charon_assets::{Image, ShaderSource};
+pub use hdr::{HdrPost, HdrSettings};
 use std::{collections::HashMap, sync::Arc};
 use wgpu::util::DeviceExt;
 use winit::window::Window;
@@ -19,11 +22,14 @@ struct GpuTexture {
 struct Pass {
     id: PassId,
     pipeline: wgpu::RenderPipeline,
+    hdr_pipeline: wgpu::RenderPipeline,
     uniform: wgpu::Buffer,
     bind: wgpu::BindGroup,
     sampled: Option<TextureId>,
+    parameters: [f32; 4],
 }
 pub struct GpuRenderer {
+    hdr: Option<hdr::HdrPost>,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -87,6 +93,14 @@ impl GpuRenderer {
         let mut config = surface
             .get_default_config(&adapter, size.width.max(1), size.height.max(1))
             .ok_or("surface has no compatible format")?;
+        if let Some(format) = surface
+            .get_capabilities(&adapter)
+            .formats
+            .into_iter()
+            .find(|f| f.is_srgb())
+        {
+            config.format = format;
+        }
         config.present_mode = wgpu::PresentMode::AutoNoVsync;
         surface.configure(&device, &config);
         let texture_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -128,6 +142,7 @@ impl GpuRenderer {
             ..Default::default()
         });
         let mut renderer = Self {
+            hdr: None,
             surface,
             device,
             queue,
@@ -207,10 +222,11 @@ impl GpuRenderer {
                     | wgpu::TextureFormat::Rgba8UnormSrgb
                     | wgpu::TextureFormat::Bgra8Unorm
                     | wgpu::TextureFormat::Bgra8UnormSrgb
+                    | wgpu::TextureFormat::Rgba16Float
             )
         {
             return Err(
-                "external image must be a sampleable RGBA8/BGRA8 2D texture, ID 0 is reserved"
+                "external image must be a sampleable RGBA8/BGRA8/RGBA16F 2D texture, ID 0 is reserved"
                     .into(),
             );
         }
@@ -311,6 +327,11 @@ impl GpuRenderer {
    fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs_main"),compilation_options:Default::default(),targets:&[Some(wgpu::ColorTargetState{format:self.config.format,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
    primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview:None,cache:None,
   });
+        let hdr_pipeline=self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor{
+   label:Some("quad pass"),layout:Some(&layout),vertex:wgpu::VertexState{module:&shader,entry_point:Some("vs_main"),compilation_options:Default::default(),buffers:&[wgpu::VertexBufferLayout{array_stride:32,step_mode:wgpu::VertexStepMode::Vertex,attributes:&wgpu::vertex_attr_array![0=>Float32x2,1=>Float32x2,2=>Float32x4]}]},
+   fragment:Some(wgpu::FragmentState{module:&shader,entry_point:Some("fs_main"),compilation_options:Default::default(),targets:&[Some(wgpu::ColorTargetState{format:wgpu::TextureFormat::Rgba16Float,blend:Some(wgpu::BlendState::ALPHA_BLENDING),write_mask:wgpu::ColorWrites::ALL})]}),
+   primitive:Default::default(),depth_stencil:None,multisample:Default::default(),multiview:None,cache:None,
+  });
         if let Some(error) = self.device.pop_error_scope().await {
             return Err(format!("shader pass {}: {error}", id.0));
         }
@@ -332,9 +353,11 @@ impl GpuRenderer {
         let pass = Pass {
             id,
             pipeline,
+            hdr_pipeline,
             uniform,
             bind,
             sampled,
+            parameters,
         };
         if let Some(old) = self.passes.iter_mut().find(|p| p.id == id) {
             *old = pass;
@@ -343,15 +366,23 @@ impl GpuRenderer {
         }
         Ok(())
     }
+    pub fn parameters(&self, id: PassId) -> Result<[f32; 4], String> {
+        self.passes
+            .iter()
+            .find(|p| p.id == id)
+            .map(|p| p.parameters)
+            .ok_or("unknown pass".into())
+    }
     pub fn set_parameters(&mut self, id: PassId, parameters: [f32; 4]) -> Result<(), String> {
         if parameters.iter().any(|v| !v.is_finite()) {
             return Err("non-finite shader parameter".into());
         }
         let pass = self
             .passes
-            .iter()
+            .iter_mut()
             .find(|p| p.id == id)
             .ok_or("unknown pass")?;
+        pass.parameters = parameters;
         self.queue
             .write_buffer(&pass.uniform, 0, bytemuck::cast_slice(&parameters));
         Ok(())
@@ -451,6 +482,37 @@ impl GpuRenderer {
         );
         Ok(())
     }
+    /// Enable HDR for world layers; higher layers are drawn after tone mapping.
+    /// Passing None restores the original render path and releases HDR targets.
+    pub fn set_hdr(&mut self, settings: Option<HdrSettings>) -> Result<(), String> {
+        if let Some(settings) = settings {
+            if !settings.exposure.is_finite()
+                || settings.exposure <= 0.
+                || !settings.bloom_strength.is_finite()
+                || !(0. ..=4.).contains(&settings.bloom_strength)
+                || !settings.bloom_threshold.is_finite()
+                || settings.bloom_threshold < 0.
+            {
+                return Err("invalid HDR settings".into());
+            }
+            let size = [self.config.width, self.config.height];
+            if let Some(hdr) = &mut self.hdr {
+                if hdr.size == size {
+                    hdr.update(&self.queue, settings);
+                    return Ok(());
+                }
+            }
+            self.hdr = Some(hdr::HdrPost::new(
+                &self.device,
+                size,
+                self.config.format,
+                settings,
+            ));
+        } else {
+            self.hdr = None;
+        }
+        Ok(())
+    }
     pub fn resize(&mut self, width: u32, height: u32) -> Result<(), String> {
         if width == 0 || height == 0 {
             return Ok(());
@@ -462,6 +524,9 @@ impl GpuRenderer {
         self.config.width = width;
         self.config.height = height;
         self.surface.configure(&self.device, &self.config);
+        if let Some(settings) = self.hdr.as_ref().map(|h| h.settings) {
+            self.set_hdr(Some(settings))?;
+        }
         Ok(())
     }
 }
@@ -528,20 +593,33 @@ impl Backend for GpuRenderer {
             });
         let view = output.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
-        {
+        let stages = if self.hdr.is_some() { 2 } else { 1 };
+        for stage in 0..stages {
+            if stage == 1 {
+                self.hdr.as_ref().unwrap().encode(&mut encoder, &view);
+            }
+            let target = if stage == 0 {
+                self.hdr.as_ref().map_or(&view, |h| &h.scene)
+            } else {
+                &view
+            };
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("registered passes"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                    view: &view,
+                    view: target,
                     depth_slice: None,
                     resolve_target: None,
                     ops: wgpu::Operations {
-                        load: wgpu::LoadOp::Clear(wgpu::Color {
-                            r: frame.clear[0],
-                            g: frame.clear[1],
-                            b: frame.clear[2],
-                            a: frame.clear[3],
-                        }),
+                        load: if stage == 1 {
+                            wgpu::LoadOp::Load
+                        } else {
+                            wgpu::LoadOp::Clear(wgpu::Color {
+                                r: frame.clear[0],
+                                g: frame.clear[1],
+                                b: frame.clear[2],
+                                a: frame.clear[3],
+                            })
+                        },
                         store: wgpu::StoreOp::Store,
                     },
                 })],
@@ -572,12 +650,21 @@ impl Backend for GpuRenderer {
                     let texture = self.textures.get(&id).ok_or("sampled pass image removed")?;
                     pass.set_bind_group(2, &texture.bind, &[]);
                 }
-                pass.set_pipeline(&pipeline.pipeline);
+                pass.set_pipeline(if self.hdr.is_some() && stage == 0 {
+                    &pipeline.hdr_pipeline
+                } else {
+                    &pipeline.pipeline
+                });
                 pass.set_bind_group(1, &pipeline.bind, &[]);
 
                 let mut i = 0;
                 while i < ordered.len() {
-                    if ordered[i].pass != pipeline.id {
+                    let in_stage = |q: &&Quad| {
+                        self.hdr
+                            .as_ref()
+                            .is_none_or(|h| (q.layer <= h.settings.max_world_layer) == (stage == 0))
+                    };
+                    if ordered[i].pass != pipeline.id || !in_stage(&ordered[i]) {
                         i += 1;
                         continue;
                     }
@@ -587,6 +674,7 @@ impl Backend for GpuRenderer {
                     while i < ordered.len()
                         && ordered[i].pass == pipeline.id
                         && ordered[i].texture == texture
+                        && in_stage(&ordered[i])
                     {
                         i += 1;
                     }

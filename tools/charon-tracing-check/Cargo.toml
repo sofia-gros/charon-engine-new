@@ -8,3 +8,8 @@ publish = false
 charon_tracing_gpu = { path = "../../crates/charon_tracing_gpu", features = ["rtx","plugin"] }
 charon_tracing = { path = "../../crates/charon_tracing" }
 pollster = "0.4"
+
+charon_render = {path="../../crates/charon_render",features=["gpu"]}
+charon_lighting_render = {path="../../crates/charon_lighting_render"}
+bytemuck = {version="1",features=["derive"]}
+image = {version="0.25",default-features=false,features=["png"]}

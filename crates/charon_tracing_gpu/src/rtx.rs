@@ -69,6 +69,102 @@ pub fn mesh(scene: &TraceScene) -> Result<BoundaryMesh, String> {
     }
     Ok((vertices, faces))
 }
+/// Complete thin prisms for the HDR renderer, including front/back surfaces and
+/// air/water interfaces. Shared faces of the same medium are omitted.
+pub fn surface_mesh(scene: &TraceScene) -> Result<BoundaryMesh, String> {
+    let g = scene.input.geometry;
+    let mut vertices = Vec::new();
+    let mut faces = Vec::new();
+    let occupied = |i: usize| {
+        scene.input.optics[i].opacity >= 0.999
+            || scene.materials[i].dielectric
+            || scene.materials[i].emission.iter().any(|v| *v > 0.)
+    };
+    let mut face =
+        |i: usize, axis: usize, sign: u32, lo: [f32; 3], hi: [f32; 3]| -> Result<(), String> {
+            if faces.len() >= 524288 {
+                return Err("HDR prism mesh exceeds 524288 faces".into());
+            }
+            let a = (axis + 1) % 3;
+            let b = (axis + 2) % 3;
+            let mut corners = [lo; 4];
+            for c in &mut corners {
+                c[axis] = if sign == 0 { lo[axis] } else { hi[axis] };
+            }
+            corners[1][a] = hi[a];
+            corners[2][a] = hi[a];
+            corners[2][b] = hi[b];
+            corners[3][b] = hi[b];
+            vertices.extend_from_slice(&[
+                corners[0], corners[1], corners[2], corners[0], corners[2], corners[3],
+            ]);
+            faces.push([i as u32, axis as u32, sign, 0]);
+            Ok(())
+        };
+    for y in 0..g.height {
+        for x in 0..g.width {
+            let i = (y * g.width + x) as usize;
+            if !occupied(i) {
+                continue;
+            }
+            let m = scene.materials[i];
+            let lo = [
+                g.origin[0] + x as f32 * g.cell_size,
+                g.origin[1] + y as f32 * g.cell_size,
+                -m.depth,
+            ];
+            let hi = [lo[0] + g.cell_size, lo[1] + g.cell_size, m.depth];
+            for axis in 0..3 {
+                for sign in 0..2 {
+                    if axis < 2 {
+                        let nx = x as i32
+                            + if axis == 0 {
+                                if sign == 0 { -1 } else { 1 }
+                            } else {
+                                0
+                            };
+                        let ny = y as i32
+                            + if axis == 1 {
+                                if sign == 0 { -1 } else { 1 }
+                            } else {
+                                0
+                            };
+                        if nx >= 0 && ny >= 0 && nx < g.width as i32 && ny < g.height as i32 {
+                            let j = (ny as u32 * g.width + nx as u32) as usize;
+                            let other = scene.materials[j];
+                            let same = (scene.input.optics[i].opacity >= 0.999)
+                                == (scene.input.optics[j].opacity >= 0.999)
+                                && m.dielectric == other.dielectric
+                                && m.ior == other.ior;
+                            // Opaque geometry owns a solid/dielectric shared interface.
+                            let opaque_neighbor = scene.input.optics[j].opacity >= 0.999
+                                && scene.input.optics[i].opacity < 0.999;
+                            if occupied(j) && (same || opaque_neighbor) {
+                                if other.depth >= m.depth {
+                                    continue;
+                                }
+                                let mut bottom_hi = hi;
+                                bottom_hi[2] = -other.depth;
+                                face(i, axis, sign, lo, bottom_hi)?;
+                                let mut top_lo = lo;
+                                top_lo[2] = other.depth;
+                                face(i, axis, sign, top_lo, hi)?;
+                                continue;
+                            }
+                        }
+                    }
+                    face(i, axis, sign, lo, hi)?;
+                }
+            }
+        }
+    }
+    if vertices.is_empty() {
+        vertices = vec![[-100000.; 3]; 6];
+        faces.push([0; 4]);
+    }
+    Ok((vertices, faces))
+}
+
 impl Acceleration {
     pub fn build(
         device: &wgpu::Device,
@@ -76,7 +172,16 @@ impl Acceleration {
         scene: &TraceScene,
         pipeline: &wgpu::ComputePipeline,
     ) -> Result<Self, String> {
-        let (vertices, faces) = mesh(scene)?;
+        let mesh = mesh(scene)?;
+        Self::build_mesh(device, encoder, pipeline, mesh)
+    }
+    pub fn build_mesh(
+        device: &wgpu::Device,
+        encoder: &mut wgpu::CommandEncoder,
+        pipeline: &wgpu::ComputePipeline,
+        mesh: BoundaryMesh,
+    ) -> Result<Self, String> {
+        let (vertices, faces) = mesh;
         let limits = device.limits();
         if limits.max_blas_primitive_count < faces.len() as u32 * 2
             || limits.max_blas_geometry_count < 1
@@ -271,5 +376,37 @@ mod tests {
         let (vertices, faces) = mesh(&TraceScene::new(scene.prepare()).unwrap()).unwrap();
         assert_eq!(faces.len(), 6);
         assert_eq!(vertices.len(), 36);
+    }
+    #[test]
+    fn hdr_prisms_include_front_back_and_remove_internal_water_faces() {
+        use charon_tracing::charon_lighting::*;
+        let g = Geometry {
+            width: 2,
+            height: 1,
+            origin: [-4., 7.],
+            cell_size: 0.5,
+        };
+        let mut s = TraceScene::new(Scene::new(g, Settings::default()).unwrap().prepare()).unwrap();
+        s.materials.fill(charon_tracing::Material::WATER);
+        let (v, f) = surface_mesh(&s).unwrap();
+        assert_eq!(f.len(), 10);
+        assert_eq!(v.len(), 60);
+        assert_eq!(f.iter().filter(|f| f[1] == 2).count(), 4);
+        assert!(
+            v.iter()
+                .all(|v| v[0] >= -4. && v[0] <= -3. && v[1] >= 7. && v[1] <= 7.5)
+        );
+        s.materials[0].depth = 4.;
+        let (v, f) = surface_mesh(&s).unwrap();
+        // The taller prism exposes two z bands above/below its neighbor.
+        let shared: Vec<_> = f
+            .iter()
+            .enumerate()
+            .filter(|(_, f)| f[1] == 0 && f[0] == 1 && f[2] == 0)
+            .collect();
+        assert_eq!(shared.len(), 2);
+        for (j, _) in shared {
+            assert!(v[j * 6..j * 6 + 6].iter().all(|p| p[2].abs() >= 4.));
+        }
     }
 }

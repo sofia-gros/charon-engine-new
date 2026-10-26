@@ -1,9 +1,12 @@
-//! 2D diffuse path tracing for optical grids. No renderer, physical world, or GPU.
-//! Ray distance, reflectance and stochastic budgets are explicit. This is a 2D
-//! lighting estimator, not a 3D PBR material/geometry renderer.
+//! Optical grids, renderer-only prism materials and portable CPU references.
+//! Lite retains the original 2D diffuse estimator. HDR Path/RTX share thin
+//! extruded surface geometry; game physics and collision remain strictly 2D.
 pub use charon_lighting;
 use charon_lighting::{LightField, Prepared, ambient_occlusion};
+mod material;
 mod reference;
+pub use material::{HdrField, Material, SurfaceQuality};
+pub mod hdr;
 pub use reference::{solve_sample, visibility};
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Platform {
@@ -37,6 +40,12 @@ pub struct Quality {
 impl Quality {
     pub fn for_mode(mode: Mode) -> Self {
         match mode {
+            Mode::Rtx => Self {
+                samples_per_update: 16,
+                bounces: 4,
+                max_steps: 512,
+                max_samples: 4096,
+            },
             Mode::LitePath => Self {
                 samples_per_update: 1,
                 bounces: 1,
@@ -78,12 +87,30 @@ impl Quality {
 pub struct TraceScene {
     pub input: Prepared,
     pub reflectance: Vec<[f32; 3]>,
+    pub materials: Vec<Material>,
+    pub surface_quality: SurfaceQuality,
 }
 impl TraceScene {
     pub fn new(input: Prepared) -> Result<Self, String> {
         input.validate()?;
         let n = input.geometry.len();
         Ok(Self {
+            materials: input
+                .optics
+                .iter()
+                .map(|o| {
+                    let mut m = if o.opacity >= 0.999 {
+                        Material::STONE
+                    } else if o.opacity > 0. && o.transmission != [1.; 3] {
+                        Material::WATER
+                    } else {
+                        Material::AIR
+                    };
+                    m.emission = o.emission();
+                    m
+                })
+                .collect(),
+            surface_quality: SurfaceQuality::for_mode(Mode::Path),
             input,
             reflectance: vec![[0.65; 3]; n],
         })
@@ -130,6 +157,13 @@ impl TraceScene {
     }
     pub fn validate(&self) -> Result<(), String> {
         self.input.validate()?;
+        self.surface_quality.validate()?;
+        if self.materials.len() != self.input.geometry.len() {
+            return Err("material grid length mismatch".into());
+        }
+        for m in &self.materials {
+            m.validate()?;
+        }
         if self.reflectance.len() != self.input.geometry.len()
             || self
                 .reflectance
@@ -149,13 +183,23 @@ impl TraceScene {
             && self.input.sources == other.input.sources
             && self.input.revision == other.input.revision
             && self.reflectance == other.reflectance
+            && self.materials == other.materials
+            && self.surface_quality == other.surface_quality
+    }
+    /// Shared source radiance for lighting and material emission. Point lights
+    /// may add illumination without making the underlying surface emissive.
+    pub fn radiance(&self, index: usize) -> [f32; 3] {
+        std::array::from_fn(|k| self.input.sources[index][k].max(self.materials[index].emission[k]))
     }
     pub fn emitters(&self) -> Vec<u32> {
         self.input
             .sources
             .iter()
             .enumerate()
-            .filter_map(|(i, c)| c.iter().any(|v| *v > 0.).then_some(i as u32))
+            .filter_map(|(i, c)| {
+                (c.iter().any(|v| *v > 0.) || self.materials[i].emission.iter().any(|v| *v > 0.))
+                    .then_some(i as u32)
+            })
             .collect()
     }
 }

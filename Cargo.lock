@@ -400,8 +400,12 @@ dependencies = [
  "charon_assets",
  "charon_core",
  "charon_input",
+ "charon_lighting_render",
+ "charon_physics",
  "charon_render",
  "charon_scene",
+ "charon_tilemap",
+ "charon_tilemap_lighting",
  "charon_tracing",
  "charon_tracing_gpu",
  "pollster",
@@ -413,8 +417,12 @@ dependencies = [
 name = "charon-tracing-check"
 version = "0.1.0"
 dependencies = [
+ "bytemuck",
+ "charon_lighting_render",
+ "charon_render",
  "charon_tracing",
  "charon_tracing_gpu",
+ "image",
  "pollster",
 ]
 

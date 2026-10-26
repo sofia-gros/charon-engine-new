@@ -2,6 +2,7 @@
 use charon_assets::Image;
 use charon_lighting::LightField;
 use charon_render::{DrawFrame, PassId};
+pub const HDR_SHADER: &str = include_str!("hdr_composite.wgsl");
 pub const SHADER: &str = include_str!("composite.wgsl");
 pub fn image(field: &LightField) -> Result<Image, String> {
     field.geometry.validate()?;

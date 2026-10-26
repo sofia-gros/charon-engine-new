@@ -73,3 +73,17 @@ cargo run --release -p charon-rt-sample -- --config samples/rt-light-lab/config/
 - [ ] ドライバーやdeviceの生成条件で失敗した場合は、再起動後もtrueと表示しない。
 
 ハードウェア非対応は再起動待ちとは表示せず、選択不可のままにします。
+
+## HDR・材質ライティング
+
+Path/RTXはHDRの自己発光、水の反射・屈折・吸収、砂の粗い照り返しを使います。物理・ピクセルの輪郭は2Dのまま、描画だけに薄い奥行きを持たせています。RTXは16 samples/update・4反射、Pathは4 samples/update・低い反射予算です。Lite/M5は既存の経路を維持します。PCの遮光入力は粒子1セルを保持し、落下粒子の隙間を粗い四角形で埋めません。
+
+画面のGPU時間はtrace+resolveのtimestampです。取得できないdeviceではN/Aを表示します。固定露出の比較画像と動画用フレームは次で生成できます。
+
+```sh
+cargo run -p charon-tracing-check -- --gallery target/lighting-gallery --1080p
+# RTX実機で同じシーンを検証
+cargo run -p charon-tracing-check -- --gallery target/lighting-gallery-rtx --1080p --rtx
+```
+
+stage-0は拡散のみ、stage-1は自己発光、stage-2は反射・透過を含みます。実装・互換出力・性能計測範囲は [tracing API](../../docs/tracing-api.md) を参照してください。

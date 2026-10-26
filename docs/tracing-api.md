@@ -1,99 +1,84 @@
-# M6.1：独立したレイ／パストレーシング照明
+# Ray / Path lighting
 
-PCではRTX（VulkanのハードウェアRay Query）、Path、M5までの既存照明を選べます。MobileではLite Pathと既存照明を使います。2Dの光学グリッドを入力とし、TilemapとFalling Sandの両方を遮光・透過・発光の対象にします。
+ゲームと物理は2Dのままです。PCのPath/RTXはセルを描画用の薄いprismとして扱い、法線、拡散反射、鏡面反射、屈折、吸収、自己発光を計算します。Liteは従来の2D拡散照明、M5は既存の照明プラグインを使います。汎用の3Dメッシュレンダラーや多重散乱・集光模様のソルバーではありません。
 
-## APIと利用側の責務
+## 入力と材質
 
-Core／照明プラグインは設定ファイルの読込・保存、デモの画面設定、ユーザーの設定値、既定方式やフォールバックの選択を持ちません。JSON、メニュー、無効項目の表示、設定を変える判断は [デモ側](../samples/rt-light-lab/src/config.rs) と [利用側のUI](../samples/rt-light-lab/src/settings.rs) に置いています。
+`TraceScene::new(Prepared)` は従来の光学入力から既定材質を作ります。`reflectance` は引き続きセル別の拡散反射率です。`materials` には `Material` のセル別配列を渡せます。
 
-- `LightingDevice::info()`：そのdeviceで実際に有効な `rtx / path / lite_path / compute / pc / mobile` を取得。
-- `LightingDevice::supports(mode, platform)`：利用可能ならtrue、未対応ならfalse。
-- `TracingSlot::try_switch(device, request, scene).await`：未対応なら `Ok(false)` を返して現在の方式を維持。対応時に候補を準備して成功後に切り替え、`Ok(true)` を返す。
-- 候補の生成・Shader初期化・入力検証の失敗はErrを返し、現在の方式を維持する。
-- `Mode::Legacy` への切り替えはトレーサーを解放する。別の既存照明プラグインと描画への接続は利用側が担当する。
+- `diffuse`：二次反射に使う線形RGB。表示面のベースカラーは描画側の画像から取得します。
+- `roughness / specular / ior`：粗さ、垂直入射の鏡面反射率、屈折率。水はFresnel反射とSnellの法則、全反射を使います。
+- `absorption`：world距離あたりのRGB吸収係数。`exp(-sigma * distance)` で積分します。従来の `Optical.transmission/opacity` もworld距離に換算して組み合わせます。同じ吸収を両方に重複設定しないでください。
+- `depth / normal`：prismの半厚みと表示面の単位法線。厚みはworld単位で、セル解像度には依存しません。水面や砂の微細な法線は利用側が生成します。
+- `emission`：線形HDRの自己発光。同じデータを表示・照明・反射に使います。`radiance(index)` は明示的な光源と材質発光の最大値を返します。
+- `dielectric / dynamic`：透過する境界を持つ材質と、動きうる材質の指定。材質名や物理のIDはPluginに固定しません。
 
-利用側の概念例：
+prismは正面・背面・側面を持ちます。同じ媒質の隣接セルに内部面は作りません。厚みの違う隣接セルでは露出する部分だけを残します。Pathはソフトウェアのグリッド／slab探索、RTXは同じ形状の三角形をハードウェアRay Queryで探索します。
 
-```rust,ignore
-// 自分のゲームが持つ処理。Core／PluginのAPIではない。
-let cnf = my_game::load_cnf()?;
-let dev = LightingDevice::new(device.clone(), queue.clone())
-    .with_adapter(adapter.features(), &adapter.get_info());
-// 起動時の能力確認。device再生成時には新しいLightingDeviceでやり直す。
-let _rtx_ready = dev.probe_rtx().await?;
-let info = dev.info();
-let requested = my_game::choose_mode(&cnf, &info);
-// 実際のGeometry・品質・光学スナップショットはゲームから渡す。
-let accepted = slot.try_switch(&dev, request_for(requested), optical_scene).await?;
-if !accepted {
-    my_game::reject_setting_change();
-}
+発光セルは面積と光束に応じた確率分布（CDF）でサンプリングします。小さな強い光源が低確率で選ばれた時だけ過大な寄与を返す問題を抑えます。明示的なPointLightは旧APIの強度から固定の光束へ換算し、2 world units四方の表示用光源として扱います。これらの光源サイズと吸収距離は画面のズームで変わりません。レイ探索の予算が尽きた場合は遮光扱いにします。
+
+`TraceScene::at_resolution` は従来の保守的な光学グリッド再標本化です。粗いグリッドに取り込んだ粒子の隙間を復元できません。高品質の入力は元のタイル・粒子から必要な解像度で直接作ってください。RTデモは両PC方式で1粒子=1光学セルにします。灰を半透明にして補正する処理はありません。
+
+## HDR出力と描画
+
+Path/RTXの `GpuTrace::texture()` は `Rgba16Float` の横4面atlasです。左から拡散照明、反射・透過、自己発光、法線・形状guideです。従来の単一照明画像とは異なるため、`charon_lighting_render::HDR_SHADER` で合成してください。Liteは従来のRGBA8照明画像と `SHADER` を使います。
+
+通常描画はGPU textureを共有し、CPU readbackしません。
+
+- `readback_hdr()`：Path/RTXの未トーンマップ・未空間フィルターの `HdrField`。`diffuse / specular / emission` を別々に保持し、1を超える値を返します。
+- `readback()`：既存の0〜1 `LightField` へ変換する互換用の数値取得。HDRの検証には `readback_hdr()` を使います。
+- `charon_tracing::hdr::Accumulator`：同じprism、材質、乱数系列、履歴を使うCPU参照。従来の `Accumulator` はLite用の2D参照として残します。
+
+`GpuRenderer::set_hdr(Some(HdrSettings))` は指定したworld layerまでをRGBA16Floatの中間画像に描画します。合成は `base_color * diffuse + specular + emission` です。発光を元画像の暗い色で乗算しません。輝度閾値を超えた成分だけを1/4解像度の分離フィルターでブルーム処理し、固定露出とACES近似でトーンマップします。sRGB出力で表示色変換を1回だけ行い、UIはその後に描画します。`set_hdr(None)` は中間画像を解放して従来の経路に戻します。
+
+`HdrPost` は同じ後処理をオフスクリーン描画から使うための部品です。描画サイズの変更時は作り直します。設定画面、JSON、露出の選択、モード切り替えの方針は利用側が持ちます。
+
+## 品質・履歴・性能
+
+| 方式 | samples/update | 拡散反射 | 探索セル | 静止時の蓄積上限 | 反射 / 透過予算 | 空間フィルター半径 |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| RTX | 16 | 4 | 512 | 4096 | 4 / 8 | 2 |
+| Path | 4 | 2 | 192 | 256 | 1 / 4 | 1 |
+| Lite | 1 | 1 | 64 | 32 | 従来方式 | なし |
+
+`Quality` は従来のサンプル・拡散反射予算、`TraceScene.surface_quality` は `SurfaceQuality` の反射・透過・デノイズ予算です。RTX用のSceneには `SurfaceQuality::for_mode(Mode::Rtx)` を設定してください。高品質設定を負荷によって自動で下げる処理はありません。
+
+間接拡散光を履歴に蓄積します。直接光と反射・透過は最新入力から決定的に評価し、静止した水の表示を乱数の変化に依存させません。少数の光源は全て評価し、多数の場合は光束CDFを層化してPathは32、RTXは64の光源サンプルで積分します。点光源の面積と粗い鏡面ローブには固定の2×2 quadratureを使います。
+
+滑らかな水では反射と屈折を確率で二者択一にせず、Fresnelの重みで両経路を追跡します。反射先の不透明面は直接光・ambient・粗い鏡面成分で評価し、その先の拡散多重反射を再サンプリングしません。このため反射先の間接色移りは近似になります。鋭い鏡面成分を狭いカーネルでぼかしてノイズを隠す処理も行いません。
+
+変更セルからレイのworld距離上限までを保守的に無効化します。この範囲には光源、遮蔽、材質、法線、奥行きの変更を含み、影響のない領域は残します。world座標に履歴を持つためカメラ移動・ズームで再投影誤差は発生しません。原点・解像度や全体設定を変える場合は全履歴を破棄します。
+
+動的材質であっても静止した入力は蓄積を進めます。変化した領域の間接拡散光は旧履歴を混ぜず最新サンプルから作り直します。`dynamic_history` は変更時の動的材質の短い履歴予算（update単位）です。発光は時間・空間フィルターを通しません。
+
+間接拡散光のまれな過大サンプルには `SurfaceQuality.indirect_clamp` を適用します（Path 2、RTX 4、0で無効）。現在の直接光とsky/ambientから決めた相対上限を超える単一サンプルを、RGB比を保って制限します。これは低サンプル時のfireflyを減らすためのバイアスを伴う近似です。自己発光・直接光・反射のHDR値を0〜1に切り詰める処理ではありません。デノイズと拡大補間は法線、奥行き、材質、途中の遮蔽物を確認し、壁越しや角をまたぐ混色を抑えます。
+
+`GpuTrace::metrics()` はCPU submit時間、CPUの形状準備時間、バッファ／textureの概算bytes、面数、可能なdeviceではGPU trace+resolve時間を返します。GPU timestampのreadbackは非同期です。`gpu_ms=None` は未取得または非対応で、CPU時間をGPU時間として代用しません。ドライバー内のBVHメモリと表示・後処理時間はこのGPU時間／bytesに含みません。
+
+## 検証
+
+```sh
+cargo test -p charon_tracing -p charon_tracing_gpu --features charon_tracing_gpu/rtx,charon_tracing_gpu/plugin
+cargo test -p charon-rt-sample -p charon_render
+cargo check -p charon-rt-sample --no-default-features
+cargo run -p charon-tracing-check
+cargo run -p charon-tracing-check -- --gallery target/lighting-gallery --1080p
 ```
 
-`SwitchRequest`は呼び出しに必要なmode・platform・計算予算・周期だけを持つ値です。ファイル形式や保存先、UIの選択状態を持ちません。Coreを使わない場合は `GpuTrace` と `LightingDevice` を直接使えます。
+Galleryは固定カメラ・固定露出で、拡散のみ（stage-0）、HDR発光（stage-1）、反射・透過を追加（stage-2）と、炎と不透明粒子が動く24フレームを保存します。過去バージョンのスクリーンショットではなく、現在の同じシーンで効果を比較するための画像です。実際の合成・ブルーム・トーンマップのシェーダーをGPUで実行します。`--static-only` は静止画だけ、`--rtx` は実ハードウェアのRTX経路を要求します。非対応GPUをRTXの検証成功として扱いません。
 
-## モジュールの境界
+```sh
+ffmpeg -framerate 12 -i target/lighting-gallery/motion-%03d.png -c:v libx264 -pix_fmt yuv420p target/lighting-gallery/motion.mp4
+```
 
-| 部品 | 責務 |
-| --- | --- |
-| charon_tracing | 共通入力、反射率、CPU参照、可視性、履歴。依存はcharon_lightingだけ |
-| charon_tracing_gpu | GPU計算と結果texture、デバイス能力、切り替え。rtx featureは任意 |
-| charon_tracing_gpu / plugin feature | SceneのWorldにTracingSlotを所有し、終了時に解放するTracingPlugin |
-| charon_lighting_render | 既存の照明合成Shader。トレース結果も同じ方式で合成 |
-| charon-rt-sample | ファイル・UI・選択ルール・保存・無効表示と、既存照明への接続 |
+RTXはwgpu 26の実験的Vulkan Ray QueryとAcceleration Structure機能を使います。対応GPUだけでなく、機能・limitsを有効にしたdevice、実Ray Queryの起動時probe、候補の最初のdispatch成功が必要です。未対応は `Ok(false)`、初期化・検証エラーは `Err` で現在の方式を保持します。再起動要求や保存はデモ側の責務です。`LightingDevice::info / supports` と `TracingSlot::try_switch` の意味は従来と同じです。
 
-`charon_engine` の `tracing` featureはCPU/APIだけ、`tracing-gpu` はGPUとPlugin、`rtx` は追加でハードウェアRT経路を公開します。Core・Tilemap・物理・既存描画がトレーサーへ依存することはありません。
+通常の開発環境ではCPU参照、Path/Lite GPU実行、RTXシェーダーと境界meshを検証できます。RTX実機の画質・動的BVH更新・性能は別途実機で確認します。ソフトウェアVulkanの結果はRTXの性能測定ではありません。
 
-## TilemapとFalling Sand
+## 低サンプル時の反射の回帰確認
 
-入力はM4/M5と同じ光学Sceneの `prepare()` です。タイルの壁・発光鉱石と、砂・水・火などのスナップショットを別アダプターで共通レイヤーへ変換し、合成した遮光・透過・発光をトレーサーへ渡します。
+```sh
+cargo run -p charon-tracing-check -- --gallery target/lighting-noise-fix --1080p --noise-check
+```
 
-RTX用の加速構造もこの合成入力の不透明境界から作るため、対象はTilemapだけではありません。粒子が移動して不透明セルの形が変わったら境界を再構築します。水など半透明部分はグリッドの透過計算を併用します。光源だけの移動ではBVHを再構築しません。
-
-物質の反射率は `TraceScene.reflectance` のセル別RGB（0〜0.95）で渡せます。プラグインが砂や石の反射率を固定しません。既定値は0.65です。Tilemapだけでも、粒子だけでも、同じ光学入力から利用できます。
-
-## 計算方式と予算
-
-2Dグリッド上でサンプルごとに方向を選び、可視性レイと拡散反射の経路を追います。光源への直接サンプリング、物質の透過、距離減衰、空の光、発光、反射、AOを扱います。3DのPBR材質・メッシュレンダラーではありません。
-
-| モード | 既定の新規samples/update | 反射上限 | 探索上限 | 蓄積上限 |
-| --- | --- | --- | --- | --- |
-| PC Path / RTX | 4 | 2 | 192セル | 256 samples |
-| Mobile Lite | 1 | 1 | 64セル | 32 samples |
-
-Liteは最大2 samples、1反射、96セル、64蓄積samplesに制限します。デモではLiteを8 world units/セルに落とし、Path/RTXは既存光学Sceneの2〜4 units/セルを使います。これらの品質選択はデモ側のルールです。
-
-毎回の計算は有限です。探索予算が尽きたレイを「遮るものなし」と扱いません。蓄積は有限の正確な平均で、地形・水・火・光源・光学設定・反射率・解像度を変えた場合は旧履歴を破棄します。Sceneを入れ替えて同じrevisionになった場合も入力本体を比較します。
-
-静止している場面は蓄積上限で計算を止めます。動く粒子や光源では履歴が頻繁にリセットされるため、低サンプル時にはノイズが出ます。動的な世界に対する再投影・デノイズは現時点では実装していません。
-
-GPU結果はtextureとして描画へ渡し、通常描画ではCPU readbackしません。明示的なreadbackではLightFieldとworld座標のsample APIを利用できます。
-
-## RTXの対応条件と検証分担
-
-wgpu 26の `EXPERIMENTAL_RAY_QUERY` と `EXPERIMENTAL_RAY_TRACING_ACCELERATION_STRUCTURE` を使うVulkan経路です。DXRバックエンドではありません。対応ドライバーと、RT機能を有効にして生成したdeviceが必要です。GPUの製品名だけで対応判定しません。
-
-不透明境界をz方向へ押し出した三角形のBLAS/TLASを構築し、ShaderからハードウェアRay Queryを実行します。262144境界面を上限とし、超過はエラーにします。実験的APIであり、地形変更時のBVH再構築コストもあります。
-
-RTX実機の表示・遮光・透過・動的更新・切り替え検証はユーザーが担当します。こちらではRustのコンパイル、RT用WGSLの静的検証、境界メッシュと対応判定を確認します。Path/LiteのGPU実行結果を、RTX実機での実行結果として扱いません。
-
-Mobile用Liteのデスクトッププレビューと、Android/iOS実機の検証も区別します。APK・iOSアプリ、タッチ用ホストは今回の成果物に含まれません。
-
-## 再起動・デバイス再生成と真偽値
-
-デバイス作成時の機能要求と加速構造limitsについては、[紹介されたwgpu v28の記事](https://zenn.dev/kokutoupan/articles/eefc517ac4210d)も参考にしています。本実装のwgpu 26では対応する機能2種と `using_minimum_supported_acceleration_structure_values()` を使います。v28専用のExperimentalFeaturesのAPIを、そのままv26へ持ち込みません。
-
-`LightingDevice::info()`は、選択中アダプターの対応情報（任意）、現在のdeviceでの有効化、実行検証済みの状態を分けます。
-
-- `rtx_adapter`：そのアダプター／バックエンドがRT機能を報告するか。情報がなければNone。
-- `rtx_enabled`：現在のdeviceに必要なfeaturesとBLAS/TLASのlimitsが有効か。
-- `rtx_requires_recreation`：対応アダプターだが現在のdeviceにRTが有効でない状態。
-- `rtx`：有効化だけでなく、小さな実ハードウェアRay Queryのprobeにも成功した場合のみtrue。
-
-`probe_rtx().await` は、既知の壁をBLAS/TLASに構築し、別の検証用entry pointで実際にRay Queryを実行してヒット位置とセルを読み戻します。DDAの代替結果でprobeを成功扱いにしません。deviceを生成し直すと、この確認済み状態も未確認からやり直します。CPU／ソフトウェアアダプターをハードウェアRTXとして表示しません。
-
-`try_switch` は必要なprobe、候補初期化、最初のdispatchとreadbackの確認後にtrueを返します。未対応ならfalseで旧方式を維持し、初期化・実行の失敗はErrで旧方式を維持します。「ファイルへRTX=trueと保存できた」ことを、適用成功とは扱いません。
-
-デモの `enable_rtx_device:false` で起動すると、RT対応GPUでも現在のdeviceではRTXが無効です。この場合は「再起動が必要・未適用」と表示します。UIからの要求は `pending` に保存し、現在の `lighting` は変更しません。Sで保存してプロセスを再起動した後も、新deviceのprobeと実適用が成功するまではRTXを有効と表示しません。失敗時は既存照明を保持し、未適用の理由を表示します。
-
-再起動要求・ファイル保存・新deviceの作成・アプリを再起動する操作はデモ／ゲーム側の責務です。Pluginは自動再起動や設定ファイルの書き換えをしません。
+固定入力を異なる乱数フレームで描き、反射・透過のHDR成分にフレーム間差が生じないことを確認します。`low-samples-0.png` と `low-samples-1.png` は8 samples/updateの最初の2フレームです。直接光・反射に対するこの検査と、依然として確率推定を使う間接拡散光の収束は区別します。

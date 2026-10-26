@@ -1,3 +1,4 @@
+mod materials;
 mod config;
 mod settings;
 use charon_assets::AssetsPlugin;

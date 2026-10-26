@@ -134,7 +134,10 @@ impl LightingDevice {
         )
         .await
     }
-    pub(crate) fn raw_device(&self) -> &wgpu::Device {
+    pub fn raw_queue(&self) -> &wgpu::Queue {
+        &self.queue
+    }
+    pub fn raw_device(&self) -> &wgpu::Device {
         &self.device
     }
 }

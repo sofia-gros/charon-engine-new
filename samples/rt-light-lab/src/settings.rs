@@ -170,6 +170,16 @@ fn draw(
     renderer: &mut GpuRenderer,
     frame: &mut DrawFrame,
 ) -> Result<(), String> {
+    let requested = state.pending.unwrap_or(state.active);
+    let enhanced_scene = if matches!(requested, Selection::Rtx | Selection::Path) {
+        world
+            .get::<scenes::Session>()
+            .filter(|s| s.light.is_some() && s.runtime.is_some())
+            .map(|s| crate::materials::scene(s, requested.mode()))
+            .transpose()?
+    } else {
+        None
+    };
     if let Some(session) = world.get_mut::<scenes::Session>()
         && let Some(light) = session.light.as_mut()
     {
@@ -214,14 +224,18 @@ fn draw(
                 }
             } else {
                 let mode = selection.mode();
-                let scene = TraceScene::at_resolution(
-                    &light.scene().prepare(),
-                    if mode == Mode::LitePath {
-                        8.
-                    } else {
-                        light.cell_size
-                    },
-                )?;
+                let scene = if let Some(scene) = enhanced_scene {
+                    scene
+                } else {
+                    TraceScene::at_resolution(
+                        &light.scene().prepare(),
+                        if mode == Mode::LitePath {
+                            8.
+                        } else {
+                            light.cell_size
+                        },
+                    )?
+                };
                 let recreate = changed
                     || slot
                         .active
@@ -311,6 +325,14 @@ fn draw(
         }
         state.status = "APPLIES WHEN GAME STARTS".into();
     }
+    let hdr_active =
+        matches!(state.active, Selection::Rtx | Selection::Path) && slot.active.is_some();
+    renderer.set_hdr(hdr_active.then_some(charon_render::gpu::HdrSettings::default()))?;
+    if let Some(session) = world.get_mut::<scenes::Session>()
+        && let Some(light) = session.light.as_mut()
+    {
+        light.set_surface_composite(renderer, hdr_active)?;
+    }
     ui::text(
         frame,
         500.,
@@ -323,7 +345,15 @@ fn draw(
             frame,
             500.,
             frame.size[1].saturating_sub(20) as f32,
-            &format!("SAMPLES {}", runtime.tracer.samples()),
+            &format!(
+                "SPP {} / GPU {} MS",
+                runtime.tracer.samples(),
+                runtime
+                    .tracer
+                    .metrics()
+                    .gpu_ms
+                    .map_or("N/A".into(), |v| format!("{v:.1}"))
+            ),
             [1., 0.8, 0.3, 1.],
         );
     }
@@ -387,6 +417,21 @@ fn draw(
                 516.,
                 &format!("PENDING {} / NOT APPLIED", label(requested)),
                 [1., 0.7, 0.3, 1.],
+            );
+        }
+        if let Some(runtime) = slot.active.as_ref() {
+            let m = runtime.tracer.metrics();
+            ui::text(
+                frame,
+                48.,
+                556.,
+                &format!(
+                    "CPU {:.1} / MESH {:.1} MS / BUFFERS {:.1} MB",
+                    m.submit_ms,
+                    m.mesh_ms,
+                    m.estimated_bytes as f64 / 1048576.
+                ),
+                [0.7, 0.8, 0.9, 1.],
             );
         }
         for q in &mut frame.quads[overlay_start + 1..] {

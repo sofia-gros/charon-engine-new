@@ -9,7 +9,9 @@ mod rtx;
 #[cfg(feature = "plugin")]
 pub use plugin::{SwitchRequest, Tracing, TracingPlugin, TracingSlot};
 mod device;
+mod hdr;
 pub use device::{DeviceCapabilities, LightingDevice};
+pub use hdr::{TraceMetrics, hdr_shader};
 pub use wgpu;
 pub const COMMON: &str = include_str!("trace.wgsl");
 pub fn shader(mode: Mode) -> String {
@@ -45,7 +47,7 @@ struct Optical {
     source: [f32; 4],
     surface: [f32; 4],
 }
-pub struct GpuTrace {
+struct LegacyTrace {
     device: wgpu::Device,
     queue: wgpu::Queue,
     geometry: Geometry,
@@ -64,66 +66,7 @@ pub struct GpuTrace {
     #[cfg(feature = "rtx")]
     acceleration: Option<rtx::Acceleration>,
 }
-impl GpuTrace {
-    pub async fn headless(
-        geometry: Geometry,
-        mode: Mode,
-        platform: Platform,
-        quality: Quality,
-    ) -> Result<(Self, String), String> {
-        quality.validate(mode, platform)?;
-        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
-            backends: if mode == Mode::Rtx {
-                wgpu::Backends::VULKAN
-            } else {
-                wgpu::Backends::all()
-            },
-            ..Default::default()
-        });
-        let adapter = instance
-            .request_adapter(&wgpu::RequestAdapterOptions {
-                power_preference: wgpu::PowerPreference::HighPerformance,
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-        if mode == Mode::Rtx
-            && matches!(
-                adapter.get_info().device_type,
-                wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
-            )
-        {
-            return Err("hardware RTX mode cannot use a CPU/software adapter".into());
-        }
-        let features = if mode == Mode::Rtx {
-            rtx_features()
-        } else {
-            wgpu::Features::empty()
-        };
-        if !adapter.features().contains(features) {
-            return Err(
-                "RTX mode unavailable: Vulkan hardware ray query/acceleration features missing"
-                    .into(),
-            );
-        }
-        let mut limits = wgpu::Limits::default();
-        if mode == Mode::Rtx {
-            limits = limits.using_minimum_supported_acceleration_structure_values();
-        }
-        let (device, queue) = adapter
-            .request_device(&wgpu::DeviceDescriptor {
-                required_features: features,
-                required_limits: limits,
-                ..Default::default()
-            })
-            .await
-            .map_err(|e| e.to_string())?;
-        let name = adapter.get_info().name;
-        Ok((
-            Self::new(device, queue, geometry, mode, platform, quality).await?,
-            name,
-        ))
-    }
+impl LegacyTrace {
     pub async fn new(
         device: wgpu::Device,
         queue: wgpu::Queue,
@@ -254,9 +197,6 @@ impl GpuTrace {
     }
     pub fn device(&self) -> LightingDevice {
         LightingDevice::new(self.device.clone(), self.queue.clone())
-    }
-    pub fn readback_geometry(&self) -> Geometry {
-        self.geometry
     }
     pub fn texture(&self) -> &wgpu::Texture {
         &self.output
@@ -422,5 +362,162 @@ impl GpuTrace {
             revision: self.last.as_ref().unwrap().input.revision,
             rgba,
         })
+    }
+}
+
+/// Portable Lite keeps its original numerical and rendering contract. Path/RTX
+/// own only HDR resources; switching never allocates a hidden legacy tracer.
+pub struct GpuTrace {
+    geometry: Geometry,
+    backend: TraceBackend,
+}
+enum TraceBackend {
+    Legacy(LegacyTrace),
+    Hdr(hdr::HdrGpu),
+}
+impl GpuTrace {
+    pub async fn headless(
+        geometry: Geometry,
+        mode: Mode,
+        platform: Platform,
+        quality: Quality,
+    ) -> Result<(Self, String), String> {
+        quality.validate(mode, platform)?;
+        let instance = wgpu::Instance::new(&wgpu::InstanceDescriptor {
+            backends: if mode == Mode::Rtx {
+                wgpu::Backends::VULKAN
+            } else {
+                wgpu::Backends::all()
+            },
+            ..Default::default()
+        });
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::HighPerformance,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        if mode == Mode::Rtx
+            && matches!(
+                adapter.get_info().device_type,
+                wgpu::DeviceType::Cpu | wgpu::DeviceType::Other
+            )
+        {
+            return Err("hardware RTX mode cannot use a CPU/software adapter".into());
+        }
+        let features = if mode == Mode::Rtx {
+            rtx_features()
+        } else {
+            wgpu::Features::empty()
+        };
+        if !adapter.features().contains(features) {
+            return Err(
+                "RTX mode unavailable: Vulkan hardware ray query/acceleration features missing"
+                    .into(),
+            );
+        }
+        let mut limits = wgpu::Limits::default();
+        if mode == Mode::Rtx {
+            limits = limits.using_minimum_supported_acceleration_structure_values();
+        }
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                required_features: features
+                    | (adapter.features() & wgpu::Features::TIMESTAMP_QUERY),
+                required_limits: limits,
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| e.to_string())?;
+        let name = adapter.get_info().name;
+        Ok((
+            Self::new(device, queue, geometry, mode, platform, quality).await?,
+            name,
+        ))
+    }
+
+    pub async fn new(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        geometry: Geometry,
+        mode: Mode,
+        platform: Platform,
+        quality: Quality,
+    ) -> Result<Self, String> {
+        geometry.validate()?;
+        quality.validate(mode, platform)?;
+        if mode == Mode::Rtx
+            && (!cfg!(feature = "rtx") || !device.features().contains(rtx_features()))
+        {
+            return Err("RTX requires a ray-query-enabled Vulkan device".into());
+        }
+        let backend = if matches!(mode, Mode::Path | Mode::Rtx) {
+            TraceBackend::Hdr(hdr::HdrGpu::new(device, queue, geometry, mode, quality).await?)
+        } else {
+            TraceBackend::Legacy(
+                LegacyTrace::new(device, queue, geometry, mode, platform, quality).await?,
+            )
+        };
+        Ok(Self { geometry, backend })
+    }
+    pub fn device(&self) -> LightingDevice {
+        match &self.backend {
+            TraceBackend::Legacy(l) => l.device(),
+            TraceBackend::Hdr(h) => h.device(),
+        }
+    }
+    pub fn readback_geometry(&self) -> Geometry {
+        self.geometry
+    }
+    /// Lite: illumination image. Path/RTX: four horizontal HDR component planes;
+    /// bind with charon_lighting_render::HDR_SHADER, not the legacy compositor.
+    pub fn texture(&self) -> &wgpu::Texture {
+        match &self.backend {
+            TraceBackend::Legacy(l) => l.texture(),
+            TraceBackend::Hdr(h) => h.texture(),
+        }
+    }
+    pub fn samples(&self) -> u32 {
+        match &self.backend {
+            TraceBackend::Legacy(l) => l.samples(),
+            TraceBackend::Hdr(h) => h.samples(),
+        }
+    }
+    pub fn mode(&self) -> Mode {
+        match &self.backend {
+            TraceBackend::Legacy(l) => l.mode(),
+            TraceBackend::Hdr(h) => h.mode(),
+        }
+    }
+    pub fn reset(&mut self) {
+        match &mut self.backend {
+            TraceBackend::Legacy(l) => l.reset(),
+            TraceBackend::Hdr(h) => h.reset(),
+        }
+    }
+    pub fn render(&mut self, s: &TraceScene) -> Result<bool, String> {
+        match &mut self.backend {
+            TraceBackend::Legacy(l) => l.render(s),
+            TraceBackend::Hdr(h) => h.render(s),
+        }
+    }
+    pub fn readback(&self) -> Result<LightField, String> {
+        match &self.backend {
+            TraceBackend::Legacy(l) => l.readback(),
+            TraceBackend::Hdr(h) => Ok(h.readback()?.light_field()),
+        }
+    }
+    pub fn readback_hdr(&self) -> Result<charon_tracing::HdrField, String> {
+        match &self.backend {
+            TraceBackend::Hdr(h) => h.readback(),
+            _ => Err("HDR is available only in Path/RTX modes".into()),
+        }
+    }
+    pub fn metrics(&self) -> TraceMetrics {
+        match &self.backend {
+            TraceBackend::Hdr(h) => h.metrics(),
+            _ => TraceMetrics::default(),
+        }
     }
 }
